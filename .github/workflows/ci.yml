@@ -109,8 +109,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('Package.resolved') }}
           restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ env.SWIFT_VERSION }}-
             ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-
             ${{ runner.os }}-spm-
 
@@ -178,8 +179,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('Package.resolved') }}
           restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ env.SWIFT_VERSION }}-
             ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-
             ${{ runner.os }}-spm-
 
@@ -231,8 +233,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('Package.resolved') }}
           restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ env.SWIFT_VERSION }}-
             ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-
             ${{ runner.os }}-spm-
 
