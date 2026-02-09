@@ -1471,8 +1471,22 @@ extension ManagedConnection {
                 // Priority 3: Check if stream receive side is complete (FIN)
                 // or was reset by the peer.  Return empty Data to signal
                 // end-of-stream so that callers break out of read loops.
+                //
+                // IMPORTANT: We intentionally do NOT check
+                // `handler.isStreamReceiveComplete(streamID)` here.
+                // processFrames() reads (consumes) data from the DataStream
+                // buffer inline, then processFrameResult() delivers it to
+                // pendingData / a continuation *later*.  Between those two
+                // steps the DataStream buffer is empty and
+                // isStreamReceiveComplete returns true — but the data has
+                // not been delivered yet.  A concurrent reader hitting this
+                // window would get a premature EOS (0 bytes).
+                //
+                // `state.finishedStreams` is populated by processFrameResult
+                // AFTER delivering data, so it is the safe signal for FIN.
+                // `isStreamResetByPeer` is safe because a reset carries no
+                // data — the reader should return empty immediately.
                 if state.finishedStreams.contains(streamID)
-                    || handler.isStreamReceiveComplete(streamID)
                     || handler.isStreamResetByPeer(streamID)
                 {
                     state.finishedStreams.insert(streamID)
@@ -1512,6 +1526,16 @@ extension ManagedConnection {
 // MARK: - Send Signal
 
 extension ManagedConnection {
+    /// Whether any stream still has data waiting to be sent.
+    ///
+    /// The outbound send loop uses this after generating a batch of packets
+    /// to decide whether another `generateOutboundPackets()` round is needed
+    /// (the single call is capped at 1200 bytes of stream frames, so large
+    /// or multi-stream writes may require several rounds).
+    public var hasPendingStreamData: Bool {
+        handler.hasPendingStreamData
+    }
+
     /// Signal that packets need to be sent.
     ///
     /// QUICEndpoint monitors this stream and, upon receiving a signal,

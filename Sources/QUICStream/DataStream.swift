@@ -281,6 +281,18 @@ public final class DataStream: Sendable {
                 throw StreamError.cannotReceiveOnSendOnlyStream
             }
 
+            // RFC 9000 §3.2: In terminal receive states the peer's data has
+            // already been fully received (or the stream was reset).  Late or
+            // retransmitted STREAM frames are harmless — silently discard them
+            // so we don't abort processing of the entire QUIC packet (which
+            // may carry frames for other, still-active streams).
+            switch `internal`.state.recvState {
+            case .dataRecvd, .dataRead, .resetRecvd, .resetRead:
+                return
+            default:
+                break
+            }
+
             guard `internal`.state.canReceive else {
                 throw StreamError.invalidState(
                     current: String(describing: `internal`.state.recvState),

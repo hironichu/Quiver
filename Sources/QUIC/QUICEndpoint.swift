@@ -375,7 +375,12 @@ public actor QUICEndpoint {
             }
             return connection
         } catch {
-            // On failure (timeout or connect error), tear down the I/O loop
+            // On failure (timeout or connect error), shut down the connection
+            // first so its sendSignal stream finishes and the outboundSendLoop
+            // can exit cleanly *before* we tear down the socket.
+            if let managed = connection as? ManagedConnection {
+                managed.shutdown()
+            }
             runTask.cancel()
             await socket.stop()
             throw error
@@ -1046,18 +1051,34 @@ public actor QUICEndpoint {
             guard !shouldStop else { logger.debug("outboundSendLoop breaking due to shouldStop"); break }
 
             do {
-                // Generate packets from pending stream data
-                let packets = try connection.generateOutboundPackets()
-                if !packets.isEmpty {
-                    logger.trace("Sending \(packets.count) packets (total \(packets.map(\.count).reduce(0, +)) bytes)")
-                }
+                // Generate and send packets in a loop.
+                // `generateStreamFrames(maxBytes: 1200)` caps each round at
+                // ~1200 bytes of stream frames, so when multiple streams have
+                // data queued (or a single stream has a large write) a single
+                // round may not drain everything.  Re-check after each send
+                // and keep going until no pending stream data remains.  This
+                // avoids relying on another `signalNeedsSend()` (which may
+                // have been coalesced away by `bufferingNewest(1)`).
+                var rounds = 0
+                repeat {
+                    let packets = try connection.generateOutboundPackets()
+                    if !packets.isEmpty {
+                        rounds += 1
+                        logger.trace("Sending \(packets.count) packets, round \(rounds) (total \(packets.map(\.count).reduce(0, +)) bytes)")
+                    }
 
-                // Send each packet
-                for packet in packets {
-                    let nioAddress = try connection.remoteAddress.toNIOAddress()
-                    try await socket.send(packet, to: nioAddress)
-                    logger.trace("Sent packet: \(packet.count) bytes")
-                }
+                    // Send each packet
+                    for packet in packets {
+                        let nioAddress = try connection.remoteAddress.toNIOAddress()
+                        try await socket.send(packet, to: nioAddress)
+                        logger.trace("Sent packet: \(packet.count) bytes")
+                    }
+
+                    // If no packets were produced this round we're done
+                    // regardless of what hasPendingStreamData says (the
+                    // remaining data may be flow-control blocked).
+                    if packets.isEmpty { break }
+                } while connection.hasPendingStreamData && !shouldStop
             } catch {
                 // Log error but continue - don't break the loop for transient errors
                 logger.warning(
@@ -1075,24 +1096,34 @@ public actor QUICEndpoint {
         // that handler.close() queued just before shutdown() finished the signal.
         // Without this flush the peer never learns the connection was closed and
         // keeps sending packets to a DCID that we are about to unregister.
-        do {
-            let finalPackets = try connection.generateOutboundPackets()
-            if !finalPackets.isEmpty {
-                logger.debug("outboundSendLoop flushing \(finalPackets.count) final packets for SCID=\(connection.sourceConnectionID)")
-                for packet in finalPackets {
-                    let nioAddress = try connection.remoteAddress.toNIOAddress()
-                    try await socket.send(packet, to: nioAddress)
+        //
+        // Skip the flush when the endpoint is stopping (`shouldStop` is true) —
+        // the socket is already torn down or about to be, so sending will fail
+        // with "UDP transport not started" and the peer will time out anyway.
+        if !shouldStop {
+            do {
+                let finalPackets = try connection.generateOutboundPackets()
+                if !finalPackets.isEmpty {
+                    logger.debug("outboundSendLoop flushing \(finalPackets.count) final packets for SCID=\(connection.sourceConnectionID)")
+                    for packet in finalPackets {
+                        let nioAddress = try connection.remoteAddress.toNIOAddress()
+                        try await socket.send(packet, to: nioAddress)
+                    }
                 }
+            } catch {
+                // Best-effort — if we can't send the final packets, just log and proceed.
+                // Use trace level: the most common cause is the socket already being
+                // stopped (e.g. dial() timeout cleanup), which is expected.
+                logger.trace(
+                    "Failed to flush final packets on connection close",
+                    metadata: [
+                        "error": "\(error)",
+                        "remoteAddress": "\(connection.remoteAddress)"
+                    ]
+                )
             }
-        } catch {
-            // Best-effort — if we can't send the final packets, just log and proceed
-            logger.warning(
-                "Failed to flush final packets on connection close",
-                metadata: [
-                    "error": "\(error)",
-                    "remoteAddress": "\(connection.remoteAddress)"
-                ]
-            )
+        } else {
+            logger.trace("outboundSendLoop skipping final flush — endpoint is stopping (SCID=\(connection.sourceConnectionID))")
         }
 
         logger.debug("outboundSendLoop EXITED for connection SCID=\(connection.sourceConnectionID) after \(iterationCount) iterations, shouldStop=\(shouldStop)")
