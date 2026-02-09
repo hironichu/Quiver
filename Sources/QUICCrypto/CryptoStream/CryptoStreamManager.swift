@@ -7,7 +7,7 @@ import Synchronization
 import QUICCore
 
 /// Manages CRYPTO streams for all encryption levels
-public final class CryptoStreamManager: Sendable {
+package final class CryptoStreamManager: Sendable {
     /// Receive streams per encryption level
     private let receiveStreams: Mutex<[EncryptionLevel: CryptoStream]>
 
@@ -23,7 +23,7 @@ public final class CryptoStreamManager: Sendable {
 
     /// Creates a new CryptoStreamManager
     /// - Parameter maxBufferSize: Maximum buffer size per stream (default 16KB)
-    public init(maxBufferSize: UInt64 = CryptoStream.defaultMaxBufferSize) {
+    package init(maxBufferSize: UInt64 = CryptoStream.defaultMaxBufferSize) {
         self.maxBufferSize = maxBufferSize
 
         var streams: [EncryptionLevel: CryptoStream] = [:]
@@ -47,7 +47,7 @@ public final class CryptoStreamManager: Sendable {
     ///   - frame: The CRYPTO frame to receive
     ///   - level: The encryption level
     /// - Throws: `CryptoStreamError` on buffer overflow
-    public func receive(_ frame: CryptoFrame, at level: EncryptionLevel) throws {
+    package func receive(_ frame: CryptoFrame, at level: EncryptionLevel) throws {
         try receiveStreams.withLock { streams in
             try streams[level]?.receive(frame)
         }
@@ -56,7 +56,7 @@ public final class CryptoStreamManager: Sendable {
     /// Read available contiguous data for a level
     /// - Parameter level: The encryption level
     /// - Returns: Contiguous data if available, nil otherwise
-    public func read(at level: EncryptionLevel) -> Data? {
+    package func read(at level: EncryptionLevel) -> Data? {
         receiveStreams.withLock { streams in
             streams[level]?.read()
         }
@@ -65,7 +65,7 @@ public final class CryptoStreamManager: Sendable {
     /// Peek at available data without consuming
     /// - Parameter level: The encryption level
     /// - Returns: Contiguous data if available
-    public func peek(at level: EncryptionLevel) -> Data? {
+    package func peek(at level: EncryptionLevel) -> Data? {
         receiveStreams.withLock { streams in
             streams[level]?.peek()
         }
@@ -74,7 +74,7 @@ public final class CryptoStreamManager: Sendable {
     /// Whether there is pending data with gaps at a level
     /// - Parameter level: The encryption level
     /// - Returns: true if there are gaps in the buffered data
-    public func hasPendingGaps(at level: EncryptionLevel) -> Bool {
+    package func hasPendingGaps(at level: EncryptionLevel) -> Bool {
         receiveStreams.withLock { streams in
             streams[level]?.hasPendingGaps ?? false
         }
@@ -83,7 +83,7 @@ public final class CryptoStreamManager: Sendable {
     /// Whether the receive buffer is empty at a level
     /// - Parameter level: The encryption level
     /// - Returns: true if empty
-    public func isReceiveBufferEmpty(at level: EncryptionLevel) -> Bool {
+    package func isReceiveBufferEmpty(at level: EncryptionLevel) -> Bool {
         receiveStreams.withLock { streams in
             streams[level]?.isEmpty ?? true
         }
@@ -92,7 +92,7 @@ public final class CryptoStreamManager: Sendable {
     /// The current read offset for a level
     /// - Parameter level: The encryption level
     /// - Returns: The current read offset
-    public func readOffset(at level: EncryptionLevel) -> UInt64 {
+    package func readOffset(at level: EncryptionLevel) -> UInt64 {
         receiveStreams.withLock { streams in
             streams[level]?.currentOffset ?? 0
         }
@@ -104,7 +104,7 @@ public final class CryptoStreamManager: Sendable {
     ///   - level: Encryption level
     ///   - maxFrameSize: Maximum frame payload size
     /// - Returns: Array of CryptoFrames to send
-    public func createFrames(
+    package func createFrames(
         for data: Data,
         at level: EncryptionLevel,
         maxFrameSize: Int = 1200
@@ -139,7 +139,7 @@ public final class CryptoStreamManager: Sendable {
     /// The current send offset for a level
     /// - Parameter level: The encryption level
     /// - Returns: The current send offset
-    public func sendOffset(at level: EncryptionLevel) -> UInt64 {
+    package func sendOffset(at level: EncryptionLevel) -> UInt64 {
         sendOffsets.withLock { offsets in
             offsets[level] ?? 0
         }
@@ -152,7 +152,7 @@ public final class CryptoStreamManager: Sendable {
     ///
     /// - Parameter level: The encryption level
     /// - Returns: All CRYPTO data that has been sent at this level
-    public func getDataForRetry(level: EncryptionLevel) -> Data {
+    package func getDataForRetry(level: EncryptionLevel) -> Data {
         sentDataBuffers.withLock { buffers in
             buffers[level] ?? Data()
         }
@@ -160,7 +160,7 @@ public final class CryptoStreamManager: Sendable {
 
     /// Discards the stream for a level (e.g., when encryption level is discarded)
     /// - Parameter level: The encryption level to discard
-    public func discardLevel(_ level: EncryptionLevel) {
+    package func discardLevel(_ level: EncryptionLevel) {
         receiveStreams.withLock { streams in
             streams[level] = CryptoStream(maxBufferSize: maxBufferSize)
         }

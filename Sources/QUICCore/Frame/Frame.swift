@@ -8,6 +8,7 @@ import Foundation
 // MARK: - Frame Type
 
 /// QUIC Frame type identifiers (RFC 9000 Section 12.4)
+@frozen
 public enum FrameType: UInt64, Sendable {
     case padding = 0x00
     case ping = 0x01
@@ -38,6 +39,7 @@ public enum FrameType: UInt64, Sendable {
     case datagramWithLength = 0x31
 
     /// Whether this frame type is valid in Initial packets
+    @inlinable
     public var validInInitial: Bool {
         switch self {
         case .padding, .ping, .ack, .ackECN, .crypto, .connectionClose:
@@ -48,6 +50,7 @@ public enum FrameType: UInt64, Sendable {
     }
 
     /// Whether this frame type is valid in Handshake packets
+    @inlinable
     public var validInHandshake: Bool {
         switch self {
         case .padding, .ping, .ack, .ackECN, .crypto, .connectionClose:
@@ -58,6 +61,7 @@ public enum FrameType: UInt64, Sendable {
     }
 
     /// Whether this frame type is ack-eliciting
+    @inlinable
     public var isAckEliciting: Bool {
         switch self {
         case .padding, .ack, .ackECN, .connectionClose, .connectionCloseApp:
@@ -136,6 +140,7 @@ public enum Frame: Sendable, Hashable {
     case datagram(DatagramFrame)
 
     /// The frame type identifier
+    @inlinable
     public var frameType: FrameType {
         switch self {
         case .padding: return .padding
@@ -163,6 +168,7 @@ public enum Frame: Sendable, Hashable {
     }
 
     /// Whether this frame is ack-eliciting
+    @inlinable
     public var isAckEliciting: Bool {
         frameType.isAckEliciting
     }

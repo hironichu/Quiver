@@ -36,8 +36,12 @@ public enum ECNCodepoint: UInt8, Sendable {
 
 // MARK: - ECN Counts
 
-/// ECN counts tracked per packet number space
-public struct ECNCounts: Sendable, Equatable {
+/// ECN counts tracked per packet number space (mutable tracking state).
+///
+/// This type is distinct from `QUICCore.ECNCounts` which represents the
+/// immutable wire format used in ACK frames. `ECNCountState` is the
+/// mutable bookkeeping type used by `ECNManager` to track counts over time.
+public struct ECNCountState: Sendable, Equatable {
     /// Count of packets marked ECT(0)
     public var ect0Count: UInt64 = 0
 
@@ -104,10 +108,10 @@ public final class ECNManager: Sendable {
 
     private struct ECNState: Sendable {
         /// ECN counts received from peer (per packet number space)
-        var peerCounts: [EncryptionLevel: ECNCounts] = [:]
+        var peerCounts: [EncryptionLevel: ECNCountState] = [:]
 
         /// ECN counts for packets we've received
-        var localCounts: [EncryptionLevel: ECNCounts] = [:]
+        var localCounts: [EncryptionLevel: ECNCountState] = [:]
 
         /// Validation state
         var validationState: ECNValidationState = .unknown
@@ -170,7 +174,7 @@ public final class ECNManager: Sendable {
     ///   - level: The encryption level of the packet
     public func recordIncoming(_ codepoint: ECNCodepoint, level: EncryptionLevel) {
         state.withLock { s in
-            s.localCounts[level, default: ECNCounts()].record(codepoint)
+            s.localCounts[level, default: ECNCountState()].record(codepoint)
         }
     }
 
@@ -178,7 +182,7 @@ public final class ECNManager: Sendable {
     ///
     /// - Parameter level: The encryption level
     /// - Returns: ECN counts to include in ACK frame, or nil if no ECN packets received
-    public func countsForACK(level: EncryptionLevel) -> ECNCounts? {
+    public func countsForACK(level: EncryptionLevel) -> ECNCountState? {
         state.withLock { s in
             guard let counts = s.localCounts[level], counts.totalECN > 0 else {
                 return nil
@@ -198,9 +202,9 @@ public final class ECNManager: Sendable {
     ///   - counts: ECN counts from the ACK frame
     ///   - level: The encryption level
     /// - Returns: Number of newly detected CE marks (congestion signals)
-    public func processACKFeedback(_ counts: ECNCounts, level: EncryptionLevel) -> UInt64 {
+    public func processACKFeedback(_ counts: ECNCountState, level: EncryptionLevel) -> UInt64 {
         state.withLock { s in
-            let previousCounts = s.peerCounts[level] ?? ECNCounts()
+            let previousCounts = s.peerCounts[level] ?? ECNCountState()
 
             // Validate ECN counts (must not decrease)
             guard counts.ect0Count >= previousCounts.ect0Count,

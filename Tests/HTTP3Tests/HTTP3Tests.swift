@@ -8,6 +8,7 @@ import Foundation
 @testable import HTTP3
 @testable import QUICCore
 @testable import QPACK
+@testable import QUIC
 
 // MARK: - HTTP/3 Frame Type Tests
 

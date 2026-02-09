@@ -19,7 +19,7 @@ import Synchronization
 /// - Coalesced packet handling
 ///
 /// Thread-safe via Mutex for crypto context updates.
-public final class PacketProcessor: Sendable {
+package final class PacketProcessor: Sendable {
     // MARK: - Properties
 
     /// Crypto contexts per encryption level
@@ -40,7 +40,7 @@ public final class PacketProcessor: Sendable {
 
     /// Current DCID length (lock-free read)
     @inline(__always)
-    public var dcidLengthValue: Int {
+    package var dcidLengthValue: Int {
         _dcidLength.load(ordering: .relaxed)
     }
 
@@ -51,7 +51,7 @@ public final class PacketProcessor: Sendable {
 
     /// Creates a new packet processor
     /// - Parameter dcidLength: Expected DCID length for short headers (0-20)
-    public init(dcidLength: Int = 8) {
+    package init(dcidLength: Int = 8) {
         // Clamp to valid range (RFC 9000 Section 17.2: 0-20 bytes)
         let validLength = max(0, min(dcidLength, Self.maxDCIDLength))
         self.contexts = Mutex([:])
@@ -65,26 +65,26 @@ public final class PacketProcessor: Sendable {
     /// - Parameters:
     ///   - context: The crypto context
     ///   - level: The encryption level
-    public func installContext(_ context: CryptoContext, for level: EncryptionLevel) {
+    package func installContext(_ context: CryptoContext, for level: EncryptionLevel) {
         contexts.withLock { $0[level] = context }
     }
 
     /// Discards crypto context for an encryption level
     /// - Parameter level: The level to discard
-    public func discardContext(for level: EncryptionLevel) {
+    package func discardContext(for level: EncryptionLevel) {
         _ = contexts.withLock { $0.removeValue(forKey: level) }
     }
 
     /// Gets the crypto context for a level
     /// - Parameter level: The encryption level
     /// - Returns: The context, or nil if not installed
-    public func context(for level: EncryptionLevel) -> CryptoContext? {
+    package func context(for level: EncryptionLevel) -> CryptoContext? {
         contexts.withLock { $0[level] }
     }
 
     /// Updates the DCID length (for short header parsing)
     /// - Parameter length: The new DCID length (0-20, clamped if out of range)
-    public func setDCIDLength(_ length: Int) {
+    package func setDCIDLength(_ length: Int) {
         // Clamp to valid range (RFC 9000 Section 17.2: 0-20 bytes)
         let validLength = max(0, min(length, Self.maxDCIDLength))
         _dcidLength.store(validLength, ordering: .relaxed)
@@ -101,7 +101,7 @@ public final class PacketProcessor: Sendable {
     ///   - info: Keys available info from TLS provider
     ///   - isClient: Whether this is the client side
     /// - Throws: Error if key derivation or context creation fails
-    public func installKeys(_ info: KeysAvailableInfo, isClient: Bool) throws {
+    package func installKeys(_ info: KeysAvailableInfo, isClient: Bool) throws {
         let cipherSuite = info.cipherSuite
 
         // Handle 0-RTT keys specially (only one direction)
@@ -153,14 +153,14 @@ public final class PacketProcessor: Sendable {
     /// Call this after all packets at this level have been sent.
     ///
     /// - Parameter level: The encryption level to discard
-    public func discardKeys(for level: EncryptionLevel) {
+    package func discardKeys(for level: EncryptionLevel) {
         discardContext(for: level)
     }
 
     /// Checks if keys are installed for a level
     /// - Parameter level: The encryption level
     /// - Returns: True if keys are available for this level
-    public func hasKeys(for level: EncryptionLevel) -> Bool {
+    package func hasKeys(for level: EncryptionLevel) -> Bool {
         contexts.withLock { $0[level] != nil }
     }
 
@@ -170,7 +170,7 @@ public final class PacketProcessor: Sendable {
     /// - Parameter data: The encrypted packet data
     /// - Returns: The parsed packet with decrypted frames
     /// - Throws: PacketCodecError if decryption fails
-    public func decryptPacket(_ data: Data) throws -> ParsedPacket {
+    package func decryptPacket(_ data: Data) throws -> ParsedPacket {
         // Peek at first byte to determine encryption level
         guard !data.isEmpty else {
             throw PacketCodecError.insufficientData
@@ -229,7 +229,7 @@ public final class PacketProcessor: Sendable {
     /// - Parameter datagram: The UDP datagram
     /// - Returns: Array of successfully parsed packets (may be empty if none decrypt)
     /// - Throws: Only throws for fatal errors like invalid datagram format
-    public func decryptDatagram(_ datagram: Data) throws -> [ParsedPacket] {
+    package func decryptDatagram(_ datagram: Data) throws -> [ParsedPacket] {
         // Split coalesced packets (lock-free read)
         let dcid = dcidLengthValue
         let packetInfos = try CoalescedPacketParser.parse(datagram: datagram, dcidLength: dcid)
@@ -266,7 +266,7 @@ public final class PacketProcessor: Sendable {
     ///   - padToMinimum: If true and this is an Initial packet, pad to 1200 bytes
     /// - Returns: The encrypted packet data
     /// - Throws: PacketCodecError if encryption fails
-    public func encryptLongHeaderPacket(
+    package func encryptLongHeaderPacket(
         frames: [Frame],
         header: LongHeader,
         packetNumber: UInt64,
@@ -295,7 +295,7 @@ public final class PacketProcessor: Sendable {
     ///   - packetNumber: The packet number
     /// - Returns: The encrypted packet data
     /// - Throws: PacketCodecError if encryption fails
-    public func encryptShortHeaderPacket(
+    package func encryptShortHeaderPacket(
         frames: [Frame],
         header: ShortHeader,
         packetNumber: UInt64
@@ -321,7 +321,7 @@ public final class PacketProcessor: Sendable {
     ///   - maxSize: Maximum datagram size (default: 1200)
     /// - Returns: The coalesced datagram
     /// - Throws: Error if encryption fails
-    public func buildCoalescedPacket(
+    package func buildCoalescedPacket(
         packets: [(frames: [Frame], header: PacketHeader, packetNumber: UInt64)],
         maxSize: Int = 1200
     ) throws -> Data {
@@ -367,7 +367,7 @@ public final class PacketProcessor: Sendable {
     /// - Parameter data: The packet data
     /// - Returns: The destination connection ID
     /// - Throws: Error if the header cannot be parsed
-    public func extractDestinationConnectionID(from data: Data) throws -> ConnectionID {
+    package func extractDestinationConnectionID(from data: Data) throws -> ConnectionID {
         guard !data.isEmpty else {
             throw PacketCodecError.insufficientData
         }
@@ -422,7 +422,7 @@ public final class PacketProcessor: Sendable {
     /// - Parameter data: The packet data
     /// - Returns: The packet type
     /// - Throws: Error if the header cannot be parsed
-    public func extractPacketType(from data: Data) throws -> PacketType {
+    package func extractPacketType(from data: Data) throws -> PacketType {
         guard !data.isEmpty else {
             throw PacketCodecError.insufficientData
         }
@@ -475,7 +475,7 @@ public final class PacketProcessor: Sendable {
     /// - Returns: Header information including DCID, packet type, and SCID (for Initial)
     /// - Throws: Error if the header cannot be parsed
     @inline(__always)
-    public func extractHeaderInfo(from data: Data) throws -> HeaderInfo {
+    package func extractHeaderInfo(from data: Data) throws -> HeaderInfo {
         guard !data.isEmpty else {
             throw PacketCodecError.insufficientData
         }
@@ -584,7 +584,7 @@ extension PacketProcessor {
     ///   - isClient: Whether this is the client side
     ///   - version: The QUIC version
     /// - Returns: The client and server key material
-    public func deriveAndInstallInitialKeys(
+    package func deriveAndInstallInitialKeys(
         connectionID: ConnectionID,
         isClient: Bool,
         version: QUICVersion

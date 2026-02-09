@@ -91,6 +91,7 @@ public enum FrameSize {
     ///
     /// - Parameter frame: The ACK frame
     /// - Returns: Total encoded size in bytes
+    @inlinable
     public static func ackFrame(_ frame: AckFrame) -> Int {
         var size = 1  // Type byte
         size += Varint.encodedLength(for: frame.largestAcknowledged)

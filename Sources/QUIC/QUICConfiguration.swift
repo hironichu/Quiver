@@ -5,6 +5,7 @@
 import Foundation
 import QUICCore
 import QUICCrypto
+import QUICRecovery
 
 // MARK: - Security Mode
 
@@ -159,6 +160,7 @@ public struct QUICConfiguration: Sendable {
     ///   Use `TLSConfiguration.certificatePath` or
     ///   `TLSConfiguration.server(certificatePath:privateKeyPath:)` instead.
     ///   This field will be removed in a future release.
+    @available(*, deprecated, message: "Use TLSConfiguration.certificatePath or TLSConfiguration.server(certificatePath:privateKeyPath:) instead")
     public var certificatePath: String?
 
     /// Path to private key file (for servers).
@@ -168,6 +170,7 @@ public struct QUICConfiguration: Sendable {
     ///   Use `TLSConfiguration.privateKeyPath` or
     ///   `TLSConfiguration.server(certificatePath:privateKeyPath:)` instead.
     ///   This field will be removed in a future release.
+    @available(*, deprecated, message: "Use TLSConfiguration.privateKeyPath or TLSConfiguration.server(certificatePath:privateKeyPath:) instead")
     public var privateKeyPath: String?
 
     /// Whether to verify peer certificates (default: true).
@@ -176,6 +179,7 @@ public struct QUICConfiguration: Sendable {
     ///   `TLS13Handler` and exists only for backward compatibility.
     ///   Use `TLSConfiguration.verifyPeer` instead.
     ///   This field will be removed in a future release.
+    @available(*, deprecated, message: "Use TLSConfiguration.verifyPeer instead")
     public var verifyPeer: Bool
 
     /// Custom TLS provider factory (legacy).
@@ -209,6 +213,20 @@ public struct QUICConfiguration: Sendable {
     /// ```
     public var securityMode: QUICSecurityMode?
 
+    // MARK: - Congestion Control
+
+    /// Factory for creating congestion control algorithm instances.
+    ///
+    /// Defaults to `NewRenoFactory()` (RFC 9002 NewReno). Set this to inject
+    /// a custom congestion control algorithm (e.g., CUBIC, BBR) for all
+    /// connections created with this configuration.
+    ///
+    /// - Note: This property is `package` access because the `CongestionControllerFactory`
+    ///   protocol and its dependency types (`CongestionController`, `RTTEstimator`,
+    ///   `SentPacket`) are package-internal. When these types are promoted to `public`,
+    ///   this property should be promoted as well.
+    package var congestionControllerFactory: any CongestionControllerFactory
+
     // MARK: - Initialization
 
     /// Creates a default configuration.
@@ -239,6 +257,7 @@ public struct QUICConfiguration: Sendable {
         self.verifyPeer = true
         self.tlsProviderFactory = nil
         self.securityMode = nil
+        self.congestionControllerFactory = NewRenoFactory()
     }
 
     // MARK: - Security Mode Factory Methods

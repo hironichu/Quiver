@@ -11,7 +11,7 @@ import QUICCore
 // MARK: - Server State Machine
 
 /// Server-side TLS 1.3 state machine
-public final class ServerStateMachine: Sendable {
+package final class ServerStateMachine: Sendable {
 
     private let state = Mutex<ServerState>(ServerState())
     private let configuration: TLSConfiguration
@@ -32,7 +32,7 @@ public final class ServerStateMachine: Sendable {
     ///   - configuration: TLS configuration (will be resolved to load certificates if needed)
     ///   - sessionTicketStore: Optional session ticket store for resumption
     /// - Throws: `PEMLoader.PEMError` if PEM file loading fails
-    public init(configuration: TLSConfiguration, sessionTicketStore: SessionTicketStore? = nil) throws {
+    package init(configuration: TLSConfiguration, sessionTicketStore: SessionTicketStore? = nil) throws {
         // Resolve configuration by loading certificates from paths if needed
         self.configuration = try configuration.withLoadedCertificates()
         self.sessionTicketStore = sessionTicketStore
@@ -44,7 +44,7 @@ public final class ServerStateMachine: Sendable {
     }
 
     /// Process ClientHello and generate server response
-    public func processClientHello(
+    package func processClientHello(
         _ data: Data,
         transportParameters: Data
     ) throws -> (response: ClientHelloResponse, outputs: [TLSOutput]) {
@@ -475,7 +475,7 @@ public final class ServerStateMachine: Sendable {
     ///
     /// RFC 8446 Section 4.4.2: Client sends Certificate in response to CertificateRequest.
     /// The certificate_request_context MUST match what was sent in CertificateRequest.
-    public func processClientCertificate(_ data: Data) throws -> [TLSOutput] {
+    package func processClientCertificate(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             guard state.handshakeState == .waitClientCertificate else {
                 throw TLSHandshakeError.unexpectedMessage("Unexpected client Certificate")
@@ -590,7 +590,7 @@ public final class ServerStateMachine: Sendable {
     ///
     /// RFC 8446 Section 4.4.3: Verifies client's signature over the transcript.
     /// The signature context is "TLS 1.3, client CertificateVerify".
-    public func processClientCertificateVerify(_ data: Data) throws -> [TLSOutput] {
+    package func processClientCertificateVerify(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             guard state.handshakeState == .waitClientCertificateVerify else {
                 throw TLSHandshakeError.unexpectedMessage("Unexpected client CertificateVerify")
@@ -645,7 +645,7 @@ public final class ServerStateMachine: Sendable {
     }
 
     /// Process client Finished message
-    public func processClientFinished(_ data: Data) throws -> [TLSOutput] {
+    package func processClientFinished(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             guard state.handshakeState == .waitFinished else {
                 throw TLSHandshakeError.unexpectedMessage("Unexpected client Finished")
@@ -695,7 +695,7 @@ public final class ServerStateMachine: Sendable {
 
     /// Generate a NewSessionTicket for the client
     /// Call this after handshake completion to enable session resumption
-    public func generateNewSessionTicket(
+    package func generateNewSessionTicket(
         maxEarlyDataSize: UInt32 = 0,
         lifetime: UInt32 = 86400
     ) throws -> (ticket: NewSessionTicket, data: Data) {
@@ -737,37 +737,37 @@ public final class ServerStateMachine: Sendable {
     }
 
     /// Negotiated ALPN protocol
-    public var negotiatedALPN: String? {
+    package var negotiatedALPN: String? {
         state.withLock { $0.context.negotiatedALPN }
     }
 
     /// Peer transport parameters
-    public var peerTransportParameters: Data? {
+    package var peerTransportParameters: Data? {
         state.withLock { $0.context.peerTransportParameters }
     }
 
     /// Whether handshake is complete
-    public var isConnected: Bool {
+    package var isConnected: Bool {
         state.withLock { $0.handshakeState == .connected }
     }
 
     /// Exporter master secret (available after handshake completion)
-    public var exporterMasterSecret: SymmetricKey? {
+    package var exporterMasterSecret: SymmetricKey? {
         state.withLock { $0.context.exporterMasterSecret }
     }
 
     /// Whether PSK was used for authentication
-    public var pskUsed: Bool {
+    package var pskUsed: Bool {
         state.withLock { $0.context.pskUsed }
     }
 
     /// Resumption master secret (available after handshake completion)
-    public var resumptionMasterSecret: SymmetricKey? {
+    package var resumptionMasterSecret: SymmetricKey? {
         state.withLock { $0.context.resumptionMasterSecret }
     }
 
     /// Peer certificates (raw DER data, leaf certificate first)
-    public var peerCertificates: [Data]? {
+    package var peerCertificates: [Data]? {
         state.withLock { $0.context.peerCertificates }
     }
 
@@ -775,22 +775,22 @@ public final class ServerStateMachine: Sendable {
     ///
     /// This contains the value returned by `TLSConfiguration.certificateValidator`
     /// after successful certificate validation (e.g., application-specific peer identity).
-    public var validatedPeerInfo: (any Sendable)? {
+    package var validatedPeerInfo: (any Sendable)? {
         state.withLock { $0.context.validatedPeerInfo }
     }
 
     /// Client certificates received from peer (server-side, for mTLS).
-    public var clientCertificates: [Data]? {
+    package var clientCertificates: [Data]? {
         state.withLock { $0.context.clientCertificates }
     }
 
     /// Parsed client leaf certificate (server-side, for mTLS).
-    public var clientCertificate: X509Certificate? {
+    package var clientCertificate: X509Certificate? {
         state.withLock { $0.context.clientCertificate }
     }
 
     /// Parsed peer leaf certificate
-    public var peerCertificate: X509Certificate? {
+    package var peerCertificate: X509Certificate? {
         state.withLock { $0.context.peerCertificate }
     }
 
@@ -798,7 +798,7 @@ public final class ServerStateMachine: Sendable {
     ///
     /// Available after `processClientCertificate()` succeeds with `verifyPeer == true`.
     /// Used by `TLS13Handler` to perform async revocation checks.
-    public var validatedChain: ValidatedChain? {
+    package var validatedChain: ValidatedChain? {
         state.withLock { $0.context.validatedChain }
     }
 
@@ -806,7 +806,7 @@ public final class ServerStateMachine: Sendable {
     ///
     /// This ensures the revocation check is performed exactly once per
     /// certificate processing — the chain is consumed on first access.
-    public func takeValidatedChain() -> ValidatedChain? {
+    package func takeValidatedChain() -> ValidatedChain? {
         state.withLock { state in
             let chain = state.context.validatedChain
             state.context.validatedChain = nil
@@ -819,7 +819,7 @@ public final class ServerStateMachine: Sendable {
 
 extension CipherSuite {
     /// Converts TLS CipherSuite to QUICCipherSuite for packet protection
-    public var toQUICCipherSuite: QUICCipherSuite {
+    package var toQUICCipherSuite: QUICCipherSuite {
         switch self {
         case .tls_chacha20_poly1305_sha256:
             return .chacha20Poly1305Sha256

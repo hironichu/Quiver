@@ -8,7 +8,7 @@ import Foundation
 // MARK: - Congestion State
 
 /// The current state of the congestion controller
-public enum CongestionState: Sendable, Equatable {
+package enum CongestionState: Sendable, Equatable {
     /// Slow start phase: exponential window growth
     /// Active when cwnd < ssthresh
     case slowStart
@@ -21,7 +21,7 @@ public enum CongestionState: Sendable, Equatable {
     /// Window is halved, and we wait for a post-recovery packet to be acknowledged
     case recovery(startTime: ContinuousClock.Instant)
 
-    public static func == (lhs: CongestionState, rhs: CongestionState) -> Bool {
+    package static func == (lhs: CongestionState, rhs: CongestionState) -> Bool {
         switch (lhs, rhs) {
         case (.slowStart, .slowStart):
             return true
@@ -47,7 +47,7 @@ public enum CongestionState: Sendable, Equatable {
 /// - Slow start threshold (ssthresh)
 /// - Recovery period tracking
 /// - Pacing for smooth traffic transmission
-public protocol CongestionController: Sendable {
+package protocol CongestionController: Sendable {
 
     // MARK: - State Queries
 
@@ -152,7 +152,49 @@ public protocol CongestionController: Sendable {
 extension CongestionController {
 
     /// Default implementation of available window calculation
-    public func availableWindow(bytesInFlight: Int) -> Int {
+    package func availableWindow(bytesInFlight: Int) -> Int {
         max(0, congestionWindow - bytesInFlight)
+    }
+}
+
+// MARK: - Congestion Controller Factory
+
+/// Factory protocol for creating congestion control algorithm instances.
+///
+/// Implement this protocol to provide custom congestion control algorithms
+/// (e.g., CUBIC, BBR) that can be injected into QUIC connections via
+/// `QUICConfiguration.congestionControllerFactory`.
+///
+/// ## Example
+///
+/// ```swift
+/// struct BBRFactory: CongestionControllerFactory {
+///     func makeCongestionController(maxDatagramSize: Int) -> any CongestionController {
+///         BBRCongestionController(maxDatagramSize: maxDatagramSize)
+///     }
+/// }
+/// ```
+package protocol CongestionControllerFactory: Sendable {
+    /// Creates a new congestion controller instance.
+    ///
+    /// Called once per connection to create the congestion controller
+    /// that will manage that connection's sending rate.
+    ///
+    /// - Parameter maxDatagramSize: Maximum datagram size in bytes (typically 1200)
+    /// - Returns: A configured congestion controller
+    func makeCongestionController(maxDatagramSize: Int) -> any CongestionController
+}
+
+// MARK: - NewReno Factory (Default)
+
+/// Default factory that creates `NewRenoCongestionController` instances.
+///
+/// This is the factory used when no custom congestion control algorithm
+/// is configured. NewReno is the recommended default per RFC 9002.
+package struct NewRenoFactory: CongestionControllerFactory {
+    package init() {}
+
+    package func makeCongestionController(maxDatagramSize: Int) -> any CongestionController {
+        NewRenoCongestionController(maxDatagramSize: maxDatagramSize)
     }
 }

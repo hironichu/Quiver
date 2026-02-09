@@ -11,7 +11,7 @@ import QUICCore
 // MARK: - TLS 1.3 Handler
 
 /// Pure Swift TLS 1.3 implementation for QUIC
-public final class TLS13Handler: TLS13Provider, Sendable {
+package final class TLS13Handler: TLS13Provider, Sendable {
 
     /// Maximum size for handshake message buffers (64KB per level)
     private static let maxBufferSize = 65536
@@ -60,13 +60,13 @@ public final class TLS13Handler: TLS13Provider, Sendable {
     /// loaded lazily when the server processes the first ClientHello.
     ///
     /// - Parameter configuration: TLS configuration
-    public init(configuration: TLSConfiguration = TLSConfiguration()) {
+    package init(configuration: TLSConfiguration = TLSConfiguration()) {
         self.configuration = configuration
     }
 
     // MARK: - TLS13Provider Protocol
 
-    public func startHandshake(isClient: Bool) async throws -> [TLSOutput] {
+    package func startHandshake(isClient: Bool) async throws -> [TLSOutput] {
         return try state.withLock { state in
             state.isClientMode = isClient
 
@@ -96,7 +96,7 @@ public final class TLS13Handler: TLS13Provider, Sendable {
         }
     }
 
-    public func processHandshakeData(_ data: Data, at level: EncryptionLevel) async throws -> [TLSOutput] {
+    package func processHandshakeData(_ data: Data, at level: EncryptionLevel) async throws -> [TLSOutput] {
         // Phase 1: Synchronous message processing (inside lock).
         // Returns outputs and a flag indicating whether a certificate message
         // was processed (so we can perform async revocation checking outside the lock).
@@ -168,42 +168,42 @@ public final class TLS13Handler: TLS13Provider, Sendable {
         return outputs
     }
 
-    public func getLocalTransportParameters() -> Data {
+    package func getLocalTransportParameters() -> Data {
         state.withLock { $0.localTransportParams ?? Data() }
     }
 
-    public func setLocalTransportParameters(_ params: Data) throws {
+    package func setLocalTransportParameters(_ params: Data) throws {
         state.withLock { $0.localTransportParams = params }
     }
 
-    public func getPeerTransportParameters() -> Data? {
+    package func getPeerTransportParameters() -> Data? {
         state.withLock { $0.peerTransportParams }
     }
 
-    public var isHandshakeComplete: Bool {
+    package var isHandshakeComplete: Bool {
         state.withLock { $0.handshakeComplete }
     }
 
-    public var isClient: Bool {
+    package var isClient: Bool {
         state.withLock { $0.isClientMode }
     }
 
-    public var negotiatedALPN: String? {
+    package var negotiatedALPN: String? {
         state.withLock { $0.negotiatedALPN }
     }
 
-    public func configureResumption(ticket: SessionTicketData, attemptEarlyData: Bool) throws {
+    package func configureResumption(ticket: SessionTicketData, attemptEarlyData: Bool) throws {
         state.withLock { state in
             state.resumptionTicket = ticket
             state.attemptEarlyData = attemptEarlyData
         }
     }
 
-    public var is0RTTAccepted: Bool {
+    package var is0RTTAccepted: Bool {
         state.withLock { $0.is0RTTAccepted }
     }
 
-    public var is0RTTAttempted: Bool {
+    package var is0RTTAttempted: Bool {
         state.withLock { $0.is0RTTAttempted }
     }
 
@@ -211,7 +211,7 @@ public final class TLS13Handler: TLS13Provider, Sendable {
     /// Available after receiving peer's Certificate message.
     /// For client mode: returns server's certificates
     /// For server mode (mTLS): returns client's certificates
-    public var peerCertificates: [Data]? {
+    package var peerCertificates: [Data]? {
         state.withLock { state -> [Data]? in
             if state.isClientMode {
                 return state.clientStateMachine?.peerCertificates
@@ -227,7 +227,7 @@ public final class TLS13Handler: TLS13Provider, Sendable {
     /// Available after receiving peer's Certificate message.
     /// For client mode: returns server's certificate
     /// For server mode (mTLS): returns client's certificate
-    public var peerCertificate: X509Certificate? {
+    package var peerCertificate: X509Certificate? {
         state.withLock { state -> X509Certificate? in
             if state.isClientMode {
                 return state.clientStateMachine?.peerCertificate
@@ -242,7 +242,7 @@ public final class TLS13Handler: TLS13Provider, Sendable {
     ///
     /// This contains the value returned by `TLSConfiguration.certificateValidator`
     /// after successful certificate validation (e.g., application-specific peer identity).
-    public var validatedPeerInfo: (any Sendable)? {
+    package var validatedPeerInfo: (any Sendable)? {
         state.withLock { state in
             if state.isClientMode {
                 return state.clientStateMachine?.validatedPeerInfo
@@ -310,7 +310,7 @@ public final class TLS13Handler: TLS13Provider, Sendable {
         }
     }
 
-    public func requestKeyUpdate() async throws -> [TLSOutput] {
+    package func requestKeyUpdate() async throws -> [TLSOutput] {
         // Key update implementation (RFC 9001 Section 6 for QUIC)
         return try state.withLock { state in
             guard state.handshakeComplete else {
@@ -350,11 +350,11 @@ public final class TLS13Handler: TLS13Provider, Sendable {
     }
 
     /// Current key phase (0 or 1, toggles with each key update)
-    public var keyPhase: UInt8 {
+    package var keyPhase: UInt8 {
         state.withLock { $0.keyPhase }
     }
 
-    public func exportKeyingMaterial(
+    package func exportKeyingMaterial(
         label: String,
         context: Data?,
         length: Int

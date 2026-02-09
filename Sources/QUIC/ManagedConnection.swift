@@ -124,7 +124,7 @@ public final class ManagedConnection: Sendable {
     ///   - tlsProvider: TLS 1.3 provider
     ///   - localAddress: Local socket address (optional)
     ///   - remoteAddress: Remote socket address
-    public init(
+    public convenience init(
         role: ConnectionRole,
         version: QUICVersion,
         sourceConnectionID: ConnectionID,
@@ -135,13 +135,57 @@ public final class ManagedConnection: Sendable {
         localAddress: SocketAddress? = nil,
         remoteAddress: SocketAddress
     ) {
+        self.init(
+            role: role,
+            version: version,
+            sourceConnectionID: sourceConnectionID,
+            destinationConnectionID: destinationConnectionID,
+            originalConnectionID: originalConnectionID,
+            transportParameters: transportParameters,
+            tlsProvider: tlsProvider,
+            congestionControllerFactory: NewRenoFactory(),
+            localAddress: localAddress,
+            remoteAddress: remoteAddress
+        )
+    }
+
+    /// Creates a new managed connection with a custom congestion controller factory.
+    ///
+    /// This initializer is `package` access because `CongestionControllerFactory`
+    /// and its dependency types are package-internal. Use the public `init` for
+    /// default NewReno congestion control.
+    ///
+    /// - Parameters:
+    ///   - role: Connection role (client or server)
+    ///   - version: QUIC version
+    ///   - sourceConnectionID: Local connection ID
+    ///   - destinationConnectionID: Remote connection ID
+    ///   - originalConnectionID: Original DCID for Initial key derivation (defaults to destinationConnectionID)
+    ///   - transportParameters: Transport parameters to use
+    ///   - tlsProvider: TLS 1.3 provider
+    ///   - congestionControllerFactory: Factory for creating the congestion controller
+    ///   - localAddress: Local socket address (optional)
+    ///   - remoteAddress: Remote socket address
+    package init(
+        role: ConnectionRole,
+        version: QUICVersion,
+        sourceConnectionID: ConnectionID,
+        destinationConnectionID: ConnectionID,
+        originalConnectionID: ConnectionID? = nil,
+        transportParameters: TransportParameters,
+        tlsProvider: any TLS13Provider,
+        congestionControllerFactory: any CongestionControllerFactory,
+        localAddress: SocketAddress? = nil,
+        remoteAddress: SocketAddress
+    ) {
         self.incomingDatagramState = Mutex(IncomingDatagramState())
         self.handler = QUICConnectionHandler(
             role: role,
             version: version,
             sourceConnectionID: sourceConnectionID,
             destinationConnectionID: destinationConnectionID,
-            transportParameters: transportParameters
+            transportParameters: transportParameters,
+            congestionControllerFactory: congestionControllerFactory
         )
         self.packetProcessor = PacketProcessor(dcidLength: sourceConnectionID.length)
         self.tlsProvider = tlsProvider

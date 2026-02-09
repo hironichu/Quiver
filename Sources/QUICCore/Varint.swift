@@ -24,12 +24,14 @@ public struct Varint: Hashable, Sendable {
     /// Creates a Varint from a UInt64 value
     /// - Parameter value: The value (must be <= 2^62 - 1)
     /// - Precondition: value must be representable in 62 bits
+    @inlinable
     public init(_ value: UInt64) {
         precondition(value <= Self.maxValue, "Varint value exceeds maximum (2^62 - 1)")
         self.value = value
     }
 
     /// Creates a Varint from any BinaryInteger
+    @inlinable
     public init<T: BinaryInteger>(_ value: T) {
         self.init(UInt64(value))
     }

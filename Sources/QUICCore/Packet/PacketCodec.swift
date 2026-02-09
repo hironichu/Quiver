@@ -31,23 +31,23 @@ public enum PacketCodecError: Error, Sendable {
 // MARK: - Parsed Packet
 
 /// A fully parsed and decrypted QUIC packet
-public struct ParsedPacket: Sendable {
+package struct ParsedPacket: Sendable {
     /// The packet header
-    public let header: PacketHeader
+    package let header: PacketHeader
 
     /// The decoded packet number
-    public let packetNumber: UInt64
+    package let packetNumber: UInt64
 
     /// The decrypted frames
-    public let frames: [Frame]
+    package let frames: [Frame]
 
     /// The encryption level of this packet
-    public let encryptionLevel: EncryptionLevel
+    package let encryptionLevel: EncryptionLevel
 
     /// Total size of the packet in bytes
-    public let packetSize: Int
+    package let packetSize: Int
 
-    public init(
+    package init(
         header: PacketHeader,
         packetNumber: UInt64,
         frames: [Frame],
@@ -95,21 +95,21 @@ public protocol PacketSealerProtocol: Sendable {
 // MARK: - Packet Encoder
 
 /// Encodes QUIC packets from frames
-public struct PacketEncoder: Sendable {
+package struct PacketEncoder: Sendable {
     private let frameCodec: StandardFrameCodec
 
     /// Default MTU for QUIC (minimum guaranteed)
-    public static let defaultMTU = 1200
+    package static let defaultMTU = 1200
 
     /// AEAD tag size (16 bytes for AES-GCM)
-    public static let aeadTagSize = 16
+    package static let aeadTagSize = 16
 
-    public init() {
+    package init() {
         self.frameCodec = StandardFrameCodec()
     }
 
     /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1)
-    public static let initialPacketMinSize = 1200
+    package static let initialPacketMinSize = 1200
 
     /// Encodes a Long Header packet
     /// - Parameters:
@@ -120,7 +120,7 @@ public struct PacketEncoder: Sendable {
     ///   - maxPacketSize: Maximum packet size (default: 1200)
     ///   - padToMinimum: If true and this is an Initial packet, pad to 1200 bytes (default: true)
     /// - Returns: The fully encoded and protected packet
-    public func encodeLongHeaderPacket(
+    package func encodeLongHeaderPacket(
         frames: [Frame],
         header: LongHeader,
         packetNumber: UInt64,
@@ -209,7 +209,7 @@ public struct PacketEncoder: Sendable {
     ///   - sealer: The sealer for encryption
     ///   - maxPacketSize: Maximum packet size
     /// - Returns: The fully encoded and protected packet
-    public func encodeShortHeaderPacket(
+    package func encodeShortHeaderPacket(
         frames: [Frame],
         header: ShortHeader,
         packetNumber: UInt64,
@@ -336,11 +336,11 @@ public struct PacketEncoder: Sendable {
 // MARK: - Packet Decoder
 
 /// Decodes QUIC packets
-public struct PacketDecoder: Sendable {
+package struct PacketDecoder: Sendable {
     private static let logger = QuiverLogging.logger(label: "quic.core.packet-codec")
     private let frameCodec: StandardFrameCodec
 
-    public init() {
+    package init() {
         self.frameCodec = StandardFrameCodec()
     }
 
@@ -351,7 +351,7 @@ public struct PacketDecoder: Sendable {
     ///   - opener: The opener for decryption (nil for unprotected packets)
     ///   - largestPN: Largest packet number received (for PN decoding)
     /// - Returns: The parsed packet
-    public func decodePacket(
+    package func decodePacket(
         data: Data,
         dcidLength: Int,
         opener: (any PacketOpenerProtocol)?,
@@ -616,7 +616,7 @@ extension PacketEncoder {
     ///   - packetNumberLength: Packet number length (1-4)
     ///   - payloadLength: Expected payload length (for accurate Length field size calculation)
     /// - Returns: Total header + crypto overhead in bytes
-    public static func longHeaderOverhead(
+    package static func longHeaderOverhead(
         dcidLength: Int,
         scidLength: Int,
         tokenLength: Int = 0,
@@ -655,7 +655,7 @@ extension PacketEncoder {
     ///   - dcidLength: Destination connection ID length
     ///   - packetNumberLength: Packet number length (1-4)
     /// - Returns: Total header + crypto overhead in bytes
-    public static func shortHeaderOverhead(
+    package static func shortHeaderOverhead(
         dcidLength: Int,
         packetNumberLength: Int = 4
     ) -> Int {

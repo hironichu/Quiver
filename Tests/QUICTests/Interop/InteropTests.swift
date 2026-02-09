@@ -8,6 +8,7 @@ import Foundation
 @testable import QUICCore
 @testable import QUICCrypto
 @testable import QUICRecovery
+@testable import QUICTransport
 
 // MARK: - InitialSecrets Extension for Testing
 
@@ -644,7 +645,7 @@ struct ECNSupportTests {
 
     @Test("ECN counts tracking")
     func ecnCountsTracking() {
-        var counts = ECNCounts()
+        var counts = ECNCountState()
 
         counts.record(.ect0)
         counts.record(.ect0)
@@ -670,7 +671,7 @@ struct ECNSupportTests {
         #expect(manager.isEnabled)
 
         // Process valid feedback
-        let counts = ECNCounts(ect0: 10, ect1: 0, ce: 0)
+        let counts = ECNCountState(ect0: 10, ect1: 0, ce: 0)
         _ = manager.processACKFeedback(counts, level: .application)
 
         // After 10 packets, should be capable

@@ -10,7 +10,7 @@ import QUICCore
 // MARK: - Key Schedule
 
 /// Manages QUIC key derivation across encryption levels
-public struct KeySchedule: Sendable {
+package struct KeySchedule: Sendable {
     /// Current encryption level
     private var currentLevel: EncryptionLevel
 
@@ -35,7 +35,7 @@ public struct KeySchedule: Sendable {
     // MARK: - Initialization
 
     /// Creates a new KeySchedule
-    public init() {
+    package init() {
         self.currentLevel = .initial
         self.clientSecrets = [:]
         self.serverSecrets = [:]
@@ -52,7 +52,7 @@ public struct KeySchedule: Sendable {
     ///   - connectionID: The Destination Connection ID from the first Initial packet
     ///   - version: The QUIC version
     /// - Returns: Client and server key material tuple
-    public mutating func deriveInitialKeys(
+    package mutating func deriveInitialKeys(
         connectionID: ConnectionID,
         version: QUICVersion
     ) throws -> (client: KeyMaterial, server: KeyMaterial) {
@@ -78,7 +78,7 @@ public struct KeySchedule: Sendable {
     ///   - clientSecret: Client handshake secret from TLS
     ///   - serverSecret: Server handshake secret from TLS
     /// - Returns: Client and server key material tuple
-    public mutating func setHandshakeSecrets(
+    package mutating func setHandshakeSecrets(
         clientSecret: SymmetricKey,
         serverSecret: SymmetricKey
     ) throws -> (client: KeyMaterial, server: KeyMaterial) {
@@ -102,7 +102,7 @@ public struct KeySchedule: Sendable {
     ///   - clientSecret: Client application secret from TLS
     ///   - serverSecret: Server application secret from TLS
     /// - Returns: Client and server key material tuple
-    public mutating func setApplicationSecrets(
+    package mutating func setApplicationSecrets(
         clientSecret: SymmetricKey,
         serverSecret: SymmetricKey
     ) throws -> (client: KeyMaterial, server: KeyMaterial) {
@@ -129,7 +129,7 @@ public struct KeySchedule: Sendable {
     /// ```
     ///
     /// - Returns: New client and server key material tuple
-    public mutating func updateKeys() throws -> (client: KeyMaterial, server: KeyMaterial) {
+    package mutating func updateKeys() throws -> (client: KeyMaterial, server: KeyMaterial) {
         guard let clientAppSecret = clientSecrets[.application],
               let serverAppSecret = serverSecrets[.application] else {
             throw KeyScheduleError.applicationSecretsNotSet
@@ -175,48 +175,48 @@ public struct KeySchedule: Sendable {
     /// Gets client key material for an encryption level
     /// - Parameter level: The encryption level
     /// - Returns: Key material if available
-    public func clientKeyMaterial(for level: EncryptionLevel) -> KeyMaterial? {
+    package func clientKeyMaterial(for level: EncryptionLevel) -> KeyMaterial? {
         clientKeys[level]
     }
 
     /// Gets server key material for an encryption level
     /// - Parameter level: The encryption level
     /// - Returns: Key material if available
-    public func serverKeyMaterial(for level: EncryptionLevel) -> KeyMaterial? {
+    package func serverKeyMaterial(for level: EncryptionLevel) -> KeyMaterial? {
         serverKeys[level]
     }
 
     /// Gets the client secret for an encryption level
     /// - Parameter level: The encryption level
     /// - Returns: Secret if available
-    public func clientSecret(for level: EncryptionLevel) -> SymmetricKey? {
+    package func clientSecret(for level: EncryptionLevel) -> SymmetricKey? {
         clientSecrets[level]
     }
 
     /// Gets the server secret for an encryption level
     /// - Parameter level: The encryption level
     /// - Returns: Secret if available
-    public func serverSecret(for level: EncryptionLevel) -> SymmetricKey? {
+    package func serverSecret(for level: EncryptionLevel) -> SymmetricKey? {
         serverSecrets[level]
     }
 
     /// The current encryption level
-    public var level: EncryptionLevel {
+    package var level: EncryptionLevel {
         currentLevel
     }
 
     /// The current key phase bit (0 or 1)
-    public var currentKeyPhase: UInt8 {
+    package var currentKeyPhase: UInt8 {
         keyPhase
     }
 
     /// Number of key updates performed
-    public var updateCount: UInt64 {
+    package var updateCount: UInt64 {
         keyUpdateCount
     }
 
     /// Whether keys are available for a given level
-    public func hasKeys(for level: EncryptionLevel) -> Bool {
+    package func hasKeys(for level: EncryptionLevel) -> Bool {
         clientKeys[level] != nil && serverKeys[level] != nil
     }
 
@@ -228,7 +228,7 @@ public struct KeySchedule: Sendable {
     /// Per RFC 9001 Section 4.9, keys should be discarded when:
     /// - Initial keys: After receiving Handshake packet
     /// - Handshake keys: After handshake confirmed
-    public mutating func discardKeys(for level: EncryptionLevel) {
+    package mutating func discardKeys(for level: EncryptionLevel) {
         clientSecrets.removeValue(forKey: level)
         serverSecrets.removeValue(forKey: level)
         clientKeys.removeValue(forKey: level)

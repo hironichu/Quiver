@@ -254,7 +254,7 @@ public final class TimerWheel: Sendable {
     public func addTimer(for connection: ManagedConnection, delay: Duration) {
         let ticks = Int(delay.components.seconds * 1000 + delay.components.attoseconds / 1_000_000_000_000_000) / Int(tickDuration.components.seconds * 1000 + tickDuration.components.attoseconds / 1_000_000_000_000_000)
 
-        let (currentTickValue, _) = (currentTick.withLock { $0 }, ())
+        let currentTickValue = currentTick.withLock { $0 }
         let targetSlot = (currentTickValue + max(1, ticks)) % wheelSize
 
         slots.withLock { slots in

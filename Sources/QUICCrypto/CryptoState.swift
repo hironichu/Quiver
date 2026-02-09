@@ -51,28 +51,28 @@ public protocol PacketSealer: PacketSealerProtocol {}
 // MARK: - Crypto Context
 
 /// Cryptographic context for a single encryption level
-public struct CryptoContext: Sendable {
+package struct CryptoContext: Sendable {
     /// The opener for this level (decryption)
-    public let opener: (any PacketOpener)?
+    package let opener: (any PacketOpener)?
 
     /// The sealer for this level (encryption)
-    public let sealer: (any PacketSealer)?
+    package let sealer: (any PacketSealer)?
 
     /// Creates an empty crypto context
-    public init() {
+    package init() {
         self.opener = nil
         self.sealer = nil
     }
 
     /// Creates a crypto context with opener and sealer
-    public init(opener: any PacketOpener, sealer: any PacketSealer) {
+    package init(opener: any PacketOpener, sealer: any PacketSealer) {
         self.opener = opener
         self.sealer = sealer
     }
 
     /// Creates a crypto context with optional opener and/or sealer
     /// Used for 0-RTT where only one direction is available
-    public init(opener: (any PacketOpener)?, sealer: (any PacketSealer)?) {
+    package init(opener: (any PacketOpener)?, sealer: (any PacketSealer)?) {
         self.opener = opener
         self.sealer = sealer
     }
@@ -81,22 +81,22 @@ public struct CryptoContext: Sendable {
 // MARK: - Crypto State
 
 /// Manages all cryptographic state for a connection
-public final class CryptoState: Sendable {
+package final class CryptoState: Sendable {
     /// Crypto contexts for each encryption level
     private let contexts: [EncryptionLevel: CryptoContext]
 
     /// Creates a new crypto state
-    public init(contexts: [EncryptionLevel: CryptoContext] = [:]) {
+    package init(contexts: [EncryptionLevel: CryptoContext] = [:]) {
         self.contexts = contexts
     }
 
     /// Gets the crypto context for an encryption level
-    public func context(for level: EncryptionLevel) -> CryptoContext? {
+    package func context(for level: EncryptionLevel) -> CryptoContext? {
         contexts[level]
     }
 
     /// Creates a new crypto state with an updated context for a level
-    public func withContext(_ context: CryptoContext, for level: EncryptionLevel) -> CryptoState {
+    package func withContext(_ context: CryptoContext, for level: EncryptionLevel) -> CryptoState {
         var newContexts = contexts
         newContexts[level] = context
         return CryptoState(contexts: newContexts)

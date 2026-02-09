@@ -66,7 +66,7 @@ public struct AES128GCMOpener: PacketOpener, Sendable {
 
     /// Creates an opener from key material
     /// - Throws: CryptoError.invalidIVLength if IV is not 12 bytes
-    public init(keyMaterial: KeyMaterial) throws {
+    package init(keyMaterial: KeyMaterial) throws {
         try self.init(key: keyMaterial.key, iv: keyMaterial.iv, hp: keyMaterial.hp)
     }
 
@@ -152,7 +152,7 @@ public struct AES128GCMSealer: PacketSealer, Sendable {
 
     /// Creates a sealer from key material
     /// - Throws: CryptoError.invalidIVLength if IV is not 12 bytes
-    public init(keyMaterial: KeyMaterial) throws {
+    package init(keyMaterial: KeyMaterial) throws {
         try self.init(key: keyMaterial.key, iv: keyMaterial.iv, hp: keyMaterial.hp)
     }
 
@@ -287,7 +287,7 @@ public struct ChaCha20Poly1305Opener: PacketOpener, Sendable {
 
     /// Creates an opener from key material
     /// - Throws: CryptoError.invalidIVLength if IV is not 12 bytes
-    public init(keyMaterial: KeyMaterial) throws {
+    package init(keyMaterial: KeyMaterial) throws {
         try self.init(key: keyMaterial.key, iv: keyMaterial.iv, hp: keyMaterial.hp)
     }
 
@@ -376,7 +376,7 @@ public struct ChaCha20Poly1305Sealer: PacketSealer, Sendable {
 
     /// Creates a sealer from key material
     /// - Throws: CryptoError.invalidIVLength if IV is not 12 bytes
-    public init(keyMaterial: KeyMaterial) throws {
+    package init(keyMaterial: KeyMaterial) throws {
         try self.init(key: keyMaterial.key, iv: keyMaterial.iv, hp: keyMaterial.hp)
     }
 

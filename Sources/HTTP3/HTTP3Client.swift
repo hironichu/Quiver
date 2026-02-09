@@ -48,6 +48,7 @@
 /// Connections are kept alive for subsequent requests to the same authority.
 
 import Foundation
+import QUIC
 import QUICCore
 import QPACK
 

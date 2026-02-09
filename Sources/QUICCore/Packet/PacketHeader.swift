@@ -9,6 +9,7 @@ import Foundation
 // MARK: - Packet Type
 
 /// Type of QUIC packet
+@frozen
 public enum PacketType: Sendable, Hashable {
     /// Initial packet (long header, type 0x00)
     case initial
@@ -49,6 +50,7 @@ public enum PacketType: Sendable, Hashable {
 }
 
 /// Encryption level (packet number space)
+@frozen
 public enum EncryptionLevel: Int, Sendable, Hashable, CaseIterable {
     case initial = 0
     case zeroRTT = 1

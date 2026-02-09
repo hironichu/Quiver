@@ -24,7 +24,7 @@ import Synchronization
 ///
 /// Uses `class + Mutex` design for high-frequency updates (per-packet operations).
 /// This avoids actor hop overhead while maintaining thread safety.
-public final class NewRenoCongestionController: CongestionController, Sendable {
+package final class NewRenoCongestionController: CongestionController, Sendable {
 
     // MARK: - Internal State
 
@@ -53,7 +53,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
     /// Creates a new NewReno congestion controller
     ///
     /// - Parameter maxDatagramSize: Maximum datagram size in bytes (default: 1200)
-    public init(maxDatagramSize: Int = LossDetectionConstants.maxDatagramSize) {
+    package init(maxDatagramSize: Int = LossDetectionConstants.maxDatagramSize) {
         let minimumWindow = 2 * maxDatagramSize
         // RFC 9002 Section 7.2: Initial window calculation
         let initialWindow = min(
@@ -76,11 +76,11 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
 
     // MARK: - CongestionController Protocol
 
-    public var congestionWindow: Int {
+    package var congestionWindow: Int {
         state.withLock { $0.congestionWindow }
     }
 
-    public var currentState: CongestionState {
+    package var currentState: CongestionState {
         state.withLock { s in
             if let recoveryStart = s.recoveryStartTime {
                 return .recovery(startTime: recoveryStart)
@@ -92,7 +92,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
         }
     }
 
-    public func availableWindow(bytesInFlight: Int) -> Int {
+    package func availableWindow(bytesInFlight: Int) -> Int {
         state.withLock { s in
             max(0, s.congestionWindow - bytesInFlight)
         }
@@ -100,7 +100,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
 
     // MARK: - Pacing
 
-    public func nextSendTime() -> ContinuousClock.Instant? {
+    package func nextSendTime() -> ContinuousClock.Instant? {
         state.withLock { s in
             // Burst tokens allow immediate sending at connection start
             if s.burstTokens > 0 {
@@ -116,7 +116,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
 
     // MARK: - Event Handlers
 
-    public func onPacketSent(bytes: Int, now: ContinuousClock.Instant) {
+    package func onPacketSent(bytes: Int, now: ContinuousClock.Instant) {
         state.withLock { s in
             if s.burstTokens > 0 {
                 s.burstTokens -= 1
@@ -130,7 +130,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
         }
     }
 
-    public func onPacketsAcknowledged(
+    package func onPacketsAcknowledged(
         packets: [SentPacket],
         now: ContinuousClock.Instant,
         rtt: RTTEstimator
@@ -174,7 +174,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
         }
     }
 
-    public func onPacketsLost(
+    package func onPacketsLost(
         packets: [SentPacket],
         now: ContinuousClock.Instant,
         rtt: RTTEstimator
@@ -196,7 +196,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
         }
     }
 
-    public func onECNCongestionEvent(now: ContinuousClock.Instant) {
+    package func onECNCongestionEvent(now: ContinuousClock.Instant) {
         state.withLock { s in
             // ECN-CE is treated the same as packet loss
             if s.recoveryStartTime != nil {
@@ -206,7 +206,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
         }
     }
 
-    public func onPersistentCongestion() {
+    package func onPersistentCongestion() {
         state.withLock { s in
             // RFC 9002 Section 7.6.2: Persistent Congestion
             //
@@ -262,7 +262,7 @@ public final class NewRenoCongestionController: CongestionController, Sendable {
 
 extension NewRenoCongestionController: CustomStringConvertible {
 
-    public var description: String {
+    package var description: String {
         state.withLock { s in
             let stateStr: String
             if s.recoveryStartTime != nil {
