@@ -41,8 +41,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: ${{ runner.os }}-spm-
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ matrix.swift }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ matrix.swift }}-
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         run: swift package resolve
@@ -74,8 +76,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: ${{ runner.os }}-spm-
+          key: ${{ runner.os }}-spm-${{ matrix.swift }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ matrix.swift }}-
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         run: swift package resolve
@@ -105,8 +109,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: ${{ runner.os }}-spm-
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         run: swift package resolve
@@ -132,8 +138,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: ${{ runner.os }}-spm-
+          key: ${{ runner.os }}-spm-${{ env.SWIFT_VERSION }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ env.SWIFT_VERSION }}-
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         run: swift package resolve
@@ -170,8 +178,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: ${{ runner.os }}-spm-
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         run: swift package resolve
@@ -221,8 +231,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
-          restore-keys: ${{ runner.os }}-spm-
+          key: ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-${{ env.XCODE_VERSION }}-
+            ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
         run: swift package resolve
