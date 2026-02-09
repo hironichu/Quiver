@@ -74,7 +74,7 @@ private struct DataStreamInternalState: Sendable {
 /// Bidirectional streams have both send and receive sides.
 /// Unidirectional streams have only one side active.
 public final class DataStream: Sendable {
-    private static let logger = Logger(label: "quic.stream.data")
+    private static let logger = QuiverLogging.logger(label: "quic.stream.data")
     /// Stream identifier
     public let id: UInt64
 

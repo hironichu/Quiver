@@ -24,6 +24,7 @@ concurrency:
 env:
   SWIFT_VERSION: "6.2.3"
   XCODE_VERSION: "26.0"
+  LOG_LEVEL: "critical"
   UNIT_TEST_FILTER: "QUICCoreTests|QUICCryptoTests|QUICRecoveryTests|QUICStreamTests|QPACKTests"
 
 jobs:

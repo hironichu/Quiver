@@ -128,7 +128,7 @@ public struct WebTransportOptions: Sendable {
 }
 
 public actor HTTP3Server {
-    private static let logger = Logger(label: "http3.server")
+    private static let logger = QuiverLogging.logger(label: "http3.server")
 
     // MARK: - Types
 

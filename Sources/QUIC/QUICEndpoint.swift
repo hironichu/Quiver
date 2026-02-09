@@ -88,7 +88,7 @@ public actor QUICEndpoint {
     private var shouldStop: Bool = false
 
     /// Logger for endpoint events
-    private let logger = Logger(label: "quic.endpoint")
+    private let logger = QuiverLogging.logger(label: "quic.endpoint")
 
     // MARK: - Initialization
 

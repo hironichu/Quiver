@@ -48,7 +48,7 @@ public enum HandshakeState: Sendable, Equatable {
 /// - Stream management via QUICConnectionProtocol
 /// - Anti-amplification limit enforcement (RFC 9000 Section 8.1)
 public final class ManagedConnection: Sendable {
-    private static let logger = Logger(label: "quic.connection.managed")
+    private static let logger = QuiverLogging.logger(label: "quic.connection.managed")
 
     // MARK: - Properties
 
@@ -831,7 +831,7 @@ public final class ManagedConnection: Sendable {
                 // Both client and server can send 1-RTT data immediately after handshake completes
                 // HANDSHAKE_DONE frame is for "handshake confirmation", not a requirement to start sending data
                 handler.markHandshakeComplete()
-                Self.logger.info("TLS handshake complete - enabling 1-RTT data transmission")
+                Self.logger.debug("TLS handshake complete - enabling 1-RTT data transmission")
 
                 // Server: Send HANDSHAKE_DONE frame to client (RFC 9001 Section 4.1.2)
                 let role = state.withLock { $0.role }
@@ -1333,7 +1333,7 @@ extension ManagedConnection: QUICConnectionProtocol {
 
     public func close(error: UInt64?) async {
         let scid = state.withLock { $0.sourceConnectionID }
-        Self.logger.info("close(error: \(String(describing: error))) called for SCID=\(scid)")
+        Self.logger.debug("close(error: \(String(describing: error))) called for SCID=\(scid)")
         handler.close(error: error.map { ConnectionCloseError(code: $0) })
         state.withLock { $0.handshakeState = .closing }
         shutdown()
@@ -1361,7 +1361,7 @@ extension ManagedConnection: QUICConnectionProtocol {
             s.handshakeCompletionContinuations.removeAll()
             return (s.sourceConnectionID, w)
         }
-        Self.logger.info("shutdown() called for SCID=\(scid)")
+        Self.logger.debug("shutdown() called for SCID=\(scid)")
 
         // Resume any callers waiting in waitForHandshake() with an error
         // This prevents them from hanging indefinitely when the connection

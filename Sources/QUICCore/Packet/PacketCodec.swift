@@ -337,7 +337,7 @@ public struct PacketEncoder: Sendable {
 
 /// Decodes QUIC packets
 public struct PacketDecoder: Sendable {
-    private static let logger = Logger(label: "quic.core.packet-codec")
+    private static let logger = QuiverLogging.logger(label: "quic.core.packet-codec")
     private let frameCodec: StandardFrameCodec
 
     public init() {
