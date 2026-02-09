@@ -254,7 +254,7 @@ struct X509Tests {
         // Test the hostname matching logic by reflection
         // Since matchHostname is private, we test through the public API indirectly
         // For now, just verify the validator is created correctly
-        #expect(validator != nil)
+        _ = validator // Validator created successfully
     }
 
     @Test("X509ValidationOptions default values")
@@ -271,13 +271,13 @@ struct X509Tests {
 
     @Test("CertificateStore adds and retrieves certificates")
     func certificateStore() throws {
-        var store = QUICCrypto.CertificateStore()
+        let store = QUICCrypto.CertificateStore()
         #expect(store.all.isEmpty)
 
         // We can't easily test adding certificates without a real certificate,
         // but we can verify the store is properly initialized
         let validator = store.validator()
-        #expect(validator != nil)
+        _ = validator // Validator created successfully
     }
 
     // MARK: - VerificationKey Extension Tests

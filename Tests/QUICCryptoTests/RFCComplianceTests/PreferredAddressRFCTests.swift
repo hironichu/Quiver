@@ -60,7 +60,7 @@ struct PreferredAddressRFCTests {
         )
 
         // Encode
-        let encoded = try TransportParameterCodec.encode(params)
+        let encoded = TransportParameterCodec.encode(params)
         #expect(!encoded.isEmpty)
 
         // Decode
@@ -89,7 +89,7 @@ struct PreferredAddressRFCTests {
         )
 
         // Encode and decode
-        let encoded = try TransportParameterCodec.encode(params)
+        let encoded = TransportParameterCodec.encode(params)
         let decoded = try TransportParameterCodec.decode(encoded)
 
         // TODO: Current implementation may encode IPv6 as zeros
@@ -120,7 +120,7 @@ struct PreferredAddressRFCTests {
         )
 
         // Server can encode with preferred_address
-        let encoded = try TransportParameterCodec.encode(serverParams)
+        let encoded = TransportParameterCodec.encode(serverParams)
         #expect(!encoded.isEmpty)
 
         // But a CLIENT decoder receiving this from another client should reject it

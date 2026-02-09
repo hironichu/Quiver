@@ -250,19 +250,6 @@ final class QPACKIntegerTests: XCTestCase {
     }
 }
 
-// MARK: - QPACKIntegerError Equatable for testing
-
-extension QPACKIntegerError: @retroactive Equatable {
-    public static func == (lhs: QPACKIntegerError, rhs: QPACKIntegerError) -> Bool {
-        switch (lhs, rhs) {
-        case (.insufficientData, .insufficientData): return true
-        case (.integerOverflow, .integerOverflow): return true
-        case (.invalidEncoding, .invalidEncoding): return true
-        default: return false
-        }
-    }
-}
-
 // MARK: - String Coding Tests
 
 final class QPACKStringTests: XCTestCase {

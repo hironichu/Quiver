@@ -515,7 +515,7 @@ struct DataStreamTests {
 
         // RESET_STREAM with finalSize > recvMaxData should throw
         #expect(throws: StreamError.self) {
-            var mutableStream = stream
+            let mutableStream = stream
             try mutableStream.handleResetStream(errorCode: 0, finalSize: 150)
         }
     }
