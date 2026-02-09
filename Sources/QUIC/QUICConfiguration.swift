@@ -155,36 +155,7 @@ public struct QUICConfiguration: Sendable {
     /// configuration, use `TLSConfiguration.alpnProtocols` instead.
     public var alpn: [String]
 
-    // MARK: - TLS (Legacy — prefer TLSConfiguration)
-
-    /// Path to certificate file (for servers).
-    ///
-    /// - Warning: **Legacy field.** This field is **not consumed** by
-    ///   `TLS13Handler` and exists only for backward compatibility.
-    ///   Use `TLSConfiguration.certificatePath` or
-    ///   `TLSConfiguration.server(certificatePath:privateKeyPath:)` instead.
-    ///   This field will be removed in a future release.
-    @available(*, deprecated, message: "Use TLSConfiguration.certificatePath or TLSConfiguration.server(certificatePath:privateKeyPath:) instead")
-    public var certificatePath: String?
-
-    /// Path to private key file (for servers).
-    ///
-    /// - Warning: **Legacy field.** This field is **not consumed** by
-    ///   `TLS13Handler` and exists only for backward compatibility.
-    ///   Use `TLSConfiguration.privateKeyPath` or
-    ///   `TLSConfiguration.server(certificatePath:privateKeyPath:)` instead.
-    ///   This field will be removed in a future release.
-    @available(*, deprecated, message: "Use TLSConfiguration.privateKeyPath or TLSConfiguration.server(certificatePath:privateKeyPath:) instead")
-    public var privateKeyPath: String?
-
-    /// Whether to verify peer certificates (default: true).
-    ///
-    /// - Warning: **Legacy field.** This field is **not consumed** by
-    ///   `TLS13Handler` and exists only for backward compatibility.
-    ///   Use `TLSConfiguration.verifyPeer` instead.
-    ///   This field will be removed in a future release.
-    @available(*, deprecated, message: "Use TLSConfiguration.verifyPeer instead")
-    public var verifyPeer: Bool
+    // MARK: - TLS Provider
 
     /// Custom TLS provider factory (legacy).
     ///
@@ -235,10 +206,8 @@ public struct QUICConfiguration: Sendable {
 
     /// Creates a default configuration.
     ///
-    /// - Note: The legacy TLS fields (`certificatePath`, `privateKeyPath`,
-    ///   `verifyPeer`) are initialized for backward compatibility but are **not**
-    ///   consumed by the TLS stack. Use `TLSConfiguration` for all TLS settings,
-    ///   and prefer `QUICConfiguration.production()` or `.development()` factory
+    /// - Note: Use `TLSConfiguration` for all TLS settings, and prefer
+    ///   `QUICConfiguration.production()` or `.development()` factory
     ///   methods for new code.
     public init() {
         self.maxIdleTimeout = .seconds(30)
@@ -256,9 +225,6 @@ public struct QUICConfiguration: Sendable {
         self.alpn = ["h3"]
         self.enableDatagrams = false
         self.maxDatagramFrameSize = 65535
-        self.certificatePath = nil
-        self.privateKeyPath = nil
-        self.verifyPeer = true
         self.tlsProviderFactory = nil
         self.securityMode = nil
         self.congestionControllerFactory = NewRenoFactory()

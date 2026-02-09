@@ -859,27 +859,24 @@ For a small number of streams, a sorted array of tuples might be faster than dic
 
 ## 9. Naming, Deprecation & Cleanup
 
-### 9.1 Remove Deprecated Legacy TLS Fields
+### 9.1 Remove Deprecated Legacy TLS Fields — ✅ Done
 
-**File**: `Sources/QUIC/QUICConfiguration.swift` L130-157
+**File**: `Sources/QUIC/QUICConfiguration.swift`
 
-Three fields are marked with deprecation warnings in comments but not with `@available(*, deprecated)`:
+Three fields were marked `@available(*, deprecated)` and documented as "not consumed by
+`TLS13Handler`". Zero call sites read these fields from `QUICConfiguration` (the actively
+used equivalents live on `TLSConfiguration`). All three properties and their initialization
+in `init()` have been **deleted**:
 
-```swift
-/// - Warning: **Legacy field.** ... This field will be removed in a future release.
-public var certificatePath: String?
-public var privateKeyPath: String?
-public var verifyPeer: Bool
-```
+- `certificatePath: String?`
+- `privateKeyPath: String?`
+- `verifyPeer: Bool`
 
-**Recommendation**: Apply proper deprecation attributes:
+The `// MARK:` section was renamed from "TLS (Legacy — prefer TLSConfiguration)" to
+"TLS Provider" since only the still-used `tlsProviderFactory` remains. The `init()` doc
+comment was updated to remove references to the deleted fields.
 
-```swift
-@available(*, deprecated, message: "Use TLSConfiguration.certificatePath instead")
-public var certificatePath: String?
-```
-
-This way, the compiler warns users at call sites.
+**Status**: Removed. Build clean, 876/876 tests pass.
 
 ---
 
