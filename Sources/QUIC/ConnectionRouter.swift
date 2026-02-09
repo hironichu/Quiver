@@ -173,17 +173,6 @@ public final class ConnectionRouter: Sendable {
         Self.logger.debug("UNREGISTER connection SCID=\(scid) removed CIDs: \(cids) (remaining: \(remainingCount))")
     }
 
-    /// Unregisters specific connection IDs (without connection reference)
-    /// - Parameter connectionIDs: The IDs to unregister
-    @available(*, deprecated, message: "Use retireConnectionID(_:for:) instead for proper tracking")
-    public func unregister(connectionIDs: [ConnectionID]) {
-        connections.withLock { conns in
-            for cid in connectionIDs {
-                conns.removeValue(forKey: cid)
-            }
-        }
-    }
-
     /// Adds a new connection ID for an existing connection
     /// - Parameters:
     ///   - connectionID: The new connection ID
@@ -192,13 +181,6 @@ public final class ConnectionRouter: Sendable {
         let connID = ObjectIdentifier(connection)
         connections.withLock { $0[connectionID] = connection }
         _ = connectionCIDs.withLock { $0[connID, default: []].insert(connectionID) }
-    }
-
-    /// Retires a connection ID
-    /// - Parameter connectionID: The ID to retire
-    @available(*, deprecated, message: "Use retireConnectionID(_:for:) instead for proper tracking")
-    public func retireConnectionID(_ connectionID: ConnectionID) {
-        _ = connections.withLock { $0.removeValue(forKey: connectionID) }
     }
 
     /// Retires a connection ID with proper tracking
@@ -241,51 +223,6 @@ public final class ConnectionRouter: Sendable {
         connections.withLock { Set($0.values).count }
     }
 
-    // MARK: - Private Helpers
-
-    /// Extracts source connection ID from an Initial packet
-    private func extractSourceConnectionID(from data: Data) throws -> ConnectionID {
-        // Parse the long header to get SCID
-        // RFC 9000: Long header format
-        // 1 byte: header form + type
-        // 4 bytes: version
-        // 1 byte: DCID length
-        // N bytes: DCID
-        // 1 byte: SCID length
-        // M bytes: SCID
-
-        guard data.count >= 7 else {
-            throw PacketCodecError.insufficientData
-        }
-
-        let startIndex = data.startIndex
-
-        // Skip header byte (1) + version (4)
-        var offset = startIndex + 5
-
-        // DCID length
-        let dcidLen = Int(data[offset])
-        offset += 1
-
-        // Skip DCID
-        offset += dcidLen
-
-        guard offset < data.endIndex else {
-            throw PacketCodecError.insufficientData
-        }
-
-        // SCID length
-        let scidLen = Int(data[offset])
-        offset += 1
-
-        guard offset + scidLen <= data.endIndex else {
-            throw PacketCodecError.insufficientData
-        }
-
-        // SCID
-        let scidBytes = data[offset..<(offset + scidLen)]
-        return try ConnectionID(bytes: scidBytes)  // Slice is already Data
-    }
 }
 
 // MARK: - Hashable for ManagedConnection

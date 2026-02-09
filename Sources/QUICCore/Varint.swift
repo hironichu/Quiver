@@ -157,18 +157,6 @@ extension Varint {
         }
     }
 
-    /// Decodes a varint from a DataReader, advancing the reader position
-    ///
-    /// - Note: This method is deprecated. Use `DataReader.readVarint()` or
-    ///   `DataReader.readVarintValue()` instead for better performance.
-    ///   Those methods avoid creating intermediate Data slices.
-    @available(*, deprecated, message: "Use DataReader.readVarint() or readVarintValue() for better performance")
-    @inlinable
-    public static func decode(from reader: inout DataReader) throws -> Varint {
-        // Forward to the optimized path
-        return try reader.readVarint()
-    }
-
     /// Returns the encoded length for the first varint in the data without fully decoding
     public static func peekEncodedLength(from data: Data) -> Int? {
         guard let firstByte = data.first else { return nil }

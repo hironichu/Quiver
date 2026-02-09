@@ -94,8 +94,20 @@ extension QUICEndpoint {
     }
 
     /// Connects to a remote QUIC server
+    ///
     /// - Parameter address: The server address
     /// - Returns: The established connection
+    ///
+    /// ## Concurrency Safety
+    ///
+    /// The `connect` → `register` → `start` → `send Initial` sequence is safe
+    /// against incoming packets arriving for the new connection's DCID before
+    /// the handshake begins. Because `QUICEndpoint` is an `actor`, both this
+    /// method and the packet-receive path (`processIncomingPacket`) are
+    /// actor-isolated and therefore cannot interleave. The router registration
+    /// happens *before* the first Initial packet is sent, so by the time any
+    /// response packet could arrive and be routed, the connection is fully
+    /// registered and initialized.
     public func connect(to address: SocketAddress) async throws -> any QUICConnectionProtocol {
         guard !isServer else {
             throw QUICEndpointError.serverCannotConnect

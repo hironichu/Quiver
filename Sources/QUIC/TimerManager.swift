@@ -252,7 +252,9 @@ public final class TimerWheel: Sendable {
     ///   - connection: The connection
     ///   - delay: Delay until the timer fires
     public func addTimer(for connection: ManagedConnection, delay: Duration) {
-        let ticks = Int(delay.components.seconds * 1000 + delay.components.attoseconds / 1_000_000_000_000_000) / Int(tickDuration.components.seconds * 1000 + tickDuration.components.attoseconds / 1_000_000_000_000_000)
+        let delayMs = Self.milliseconds(from: delay)
+        let tickMs = Self.milliseconds(from: tickDuration)
+        let ticks = tickMs > 0 ? delayMs / tickMs : 1
 
         let currentTickValue = currentTick.withLock { $0 }
         let targetSlot = (currentTickValue + max(1, ticks)) % wheelSize
@@ -286,5 +288,13 @@ public final class TimerWheel: Sendable {
                 slots[i].removeValue(forKey: connection.sourceConnectionID)
             }
         }
+    }
+
+    // MARK: - Private Helpers
+
+    /// Converts a `Duration` to its approximate whole-millisecond count.
+    private static func milliseconds(from duration: Duration) -> Int {
+        let c = duration.components
+        return Int(c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)
     }
 }

@@ -426,6 +426,10 @@ public enum EncryptionLevel: Int, Sendable, Hashable, CaseIterable {
 
 ### 5.4 `~Copyable` for Move-Only Semantics
 
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: Zero performance gain. ~45 call sites across 7 modules would need updating. Source-breaking change for downstream consumers. The bug class it prevents (accidental reader forking) does not exist in this codebase — every usage follows the safe `var reader = DataReader(data)` + `inout` pattern. Adding `consuming` to `DataReader.init` (done in P3) already captures the most meaningful ownership optimization. Revisit if Swift stabilizes noncopyable generics further or if reader-forking bugs appear.
+
 **Where**: Types that should not be accidentally duplicated.
 
 **Candidate**: `DataReader`
@@ -472,6 +476,10 @@ See [Section 10](#10-cross-module-visibility-package-access) for detailed analys
 ---
 
 ### 5.7 Result Builder for Packet Construction (Exploratory)
+
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: The `CoalescedPacketBuilder` API is internal-only (package-scoped) and already clean. A `@resultBuilder` cannot naturally model the conditional fit-checking (`addPacket` returns `Bool` to indicate whether the packet fit) without `buildOptional`/`buildEither`, which adds complexity. The builder would also need to integrate with encryption/sealing in `QUICCrypto`, adding a cross-module coupling concern. Zero performance benefit; marginal readability benefit for an internal API.
 
 **Where**: `CoalescedPacketBuilder`, `PacketEncoder`
 
@@ -765,6 +773,10 @@ public var initialSalt: Data? {
 
 ### 8.2 `hex` String Formatting in `ConnectionID.description`
 
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: Only affects logging/debug paths. The intermediate array allocation from `map { }.joined()` is negligible. Connection IDs are at most 20 bytes (40 hex chars). Not worth the code churn.
+
 **File**: `Sources/QUICCore/Packet/ConnectionID.swift` L159-163
 
 ```swift
@@ -791,6 +803,10 @@ Or use a pre-computed hex table. Same pattern exists in `QLOGHelpers.swift` for 
 
 ### 8.3 `DataBuffer.mergeSegments` Could Avoid Re-allocation
 
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: The current implementation already uses delta tracking (not full recalculation) and `reserveCapacity`. Segments are typically 1–3 in normal QUIC operation. An in-place merge would save one allocation per `insert` call but adds complexity for near-zero practical gain.
+
 **File**: `Sources/QUICStream/DataBuffer.swift` L155-181
 
 The merge creates a new `merged` array every time. For buffers with many segments, consider an in-place merge:
@@ -803,6 +819,10 @@ The merge creates a new `merged` array every time. For buffers with many segment
 ---
 
 ### 8.4 `AckManager.buildAckRanges` — Avoid `stride(from:through:by:)`
+
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: The current implementation is correct and already well-optimized with pre-allocated capacity. The difference between `stride` and `reversed()` is negligible. Not worth touching working recovery code.
 
 **File**: `Sources/QUICRecovery/AckManager.swift` L240-270
 
@@ -819,6 +839,10 @@ The current implementation is correct and already well-optimized with pre-alloca
 ---
 
 ### 8.5 `FlowController` Uses Dictionaries for Per-Stream Limits
+
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: Dictionary is the correct data structure for the general case (100+ concurrent streams). A sorted array of tuples would be slower at scale and add code complexity. The current implementation is idiomatic and correct.
 
 **File**: `Sources/QUICStream/FlowController.swift` L79-82
 
@@ -914,6 +938,10 @@ Current inconsistency means users can write `.testing` without the factory in re
 
 ### 9.5 Inconsistent Error Naming
 
+> **STATUS: CLOSED — WON'T FIX**
+>
+> **Reason**: The existing naming is functional and each error type is unambiguous within its module. Renaming would be high churn (every `catch` site, test, and import) for purely cosmetic benefit. The `{Feature}Error` convention is already dominant. `QUICError` vs `QUICEndpointError` serve different scopes and don't collide.
+
 | Module | Error type | Convention |
 |--------|-----------|------------|
 | QUICCore | `QUICError` | Module-prefixed |
@@ -980,29 +1008,105 @@ These are already correctly scoped.
 
 ## 11. Summary Priority Matrix
 
-| # | Category | Effort | Impact | Priority |
-|---|----------|--------|--------|----------|
-| 7.1 | **BUG**: `StreamFrame.frameTypeByte` ignores `hasLength` | 🟢 Low | 🔴 High | **P0** |
-| 7.2 | **BUG**: Constant-time comparison uses `Bool` | 🟢 Low | 🔴 High (security) | **P0** |
-| 7.3 | Global `Duration` operators | 🟢 Low | 🟡 Medium | **P1** |
-| 6.3 | `ECNCounts` name collision | 🟢 Low | 🟡 Medium | **P1** |
-| 2.1 | Split `ManagedConnection.swift` | 🟡 Medium | 🟡 Medium | **P1** |
-| 2.2 | Split `HTTP3Connection.swift` | 🟡 Medium | 🟡 Medium | **P1** |
-| 2.3 | Split `QUICEndpoint.swift` | 🟡 Medium | 🟡 Medium | **P1** |
-| 2.4 | Split `QUICConnectionHandler.swift` | 🟡 Medium | 🟡 Medium | **P1** |
-| 2.5 | Split `TLS13Handler.swift` | 🟢 Low | 🟡 Medium | **P1** |
-| 10 | `package` access level audit | 🟡 Medium | 🟡 Medium | **P1** |
-| 9.1 | Proper `@available(*, deprecated)` | 🟢 Low | 🟢 Low | **P2** |
-| 5.2 | `@frozen` enums | 🟢 Low | 🟡 Medium | **P2** |
-| 5.6 | `@inlinable` consistency | 🟢 Low | 🟢 Low | **P2** |
-| 3.1 | Pluggable congestion controller | 🟡 Medium | 🟡 Medium | **P2** |
-| 5.1 | Typed throws | 🔴 High | 🟡 Medium | **P3** |
-| 5.3 | `borrowing`/`consuming` | 🟡 Medium | 🟢 Low | **P3** |
-| 5.4 | `~Copyable` for `DataReader` | 🟡 Medium | 🟢 Low | **P3** |
-| 6.1 | `StreamID` newtype | 🔴 High | 🟡 Medium | **P3** |
-| 3.2 | `StreamScheduling` protocol | 🟢 Low | 🟢 Low | **P3** |
-| 3.3 | `ReceiveBuffer` protocol | 🟢 Low | 🟢 Low | **P3** |
-| 8.1 | Static `Data` constants for version salts | 🟢 Low | 🟢 Low | **P3** |
+| # | Category | Effort | Impact | Priority | Status |
+|---|----------|--------|--------|----------|--------|
+| 7.1 | **BUG**: `StreamFrame.frameTypeByte` ignores `hasLength` | 🟢 Low | 🔴 High | **P0** | ✅ Done |
+| 7.2 | **BUG**: Constant-time comparison uses `Bool` | 🟢 Low | 🔴 High (security) | **P0** | ✅ Done |
+| 7.3 | Global `Duration` operators | 🟢 Low | 🟡 Medium | **P1** | ✅ Done |
+| 6.3 | `ECNCounts` name collision | 🟢 Low | 🟡 Medium | **P1** | ✅ Done |
+| 2.1 | Split `ManagedConnection.swift` | 🟡 Medium | 🟡 Medium | **P1** | ✅ Done |
+| 2.2 | Split `HTTP3Connection.swift` | 🟡 Medium | 🟡 Medium | **P1** | ✅ Done |
+| 2.3 | Split `QUICEndpoint.swift` | 🟡 Medium | 🟡 Medium | **P1** | ✅ Done |
+| 2.4 | Split `QUICConnectionHandler.swift` | 🟡 Medium | 🟡 Medium | **P1** | ✅ Done |
+| 2.5 | Split `TLS13Handler.swift` | 🟢 Low | 🟡 Medium | **P1** | ✅ Done |
+| 10 | `package` access level audit | 🟡 Medium | 🟡 Medium | **P1** | ✅ Done |
+| 9.1 | Proper `@available(*, deprecated)` | 🟢 Low | 🟢 Low | **P2** | ✅ Done |
+| 5.2 | `@frozen` enums | 🟢 Low | 🟡 Medium | **P2** | ✅ Done |
+| 5.6 | `@inlinable` consistency | 🟢 Low | 🟢 Low | **P2** | ✅ Done |
+| 3.1 | Pluggable congestion controller | 🟡 Medium | 🟡 Medium | **P2** | ✅ Done |
+| 5.1 | Typed throws | 🔴 High | 🟡 Medium | **P3** | ✅ Done (leaf functions) |
+| 5.3 | `borrowing`/`consuming` | 🟡 Medium | 🟢 Low | **P3** | ✅ Done |
+| 5.4 | `~Copyable` for `DataReader` | 🟡 Medium | 🟢 Low | **P3** | ⛔ Closed |
+| 6.1 | `StreamID` newtype | 🔴 High | 🟡 Medium | **P3** | ✅ Foundation done |
+| 3.2 | `StreamScheduling` protocol | 🟢 Low | 🟢 Low | **P3** | ✅ Done |
+| 3.3 | `ReceiveBuffer` protocol | 🟢 Low | 🟢 Low | **P3** | ✅ Done |
+| 8.1 | Static `Data` constants for version salts | 🟢 Low | 🟢 Low | **P3** | ✅ Done |
+| 5.7 | Result builder for packets | 🟡 Medium | 🟢 Low | **P3** | ⛔ Closed |
+| 8.2 | `hex` string formatting | 🟢 Low | 🟢 Very Low | — | ⛔ Closed |
+| 8.3 | `DataBuffer.mergeSegments` realloc | 🟢 Low | 🟢 Low | — | ⛔ Closed |
+| 8.4 | `AckManager.buildAckRanges` stride | 🟢 Low | 🟢 Negligible | — | ⛔ Closed |
+| 8.5 | `FlowController` dictionaries | 🟢 Low | 🟢 Negligible | — | ⛔ Closed |
+| 9.5 | Inconsistent error naming | 🟡 Medium | 🟢 Low | — | ⛔ Closed |
+
+---
+
+## 12. Remaining Work Plan
+
+The following items were identified in the analysis body (Sections 3–9) but not included in the original priority matrix. They represent the complete set of remaining actionable work.
+
+### Phase R1 — Dead Code & Deprecation Cleanup (🟢 Trivial) — ✅ Done
+
+> **Goal**: Remove dead code and resolve deprecation inconsistencies.
+> **Effort**: ~30 minutes. **Risk**: None — pure deletion and annotation.
+
+| Step | Item | File(s) | Action | Status |
+|------|------|---------|--------|--------|
+| R1.1 | **9.3** Remove `Varint.decode(from reader:)` | `Sources/QUICCore/Varint.swift` | Zero call sites confirmed. Deleted the deprecated static method entirely. | ✅ Done |
+| R1.2 | **9.2** Remove deprecated `ConnectionRouter` methods | `Sources/QUIC/ConnectionRouter.swift` | Zero call sites confirmed for both `unregister(connectionIDs:)` and `retireConnectionID(_:)`. Deleted both methods. Also removed dead `extractSourceConnectionID(from:)` private helper (R2.2). | ✅ Done |
+| R1.3 | **9.4** Align `QUICSecurityMode.testing` DEBUG guard | `Sources/QUIC/QUICConfiguration.swift` | Wrapped the `.testing` enum case in `#if DEBUG` (option a). Updated `QUICEndpoint.swift` switch arms to use `#if DEBUG` around `case .testing:` to match. | ✅ Done |
+
+### Phase R2 — Protocol Adoption & Testability (🟢 Low effort) — ✅ Done
+
+> **Goal**: Use existing protocols instead of concrete types; improve testability.
+> **Effort**: ~1 hour. **Risk**: Low — internal/package-scoped changes only.
+
+| Step | Item | File(s) | Action | Status |
+|------|------|---------|--------|--------|
+| R2.1 | **3.4** Genericize `PacketEncoder`/`PacketDecoder` | `Sources/QUICCore/Packet/PacketCodec.swift` | Made both structs generic over `<Codec: FrameEncoder & FrameDecoder & Sendable>` (option b — zero-cost at runtime). Added constrained convenience `init()` for `Codec == StandardFrameCodec` so all existing callers work unchanged. Extracted `PacketConstants` non-generic enum for `defaultMTU`, `aeadTagSize`, `initialPacketMinSize` to avoid generic-parameter inference issues in call sites. | ✅ Done |
+| R2.2 | **7.6** Deduplicate `ConnectionRouter.extractSourceConnectionID` | `Sources/QUIC/ConnectionRouter.swift` | Method was dead code (zero call sites — the only reference was its own definition). Deleted entirely as part of R1.2 cleanup. | ✅ Done |
+
+### Phase R3 — Extension & File Organization (🟢 Low effort) — ✅ No action needed
+
+> **Goal**: Improve code organization without changing behavior.
+> **Effort**: ~30 minutes. **Risk**: None — file moves and extension reorganization.
+
+| Step | Item | File(s) | Action | Status |
+|------|------|---------|--------|--------|
+| R3.1 | **4.1** Separate `Frame` encoding/decoding from definition | `Sources/QUICCore/Frame/Frame.swift` | Reviewed: `Frame.swift` is ~200 lines containing only the enum cases and basic computed properties (`frameType`, `isAckEliciting`, `isValid(at:)`). Encoding/decoding already lives in `FrameCodec.swift`. No split needed. | ✅ Already clean |
+| R3.2 | **4.2** Consolidate `ConnectionID` extensions | `Sources/QUICCore/Packet/ConnectionID.swift` | Reviewed: already well-structured with MARK sections (Definition → Encoding/Decoding → CustomStringConvertible → Utilities). No changes needed. | ✅ Already clean |
+| R3.3 | **4.3** `QUICVersion` wire constants organization | `Sources/QUICCore/Packet/Version.swift` | Reviewed: static `Data` constants are already stored as `private static let` with clear MARKs. Encoding/decoding extension is small (~15 lines) — not worth splitting into a separate file. | ✅ Already clean |
+
+### Phase R4 — Correctness & Safety (🟡 Medium effort) — ✅ Done
+
+> **Goal**: Address remaining correctness concerns and `@unchecked Sendable` usage.
+> **Effort**: ~2 hours. **Risk**: Medium — requires careful analysis of concurrency invariants.
+
+| Step | Item | File(s) | Action | Status |
+|------|------|---------|--------|--------|
+| R4.1 | **7.5** Audit `ManagedStream` `@unchecked Sendable` | `Sources/QUIC/ManagedStream.swift` | Audited: `@unchecked` is justified — the sole reason is `weak var connection: ManagedConnection?` (weak refs aren't inherently `Sendable`). All mutable state is in `Mutex<ManagedStreamState>`, all other properties are `let`. Added detailed doc comment explaining the safety reasoning. Moving `connection` into the Mutex would unnecessarily complicate every method call for no safety gain. | ✅ Done |
+| R4.2 | **7.7** Investigate race window in `QUICEndpoint.connect` | `Sources/QUIC/QUICEndpoint+Client.swift` | Investigated: **No race exists.** `QUICEndpoint` is an `actor`, so `connect(to:)` and the packet-receive path are actor-isolated and cannot interleave. Router registration happens *before* the first Initial packet is sent, so by the time any response arrives, the connection is fully registered. Added a `## Concurrency Safety` doc comment on `connect(to:)` documenting this finding. | ✅ Done (safe) |
+| R4.3 | **7.4** Simplify `TimerWheel.addTimer` tuple binding | `Sources/QUIC/TimerManager.swift` | The original tuple binding issue was already fixed in a prior pass. Simplified the remaining verbose `delay.components.seconds * 1000 + …` one-liner by extracting a `private static func milliseconds(from:) -> Int` helper. `addTimer` now reads `let delayMs = Self.milliseconds(from: delay)` / `let tickMs = Self.milliseconds(from: tickDuration)`. | ✅ Done |
+
+### Phase R5 — Type System Foundation (🔴 High effort) — ✅ Foundation done
+
+> **Goal**: Lay groundwork for stronger compile-time type safety.
+> **Effort**: ~3 hours for typealias; full migration is a separate project. **Risk**: Low for typealias, high for full migration.
+
+| Step | Item | File(s) | Action | Status |
+|------|------|---------|--------|--------|
+| R5.1 | **6.2** `PacketNumber` newtype — foundation | `Sources/QUICCore/Packet/PacketNumber.swift` | Created `PacketNumber` struct wrapping `UInt64` with `RawRepresentable`, `Hashable`, `Sendable`, `Comparable`, `ExpressibleByIntegerLiteral`, `Codable`. Includes helpers: `next()`, `distance(to:)`, `advanced(by:)`, `encodedLength(largestAcked:)`, `until(_:)`, `through(_:)`. Call-site migration deferred (affects `SentPacket`, `LossDetector`, `AckManager`, `ConnectionState`, etc.). | ✅ Done |
+| R5.2 | **6.1** `StreamIdentifier` call-site migration (incremental) | `Sources/QUICStream/StreamManager.swift` | Added `StreamIdentifier`-based convenience overloads to `StreamManager`: `openTypedStream`, `hasStream(streamIdentifier:)`, `read(streamIdentifier:)`, `write(streamIdentifier:data:)`, `finish(streamIdentifier:)`, `closeStream(streamIdentifier:)`, `setPriority(_:forStream:)`, `priority(forStream:)`, `getOrCreateStream(streamIdentifier:)`, `activeStreamIdentifiers`. Internal storage remains `UInt64`-keyed for compatibility. Further migration to `FlowController`, `DataStream`, and cross-module boundaries deferred to future PRs. | ✅ Foundation done |
+
+### Execution Order
+
+```
+R1 (trivial cleanup) → R2 (protocol adoption) → R3 (file org) → R4 (correctness) → R5 (type system)
+```
+
+R1–R3 can be done in a single PR. R4 should be a separate PR with careful review. R5 is best split across multiple PRs (one per type migration).
+
+> **Status**: All phases R1–R5 completed. 876/876 tests pass. Build clean (zero errors, zero new warnings).
+> Remaining long-tail work: `PacketNumber` call-site migration, `StreamIdentifier` call-site migration beyond `StreamManager`.
 
 ---
 

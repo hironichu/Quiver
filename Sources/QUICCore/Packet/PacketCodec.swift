@@ -92,24 +92,48 @@ public protocol PacketSealerProtocol: Sendable {
     func seal(plaintext: Data, packetNumber: UInt64, header: Data) throws -> Data
 }
 
-// MARK: - Packet Encoder
+// MARK: - Packet Constants
 
-/// Encodes QUIC packets from frames
-package struct PacketEncoder: Sendable {
-    private let frameCodec: StandardFrameCodec
-
+/// Non-generic constants for QUIC packet encoding/decoding.
+///
+/// These are extracted from the generic `PacketEncoder` / `PacketDecoder` types
+/// so they can be referenced without specifying a generic parameter
+/// (e.g. `PacketConstants.defaultMTU` instead of `PacketEncoder<…>.defaultMTU`).
+package enum PacketConstants {
     /// Default MTU for QUIC (minimum guaranteed)
     package static let defaultMTU = 1200
 
     /// AEAD tag size (16 bytes for AES-GCM)
     package static let aeadTagSize = 16
 
-    package init() {
-        self.frameCodec = StandardFrameCodec()
+    /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1)
+    package static let initialPacketMinSize = 1200
+}
+
+// MARK: - Packet Encoder
+
+/// Encodes QUIC packets from frames
+///
+/// Generic over the frame codec type. The default codec is `StandardFrameCodec`,
+/// so existing callers using `PacketEncoder()` continue to work without changes.
+/// Pass a custom `FrameEncoder & FrameDecoder` implementation for testing or
+/// alternative frame encoding strategies.
+package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sendable {
+    private let frameCodec: Codec
+
+    /// Default MTU for QUIC (minimum guaranteed)
+    package static var defaultMTU: Int { PacketConstants.defaultMTU }
+
+    /// AEAD tag size (16 bytes for AES-GCM)
+    package static var aeadTagSize: Int { PacketConstants.aeadTagSize }
+
+    /// Creates a packet encoder with the given frame codec.
+    package init(frameCodec: Codec) {
+        self.frameCodec = frameCodec
     }
 
     /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1)
-    package static let initialPacketMinSize = 1200
+    package static var initialPacketMinSize: Int { PacketConstants.initialPacketMinSize }
 
     /// Encodes a Long Header packet
     /// - Parameters:
@@ -336,12 +360,16 @@ package struct PacketEncoder: Sendable {
 // MARK: - Packet Decoder
 
 /// Decodes QUIC packets
-package struct PacketDecoder: Sendable {
-    private static let logger = QuiverLogging.logger(label: "quic.core.packet-codec")
-    private let frameCodec: StandardFrameCodec
+///
+/// Generic over the frame codec type. The default codec is `StandardFrameCodec`,
+/// so existing callers using `PacketDecoder()` continue to work without changes.
+package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sendable {
+    private static var logger: Logger { QuiverLogging.logger(label: "quic.core.packet-codec") }
+    private let frameCodec: Codec
 
-    package init() {
-        self.frameCodec = StandardFrameCodec()
+    /// Creates a packet decoder with the given frame codec.
+    package init(frameCodec: Codec) {
+        self.frameCodec = frameCodec
     }
 
     /// Decodes a packet from raw data
@@ -603,6 +631,22 @@ package struct PacketDecoder: Sendable {
         )
     }
 
+}
+
+// MARK: - Default Convenience Initializers
+
+extension PacketEncoder where Codec == StandardFrameCodec {
+    /// Creates a packet encoder with the default `StandardFrameCodec`.
+    package init() {
+        self.init(frameCodec: StandardFrameCodec())
+    }
+}
+
+extension PacketDecoder where Codec == StandardFrameCodec {
+    /// Creates a packet decoder with the default `StandardFrameCodec`.
+    package init() {
+        self.init(frameCodec: StandardFrameCodec())
+    }
 }
 
 // MARK: - Packet Size Utilities

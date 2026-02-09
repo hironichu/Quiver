@@ -37,9 +37,13 @@ public enum QUICSecurityMode: Sendable {
     /// Development environment: TLS required but self-signed certificates allowed
     case development(tlsProviderFactory: @Sendable () -> any TLS13Provider)
 
+    #if DEBUG
     /// Testing environment: Uses MockTLSProvider
     /// - Warning: Never use in production. This mode disables encryption.
+    /// - Note: This case is only available in DEBUG builds, matching the
+    ///   `QUICConfiguration.testing()` factory method guard.
     case testing
+    #endif
 }
 
 // MARK: - Security Errors

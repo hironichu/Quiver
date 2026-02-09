@@ -480,7 +480,7 @@ struct PacketRoundtripTests {
         )
 
         // RFC 9000 Section 14.1: Initial packets MUST be at least 1200 bytes
-        #expect(encoded.count >= PacketEncoder.initialPacketMinSize)
+        #expect(encoded.count >= PacketConstants.initialPacketMinSize)
     }
 
     @Test("Roundtrip Handshake packet")
@@ -786,7 +786,7 @@ struct PacketCodecUtilityTests {
         )
 
         // Verify the encoded packet size is within MTU
-        #expect(encoded.count <= PacketEncoder.defaultMTU)
+        #expect(encoded.count <= PacketConstants.defaultMTU)
     }
 
     @Test("Short header packet has correct structure")

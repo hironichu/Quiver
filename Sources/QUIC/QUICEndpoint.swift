@@ -129,16 +129,14 @@ public actor QUICEndpoint {
                 return factory()
             case .development(let factory):
                 return factory()
+            #if DEBUG
             case .testing:
-                #if DEBUG
                 logger.warning(
                     "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
                     metadata: ["isClient": "\(isClient)"]
                 )
                 return MockTLSProvider(configuration: TLSConfiguration())
-                #else
-                fatalError("Testing mode is not available in release builds. Configure a real TLS provider using QUICConfiguration.production() or QUICConfiguration.development().")
-                #endif
+            #endif
             }
         }
 
@@ -175,8 +173,8 @@ public actor QUICEndpoint {
                 return factory()
             case .development(let factory):
                 return factory()
+            #if DEBUG
             case .testing:
-                #if DEBUG
                 logger.warning(
                     "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
                     metadata: ["isClient": "\(isClient)"]
@@ -187,9 +185,7 @@ public actor QUICEndpoint {
                     tlsConfig.maxEarlyDataSize = maxSize
                 }
                 return MockTLSProvider(configuration: tlsConfig)
-                #else
-                fatalError("Testing mode is not available in release builds. Configure a real TLS provider using QUICConfiguration.production() or QUICConfiguration.development().")
-                #endif
+            #endif
             }
         }
 

@@ -8,7 +8,16 @@ import Synchronization
 
 // MARK: - Managed Stream
 
-/// A managed QUIC stream implementing QUICStreamProtocol
+/// A managed QUIC stream implementing QUICStreamProtocol.
+///
+/// `@unchecked Sendable` justification:
+/// - All mutable state is protected by `state: Mutex<ManagedStreamState>`.
+/// - `connection` is a `weak` reference to a `Sendable` type (`ManagedConnection`).
+///   Weak references are not inherently `Sendable`, which is the sole reason for
+///   the `@unchecked` annotation. The property is only read at the start of each
+///   async method (never concurrently mutated) and `ManagedConnection` itself is
+///   `Sendable`, so this is safe.
+/// - All other stored properties (`id`, `isUnidirectional`) are `let` constants.
 public final class ManagedStream: @unchecked Sendable {
     // MARK: - Properties
 

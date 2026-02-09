@@ -1,6 +1,15 @@
 /// Stream Manager (RFC 9000 Section 2)
 ///
 /// Manages all streams for a QUIC connection.
+///
+/// ## StreamIdentifier Migration
+///
+/// This module is being incrementally migrated from raw `UInt64` stream IDs
+/// to the type-safe ``StreamIdentifier`` wrapper. During the transition:
+/// - Internal storage continues to use `UInt64` keys for compatibility.
+/// - New ``StreamIdentifier``-based overloads are provided alongside existing
+///   `UInt64`-based methods. Prefer the typed overloads in new code.
+/// - Use `.rawValue` at module boundaries where `UInt64` is still expected.
 
 import Foundation
 import Logging
@@ -120,6 +129,17 @@ public final class StreamManager: Sendable {
     }
 
     // MARK: - Stream Lifecycle
+
+    /// Open a new locally-initiated stream (type-safe variant).
+    /// - Parameters:
+    ///   - bidirectional: Whether to create a bidirectional stream
+    ///   - priority: Initial stream priority (default: .default)
+    /// - Returns: The new stream identifier
+    /// - Throws: StreamManagerError if stream limit reached
+    public func openTypedStream(bidirectional: Bool, priority: StreamPriority = .default) throws -> StreamIdentifier {
+        let rawID = try openStream(bidirectional: bidirectional, priority: priority)
+        return StreamIdentifier(rawValue: rawID)
+    }
 
     /// Open a new locally-initiated stream
     /// - Parameters:
@@ -667,6 +687,11 @@ public final class StreamManager: Sendable {
         state.withLock { Array($0.streams.keys) }
     }
 
+    /// Get all active stream identifiers (type-safe variant).
+    public var activeStreamIdentifiers: [StreamIdentifier] {
+        state.withLock { $0.streams.keys.map { StreamIdentifier(rawValue: $0) } }
+    }
+
     // MARK: - Private Helpers
 
     private func isRemoteStream(_ streamID: UInt64, isClient: Bool) -> Bool {
@@ -699,6 +724,51 @@ public final class StreamManager: Sendable {
             return state.flowController.initialMaxStreamDataUni
         }
     }
+
+    // MARK: - StreamIdentifier Overloads
+
+    /// Check if a stream exists (type-safe variant).
+    public func hasStream(streamIdentifier: StreamIdentifier) -> Bool {
+        hasStream(id: streamIdentifier.rawValue)
+    }
+
+    /// Read data from a stream (type-safe variant).
+    public func read(streamIdentifier: StreamIdentifier) -> Data? {
+        read(streamID: streamIdentifier.rawValue)
+    }
+
+    /// Write data to a stream (type-safe variant).
+    public func write(streamIdentifier: StreamIdentifier, data: Data) throws {
+        try write(streamID: streamIdentifier.rawValue, data: data)
+    }
+
+    /// Finish writing to a stream (type-safe variant).
+    public func finish(streamIdentifier: StreamIdentifier) throws {
+        try finish(streamID: streamIdentifier.rawValue)
+    }
+
+    /// Close a stream (type-safe variant).
+    public func closeStream(streamIdentifier: StreamIdentifier) {
+        closeStream(id: streamIdentifier.rawValue)
+    }
+
+    /// Set priority for a stream (type-safe variant).
+    public func setPriority(_ priority: StreamPriority, forStream streamIdentifier: StreamIdentifier) throws {
+        try setPriority(priority, for: streamIdentifier.rawValue)
+    }
+
+    /// Get priority for a stream (type-safe variant).
+    public func priority(forStream streamIdentifier: StreamIdentifier) throws -> StreamPriority {
+        try priority(for: streamIdentifier.rawValue)
+    }
+
+    /// Get or create a stream (type-safe variant).
+    public func getOrCreateStream(streamIdentifier: StreamIdentifier) throws -> StreamIdentifier {
+        let rawID = try getOrCreateStream(id: streamIdentifier.rawValue)
+        return StreamIdentifier(rawValue: rawID)
+    }
+
+    // MARK: - Internal Helpers
 
     private func getOrCreateStreamInternal(_ streamID: UInt64, state: inout StreamManagerState) throws -> UInt64 {
         if state.streams[streamID] != nil {
