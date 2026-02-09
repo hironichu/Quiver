@@ -955,13 +955,13 @@ public actor WebTransportSession {
         }
 
         if receivedFIN {
-            // Peer finished sending capsules; keep the session established so
-            // WebTransport streams and datagrams remain usable until an
-            // explicit close capsule or application shutdown.
-            Self.logger.trace(
-                "Capsule reader: FIN received, keeping session established",
+            // RFC 9297: When the CONNECT stream is closed (FIN received),
+            // the associated WebTransport session MUST be terminated.
+            Self.logger.debug(
+                "Capsule reader: FIN received, closing session",
                 metadata: ["sessionID": "\(sessionID)"]
             )
+            transitionToClosed(nil)
             return
         }
 

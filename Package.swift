@@ -204,7 +204,12 @@ let package = Package(
 
         .testTarget(
             name: "QUICTests",
-            dependencies: ["QUIC", "QUICRecovery", "QUICTransport"],
+            dependencies: [
+                "QUIC",
+                "QUICRecovery",
+                "QUICTransport",
+                .product(name: "Logging", package: "swift-log"),
+            ],
             path: "Tests/QUICTests"
         ),
 
@@ -216,7 +221,13 @@ let package = Package(
 
         .testTarget(
             name: "HTTP3Tests",
-            dependencies: ["HTTP3", "QUIC", "QPACK", "QUICCore"],
+            dependencies: [
+                "HTTP3",
+                "QUIC",
+                "QPACK",
+                "QUICCore",
+                .product(name: "Logging", package: "swift-log"),
+            ],
             path: "Tests/HTTP3Tests"
         ),
 
