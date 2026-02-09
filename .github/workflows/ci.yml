@@ -13,16 +13,16 @@ concurrency:
 jobs:
   build-macos:
     name: macOS (Swift ${{ matrix.swift }})
-    runs-on: macos-15
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
-        swift: ["6.2"]
+        swift: ["6.2.3"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
 
       - name: Swift version
         run: swift --version
@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        swift: ["6.2"]
+        swift: ["6.2.3"]
     container:
       image: swift:${{ matrix.swift }}
     steps:
