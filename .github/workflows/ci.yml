@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        swift: ["6.0"]
+        swift: ["6.2"]
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        swift: ["6.0"]
+        swift: ["6.2"]
     container:
       image: swift:${{ matrix.swift }}
     steps:
