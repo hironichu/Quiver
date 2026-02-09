@@ -321,13 +321,22 @@ private func constantTimeCompare(_ a: Data, _ b: Data) -> Bool {
 ///   - tokens: The set of tokens to search in
 /// - Returns: true if the token is found
 private func constantTimeContains(_ token: Data, in tokens: Set<Data>) -> Bool {
-    var found = false
+    var result: UInt8 = 0
     for existingToken in tokens {
-        // Use constant-time comparison for each token
-        if constantTimeCompare(token, existingToken) {
-            found = true
-            // Don't break early to maintain constant time
-        }
+        // Use bitwise OR accumulator to prevent compiler optimization
+        result |= constantTimeCompareUInt8(token, existingToken)
     }
-    return found
+    return result != 0
+}
+
+/// Constant-time comparison returning a UInt8 (1 = equal, 0 = not equal)
+/// to avoid Bool-based short-circuit optimizations
+@inline(never)
+private func constantTimeCompareUInt8(_ a: Data, _ b: Data) -> UInt8 {
+    guard a.count == b.count else { return 0 }
+    var diff: UInt8 = 0
+    for (x, y) in zip(a, b) {
+        diff |= x ^ y
+    }
+    return diff == 0 ? 1 : 0
 }

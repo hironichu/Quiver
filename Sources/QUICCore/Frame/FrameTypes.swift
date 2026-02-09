@@ -101,7 +101,7 @@ public struct StreamFrame: Sendable, Hashable {
     public var frameTypeByte: UInt8 {
         var byte: UInt8 = 0x08
         if offset > 0 { byte |= 0x04 }  // OFF bit
-        if true { byte |= 0x02 }         // LEN bit (always include length)
+        if hasLength { byte |= 0x02 }    // LEN bit
         if fin { byte |= 0x01 }          // FIN bit
         return byte
     }
