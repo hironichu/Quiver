@@ -14,6 +14,14 @@ This document maps the Quiver implementation to the QUIC specifications (RFC 900
 
 ---
 
+## 2026-02-09 Audit Notes
+
+- **WebTransport draft (Extended CONNECT, capsules):** `Sources/HTTP3/WebTransport/WebTransportSession.swift` now keeps sessions established when the peer half-closes the CONNECT stream (FIN) and awaits explicit CLOSE/DRAIN capsules. Previously the reader loop treated a FIN as a terminal close, immediately dropping the session and violating the draft’s requirement that session teardown be signaled by capsules. This also fixes `WebTransportServePathTests.testCreateSessionViaContextConnection`.
+- **Pitfalls / dead code:** No unreachable code paths were found in the WebTransport control-plane. The prior FIN-triggered teardown was the main behavioral pitfall discovered during this review.
+- **Memory-safety review:** The WebTransport capsule codec bounds parsing via varint lengths and QUIC flow control; the session actor avoids shared mutable state. No stack overflows or use-after-free risks were identified in the audited paths.
+
+---
+
 ## RFC 9001: Using TLS to Secure QUIC
 
 ### Section 5.2: Initial Secrets

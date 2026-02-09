@@ -892,6 +892,8 @@ public actor WebTransportSession {
             metadata: ["sessionID": "\(sessionID)"]
         )
 
+        var receivedFIN = false
+
         while state == .established || state == .draining {
             let data: Data
             do {
@@ -910,6 +912,7 @@ public actor WebTransportSession {
                     "CONNECT stream FIN received",
                     metadata: ["sessionID": "\(sessionID)"]
                 )
+                receivedFIN = true
                 break
             }
 
@@ -943,6 +946,12 @@ public actor WebTransportSession {
 
         // If we exited the loop without an explicit close, transition to closed
         if state != .closed(nil) && !isClosed {
+            if receivedFIN {
+                // Peer finished sending capsules; keep the session established so
+                // WebTransport streams and datagrams remain usable until an
+                // explicit close capsule or application shutdown.
+                return
+            }
             transitionToClosed(nil)
         }
 
