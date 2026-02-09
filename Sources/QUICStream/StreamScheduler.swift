@@ -5,6 +5,38 @@
 
 import Foundation
 
+// MARK: - StreamScheduling Protocol
+
+/// Protocol for pluggable stream scheduling strategies.
+///
+/// Conforming types determine the order in which streams are served,
+/// enabling alternative scheduling algorithms such as:
+/// - FIFO (first-in, first-out)
+/// - Weighted fair queuing
+/// - Deadline-based scheduling
+/// - Custom application-specific ordering
+///
+/// The default implementation is ``StreamScheduler``, which implements
+/// RFC 9218 Extensible Priorities with incremental-aware scheduling.
+public protocol StreamScheduling: Sendable {
+    /// Schedules streams and returns them in priority order.
+    ///
+    /// - Parameter streams: Dictionary of stream ID to DataStream
+    /// - Returns: Array of (streamID, stream) tuples ordered by the scheduling policy
+    mutating func scheduleStreams(
+        _ streams: [UInt64: DataStream]
+    ) -> [(streamID: UInt64, stream: DataStream)]
+
+    /// Advances the cursor for a specific urgency level.
+    ///
+    /// Call this after a stream at the given urgency has sent data
+    /// to ensure fair rotation.
+    mutating func advanceCursor(for urgency: UInt8, groupSize: Int)
+
+    /// Resets all internal scheduling state (e.g., cursors).
+    mutating func resetCursors()
+}
+
 // MARK: - Scheduling Strategy
 
 /// Scheduling strategy that determines how streams within the same
@@ -53,7 +85,7 @@ public enum SchedulingStrategy: Sendable, Hashable {
 ///
 /// ## Thread Safety
 /// This struct is not thread-safe by itself. It should be used within a synchronized context.
-public struct StreamScheduler: Sendable {
+public struct StreamScheduler: StreamScheduling, Sendable {
     /// Round-robin cursors per urgency level
     ///
     /// Key: urgency level (0-7)

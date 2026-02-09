@@ -16,10 +16,10 @@ public struct DataReader: Sendable {
     var position: Data.Index
 
     /// Creates a new DataReader
-    /// - Parameter data: The data to read from
-    public init(_ data: Data) {
+    /// - Parameter data: The data to read from (ownership is transferred to the reader)
+    public init(_ data: consuming Data) {
         self.data = data
-        self.position = data.startIndex
+        self.position = self.data.startIndex
     }
 
     /// The number of bytes remaining to be read
@@ -141,7 +141,7 @@ public struct DataReader: Sendable {
     /// This method uses an optimized internal path that avoids Data slice creation.
     /// Performance is equivalent to `readVarintValue()`.
     @inlinable
-    public mutating func readVarint() throws -> Varint {
+    public mutating func readVarint() throws(Varint.DecodeError) -> Varint {
         // Use the fast path: readVarintValue() operates directly on data[position]
         // without creating an intermediate Data slice via remainingData
         return Varint(try readVarintValue())
@@ -150,7 +150,7 @@ public struct DataReader: Sendable {
     /// Reads a QUIC variable-length integer value directly (faster than readVarint())
     /// - Returns: The decoded UInt64 value
     @inlinable
-    public mutating func readVarintValue() throws -> UInt64 {
+    public mutating func readVarintValue() throws(Varint.DecodeError) -> UInt64 {
         guard hasRemaining else {
             throw Varint.DecodeError.insufficientData
         }
@@ -170,7 +170,7 @@ public struct DataReader: Sendable {
 
     /// Slow path for multi-byte varint values
     @usableFromInline
-    mutating func readVarintValueSlow(firstByte: UInt8) throws -> UInt64 {
+    mutating func readVarintValueSlow(firstByte: UInt8) throws(Varint.DecodeError) -> UInt64 {
         let prefix = firstByte >> 6
 
         let length: Int
@@ -215,7 +215,7 @@ public struct DataReader: Sendable {
     ///
     /// This method uses an optimized path that avoids Data slice creation.
     @inlinable
-    public func peekVarint() throws -> (value: UInt64, length: Int) {
+    public func peekVarint() throws(Varint.DecodeError) -> (value: UInt64, length: Int) {
         guard hasRemaining else {
             throw Varint.DecodeError.insufficientData
         }
