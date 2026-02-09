@@ -64,7 +64,7 @@ import Logging
 /// The server configures the required HTTP/3 settings, handles Extended
 /// CONNECT negotiation, and delivers established sessions to the application.
 public actor WebTransportServer {
-    private static let logger = Logger(label: "webtransport.server")
+    private static let logger = QuiverLogging.logger(label: "webtransport.server")
 
     // MARK: - Types
 

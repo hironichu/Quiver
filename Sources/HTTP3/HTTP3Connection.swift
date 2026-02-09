@@ -187,7 +187,7 @@ public struct ExtendedConnectContext: Sendable {
 }
 
 public actor HTTP3Connection {
-    private static let logger = Logger(label: "http3.connection")
+    private static let logger = QuiverLogging.logger(label: "http3.connection")
 
     // MARK: - Types
 

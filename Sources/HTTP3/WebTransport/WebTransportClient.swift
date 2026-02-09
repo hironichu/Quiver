@@ -67,7 +67,7 @@ import Logging
 /// Wraps an `HTTP3Connection` and provides a simple API for creating
 /// WebTransport sessions via Extended CONNECT.
 public actor WebTransportClient {
-    private static let logger = Logger(label: "webtransport.client")
+    private static let logger = QuiverLogging.logger(label: "webtransport.client")
 
     // MARK: - Types
 

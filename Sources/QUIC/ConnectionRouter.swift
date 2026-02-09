@@ -17,7 +17,7 @@ import QUICCore
 /// - New connection creation (for Initial packets to server)
 /// - Connection ID retirement and rotation
 public final class ConnectionRouter: Sendable {
-    private static let logger = Logger(label: "quic.connection.router")
+    private static let logger = QuiverLogging.logger(label: "quic.connection.router")
     // MARK: - Types
 
     /// Result of routing a packet

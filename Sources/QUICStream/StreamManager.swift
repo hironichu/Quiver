@@ -25,7 +25,7 @@ public enum StreamManagerError: Error, Sendable {
 
 /// Manages all streams for a QUIC connection
 public final class StreamManager: Sendable {
-    private static let logger = Logger(label: "quic.stream.manager")
+    private static let logger = QuiverLogging.logger(label: "quic.stream.manager")
     private let state: Mutex<StreamManagerState>
 
     private struct StreamManagerState {

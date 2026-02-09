@@ -176,6 +176,16 @@ let package = Package(
             path: "Sources/HTTP3"
         ),
 
+        // MARK: - Test Support
+
+        .target(
+            name: "QuiverTestSupport",
+            dependencies: [
+                "QUICCore",
+            ],
+            path: "Tests/QuiverTestSupport"
+        ),
+
         // MARK: - Tests
 
         .testTarget(
@@ -208,7 +218,7 @@ let package = Package(
                 "QUIC",
                 "QUICRecovery",
                 "QUICTransport",
-                .product(name: "Logging", package: "swift-log"),
+                "QuiverTestSupport",
             ],
             path: "Tests/QUICTests"
         ),
@@ -226,7 +236,7 @@ let package = Package(
                 "QUIC",
                 "QPACK",
                 "QUICCore",
-                .product(name: "Logging", package: "swift-log"),
+                "QuiverTestSupport",
             ],
             path: "Tests/HTTP3Tests"
         ),

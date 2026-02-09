@@ -37,7 +37,7 @@ public enum QUICConnectionHandlerError: Error, Sendable {
 /// - TLS handshake coordination
 /// - Key schedule management
 public final class QUICConnectionHandler: Sendable {
-    private static let logger = Logger(label: "quic.connection.handler")
+    private static let logger = QuiverLogging.logger(label: "quic.connection.handler")
     // MARK: - Properties
 
     /// Connection state
@@ -447,7 +447,7 @@ public final class QUICConnectionHandler: Sendable {
     ///
     /// This enables stream frame generation in getOutboundPackets().
     public func markHandshakeComplete() {
-        Self.logger.info("Marking handshake complete")
+        Self.logger.debug("Marking handshake complete")
         handshakeComplete.withLock { $0 = true }
         connectionState.withLock { $0.status = .established }
         pnSpaceManager.handshakeConfirmed = true

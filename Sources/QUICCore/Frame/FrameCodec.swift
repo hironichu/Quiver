@@ -58,7 +58,7 @@ public protocol FrameDecoder: Sendable {
 /// - 関数呼び出しオーバーヘッドを削減し、さらなるコンパイラ最適化を有効化
 /// - 特に小さなフレーム（PING, ACK）で効果的
 public struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
-    private static let logger = Logger(label: "quic.core.frame-codec")
+    private static let logger = QuiverLogging.logger(label: "quic.core.frame-codec")
 
     @inlinable
     public init() {}

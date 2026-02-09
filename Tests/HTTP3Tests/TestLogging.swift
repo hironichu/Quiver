@@ -1,24 +1,18 @@
 // Silences verbose logging during test execution.
-//
-// XCTest classes are processed before Swift Testing suites.
-// The `_AAA_` prefix ensures this class sorts first alphabetically,
+// The `AAA_` prefix ensures this XCTestCase sorts first alphabetically,
 // so its `setUp()` runs before any other test class in this target.
+// XCTest classes are also processed before Swift Testing suites.
 //
-// `LoggingSystem.bootstrap` is process-wide, so this single call
-// silences all `Logger` instances (webtransport.*, http3.*, etc.)
-// across both XCTest and Swift Testing tests in the same process.
+// The actual override is delegated to `QuiverTestSupport.TestLogging`
+// which guards against double-initialization across test targets.
 
 import XCTest
-import Logging
+import QuiverTestSupport
 
-final class _AAA_TestLoggingBootstrap: XCTestCase {
+final class AAA_TestLoggingBootstrap: XCTestCase {
     override class func setUp() {
         super.setUp()
-        LoggingSystem.bootstrap { label in
-            var handler = StreamLogHandler.standardError(label: label)
-            handler.logLevel = .critical
-            return handler
-        }
+        TestLogging.silenceIfNeeded()
     }
 
     func testLoggingBootstrapped() {

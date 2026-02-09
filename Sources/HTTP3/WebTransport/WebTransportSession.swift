@@ -111,7 +111,7 @@ import Logging
 /// try await stream.write(Data("Hello".utf8))
 /// ```
 public actor WebTransportSession {
-    private static let logger = Logger(label: "webtransport.session")
+    private static let logger = QuiverLogging.logger(label: "webtransport.session")
 
     // MARK: - Types
 
