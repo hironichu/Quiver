@@ -5,64 +5,63 @@
 ///
 /// ## Overview
 ///
-/// `WebTransportServer` simplifies the server-side WebTransport workflow:
-/// 1. Configures HTTP/3 settings for WebTransport (Extended CONNECT, datagrams, max sessions)
-/// 2. Registers an Extended CONNECT handler that accepts WebTransport sessions
-/// 3. Creates and manages `WebTransportSession` instances
-/// 4. Exposes an `incomingSessions` async stream for the application
+/// `WebTransportServer` simplifies the server-side WebTransport workflow by
+/// delegating to `HTTP3Server.enableWebTransport()` internally. This means:
+///
+/// 1. **No duplicated logic** — session acceptance, path filtering, and quota
+///    enforcement are handled by `HTTP3Server`
+/// 2. **Composable** — if you already have an `HTTP3Server`, call
+///    `enableWebTransport()` directly instead of creating a `WebTransportServer`
+/// 3. **Convenience** — `WebTransportServer` exists purely for the "just start
+///    a WebTransport server" use case
 ///
 /// ## Usage
 ///
+/// ### Standalone (Tier 1 — one-call static factory)
+///
 /// ```swift
-/// let server = WebTransportServer(maxSessions: 10)
+/// let config = WebTransportConfiguration(quic: myQuicConfig, maxSessions: 4)
+/// let server = try await WebTransportServer.listen(
+///     host: "0.0.0.0",
+///     port: 4433,
+///     configuration: config
+/// )
 ///
-/// // Optionally handle regular HTTP/3 requests alongside WebTransport
-/// server.onRequest { context in
-///     try await context.respond(status: 200, Data("OK".utf8))
+/// for await session in server.incomingSessions {
+///     Task { await handleSession(session) }
 /// }
+/// ```
 ///
-/// // Accept WebTransport sessions
+/// ### Extending an existing HTTP/3 server
+///
+/// ```swift
+/// let httpServer = HTTP3Server()
+/// let sessions = await httpServer.enableWebTransport(
+///     WebTransportOptions(maxSessionsPerConnection: 4)
+/// )
+///
 /// Task {
-///     for await session in server.incomingSessions {
-///         Task {
-///             // Echo bidirectional streams
-///             for await stream in await session.incomingBidirectionalStreams {
-///                 let data = try await stream.read()
-///                 try await stream.write(data)
-///                 try await stream.closeWrite()
-///             }
-///         }
+///     for await session in sessions {
+///         Task { await handleSession(session) }
 ///     }
 /// }
 ///
-/// // Start serving
-/// try await server.serve(connectionSource: listener.incomingConnections)
+/// try await httpServer.listen(host: "0.0.0.0", port: 443, quicConfiguration: config)
 /// ```
-///
-/// ## Thread Safety
-///
-/// `WebTransportServer` is an `actor`, ensuring all mutable state is
-/// accessed serially. This is consistent with Swift 6 concurrency
-/// requirements and the project's design principles.
-///
-/// ## References
-///
-/// - [draft-ietf-webtrans-http3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
-/// - [RFC 9220: Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html)
-/// - [RFC 9297: HTTP Datagrams and the Capsule Protocol](https://www.rfc-editor.org/rfc/rfc9297.html)
 
 import Foundation
+import Logging
 import QUIC
 import QUICCore
-import Logging
 
 // MARK: - WebTransport Server
 
 /// A WebTransport server that manages session establishment and lifecycle.
 ///
-/// Wraps `HTTP3Server` with automatic WebTransport session handling.
-/// The server configures the required HTTP/3 settings, handles Extended
-/// CONNECT negotiation, and delivers established sessions to the application.
+/// Delegates to `HTTP3Server.enableWebTransport()` for all session handling.
+/// This actor is a thin convenience wrapper for the "just start a WT server"
+/// use case. If you already have an `HTTP3Server`, call
+/// `enableWebTransport()` on it directly.
 public actor WebTransportServer {
     private static let logger = QuiverLogging.logger(label: "webtransport.server")
 
@@ -89,29 +88,14 @@ public actor WebTransportServer {
         }
     }
 
-    /// Configuration for the WebTransport server.
-    public struct Configuration: Sendable {
-        /// Maximum number of concurrent WebTransport sessions per connection.
-        ///
-        /// This value is advertised via `SETTINGS_WEBTRANSPORT_MAX_SESSIONS`.
-        /// Browsers require this to be > 0 to establish WebTransport connections.
-        ///
-        /// - Default: 1
-        public var maxSessionsPerConnection: UInt64
-
+    /// Server-only options (beyond what `WebTransportConfiguration` provides).
+    public struct ServerOptions: Sendable {
         /// Maximum number of concurrent HTTP/3 connections.
         ///
         /// 0 means unlimited.
         ///
         /// - Default: 0 (unlimited)
         public var maxConnections: Int
-
-        /// Additional HTTP/3 settings to merge with WebTransport defaults.
-        ///
-        /// The WebTransport-required settings (`enableConnectProtocol`,
-        /// `enableH3Datagram`, `webtransportMaxSessions`) are always set.
-        /// This allows overriding QPACK and other settings.
-        public var additionalSettings: HTTP3Settings
 
         /// Allowed WebTransport paths.
         ///
@@ -122,93 +106,75 @@ public actor WebTransportServer {
         /// If empty (default), all paths are accepted.
         public var allowedPaths: [String]
 
-        /// Creates a WebTransport server configuration.
-        ///
-        /// - Parameters:
-        ///   - maxSessionsPerConnection: Max concurrent WT sessions per connection (default: 1)
-        ///   - maxConnections: Max concurrent HTTP/3 connections, 0 = unlimited (default: 0)
-        ///   - additionalSettings: Additional HTTP/3 settings (default: literal-only QPACK)
-        ///   - allowedPaths: Paths to accept, empty = all (default: [])
+        /// Creates server options with sensible defaults.
         public init(
-            maxSessionsPerConnection: UInt64 = 1,
             maxConnections: Int = 0,
-            additionalSettings: HTTP3Settings = HTTP3Settings(),
             allowedPaths: [String] = []
         ) {
-            self.maxSessionsPerConnection = maxSessionsPerConnection
             self.maxConnections = maxConnections
-            self.additionalSettings = additionalSettings
             self.allowedPaths = allowedPaths
         }
 
-        /// Default configuration.
-        public static let `default` = Configuration()
+        /// Default server options.
+        public static let `default` = ServerOptions()
     }
 
     // MARK: - Properties
 
-    /// Server configuration.
-    public let configuration: Configuration
+    /// Shared WebTransport configuration (QUIC + WT settings).
+    public let configuration: WebTransportConfiguration
 
-    /// The underlying HTTP/3 server.
-    private let httpServer: HTTP3Server
+    /// Server-only options.
+    public let serverOptions: ServerOptions
+
+    /// The underlying HTTP/3 server (does the actual work).
+    public let httpServer: HTTP3Server
 
     /// Current server state.
     public private(set) var state: State = .idle
-
-    /// Continuation for delivering new WebTransport sessions.
-    private var incomingSessionsContinuation: AsyncStream<WebTransportSession>.Continuation?
 
     /// Stream of incoming WebTransport sessions.
     ///
     /// Each element is an established `WebTransportSession` ready for
     /// stream and datagram operations.
-    ///
-    /// ## Usage
-    ///
-    /// ```swift
-    /// for await session in server.incomingSessions {
-    ///     Task { await handleSession(session) }
-    /// }
-    /// ```
     public private(set) var incomingSessions: AsyncStream<WebTransportSession>
 
-    /// The QUIC endpoint created by `listen(host:port:quicConfiguration:)`.
-    ///
-    /// Stored so that `stop()` can shut it down.
+    /// Continuation for the incoming sessions stream.
+    private var incomingSessionsContinuation: AsyncStream<WebTransportSession>.Continuation?
+
+    /// The QUIC endpoint created by `listen()`.
     private var quicEndpoint: QUICEndpoint?
 
-    /// The I/O loop task created by `listen(host:port:quicConfiguration:)`.
-    ///
-    /// Stored so that `stop()` can cancel it.
+    /// The I/O loop task created by `listen()`.
     private var quicRunTask: Task<Void, Error>?
-
-    /// Active HTTP/3 connections (needed to create sessions from).
-    private var activeConnections: [ObjectIdentifier: HTTP3Connection] = [:]
-
-    /// Total sessions accepted across all connections.
-    private var totalSessionsAccepted: UInt64 = 0
 
     /// Registered request handler for non-WebTransport HTTP/3 requests.
     private var requestHandler: HTTP3Server.RequestHandler?
+
+    /// Whether WebTransport has been enabled on the underlying HTTP3Server.
+    private var webTransportEnabled = false
 
     // MARK: - Initialization
 
     /// Creates a WebTransport server.
     ///
-    /// - Parameter configuration: Server configuration (default: `.default`)
-    public init(configuration: Configuration = .default) {
+    /// Internally creates an `HTTP3Server`. The `enableWebTransport()` call
+    /// is deferred to `serve()` / `listen()` to satisfy actor isolation.
+    ///
+    /// - Parameters:
+    ///   - configuration: WebTransport configuration (QUIC + WT settings)
+    ///   - serverOptions: Server-specific options like max connections and allowed paths
+    public init(
+        configuration: WebTransportConfiguration,
+        serverOptions: ServerOptions = .default
+    ) {
         self.configuration = configuration
+        self.serverOptions = serverOptions
 
-        // Build HTTP/3 settings with WebTransport requirements
-        var settings = configuration.additionalSettings
-        settings.enableConnectProtocol = true
-        settings.enableH3Datagram = true
-        settings.webtransportMaxSessions = configuration.maxSessionsPerConnection
-
+        // Create the underlying HTTP/3 server
         self.httpServer = HTTP3Server(
-            settings: settings,
-            maxConnections: configuration.maxConnections
+            settings: configuration.http3Settings,
+            maxConnections: serverOptions.maxConnections
         )
 
         // Create the incoming sessions stream
@@ -217,18 +183,6 @@ public actor WebTransportServer {
             continuation = cont
         }
         self.incomingSessionsContinuation = continuation
-    }
-
-    /// Creates a WebTransport server with simple parameters.
-    ///
-    /// - Parameters:
-    ///   - maxSessions: Maximum concurrent sessions per connection (default: 1)
-    ///   - maxConnections: Maximum concurrent connections (default: 0 = unlimited)
-    public init(maxSessions: UInt64 = 1, maxConnections: Int = 0) {
-        self.init(configuration: Configuration(
-            maxSessionsPerConnection: maxSessions,
-            maxConnections: maxConnections
-        ))
     }
 
     // MARK: - Configuration
@@ -241,16 +195,14 @@ public actor WebTransportServer {
     /// - Parameter handler: The closure to handle incoming requests
     public func onRequest(_ handler: @escaping HTTP3Server.RequestHandler) {
         self.requestHandler = handler
+        Task { await httpServer.onRequest(handler) }
     }
 
     // MARK: - Server Lifecycle
 
     /// Starts accepting WebTransport connections from a QUIC connection source.
     ///
-    /// This method:
-    /// 1. Registers an Extended CONNECT handler for WebTransport
-    /// 2. Registers the optional HTTP/3 request handler
-    /// 3. Starts the underlying HTTP/3 server
+    /// Delegates directly to the underlying `HTTP3Server.serve()`.
     ///
     /// - Parameter connectionSource: An async stream of incoming QUIC connections
     /// - Throws: `HTTP3Error` if the server cannot start
@@ -266,13 +218,13 @@ public actor WebTransportServer {
 
         state = .listening
 
-        // Register the request handler (or a default 404 handler)
-        let userRequestHandler = self.requestHandler
-        await httpServer.onRequest { context in
-            if let handler = userRequestHandler {
-                try await handler(context)
-            } else {
-                // Default: return 404 for non-WebTransport requests
+        // Enable WebTransport on the HTTP3Server (deferred from init for actor isolation)
+        await enableWebTransportIfNeeded()
+
+        // If no explicit request handler was registered, install a default
+        // 404 handler so HTTP3Server.serve() doesn't reject with "no handler"
+        if requestHandler == nil {
+            await httpServer.onRequest { context in
                 try await context.respond(
                     status: 404,
                     headers: [("content-type", "text/plain")],
@@ -281,89 +233,6 @@ public actor WebTransportServer {
             }
         }
 
-        // Register the Extended CONNECT handler for WebTransport
-        let allowedPaths = self.configuration.allowedPaths
-        let maxSessions = self.configuration.maxSessionsPerConnection
-        let sessionsContinuation = self.incomingSessionsContinuation
-
-        await httpServer.onExtendedConnect { [weak self] context in
-            // Only accept WebTransport Extended CONNECT requests
-            guard context.request.isWebTransportConnect else {
-                try await context.reject(
-                    status: 501,
-                    headers: [("content-type", "text/plain")],
-                    // body: Data("Only WebTransport is supported".utf8)
-                )
-                return
-            }
-
-            // Check allowed paths
-            if !allowedPaths.isEmpty {
-                guard allowedPaths.contains(context.request.path) else {
-                    try await context.reject(
-                        status: 404,
-                        headers: [("content-type", "text/plain")],
-                        // body: Data("WebTransport path not found".utf8)
-                    )
-                    return
-                }
-            }
-
-            // Enforce per-connection session quota
-            let h3Connection = context.connection
-            let activeCount = await h3Connection.activeWebTransportSessionCount
-            if maxSessions > 0 && activeCount >= Int(maxSessions) {
-                Self.logger.warning(
-                    "WebTransport session limit reached",
-                    metadata: [
-                        "active": "\(activeCount)",
-                        "limit": "\(maxSessions)",
-                        "streamID": "\(context.streamID)",
-                    ]
-                )
-                try await context.reject(
-                    status: 429,
-                    headers: [("content-type", "text/plain")],
-                    // body: Data("Too many WebTransport sessions".utf8)
-                )
-                return
-            }
-
-            // Accept and create the WebTransport session using the
-            // connection reference carried on the context — no lookup needed.
-            do {
-                try await context.accept()
-
-                let session = try await h3Connection.createWebTransportSession(
-                    from: context,
-                    role: .server
-                )
-
-                Self.logger.info(
-                    "WebTransport session accepted",
-                    metadata: [
-                        "sessionID": "\(session.sessionID)",
-                        "streamID": "\(context.streamID)",
-                        "path": "\(context.request.path)",
-                        "authority": "\(context.request.authority)",
-                    ]
-                )
-
-                sessionsContinuation?.yield(session)
-
-                if let self = self {
-                    await self.incrementSessionCount()
-                }
-            } catch {
-                Self.logger.warning(
-                    "Failed to create WebTransport session: \(error)",
-                    metadata: ["streamID": "\(context.streamID)"]
-                )
-                try? await context.reject(status: 500)
-            }
-        }
-
-        // Start the HTTP/3 server
         do {
             try await httpServer.serve(connectionSource: connectionSource)
         } catch {
@@ -374,140 +243,57 @@ public actor WebTransportServer {
         state = .stopped
     }
 
-    /// Serves a single QUIC connection for WebTransport.
+    /// Starts the WebTransport server on the specified host and port.
     ///
-    /// This is a convenience method for testing or single-connection scenarios.
-    /// It establishes the HTTP/3 connection, handles WebTransport negotiation,
-    /// and delivers sessions via `incomingSessions`.
+    /// Creates the full QUIC stack internally and feeds incoming connections
+    /// to the WebTransport server. Blocks until `stop()` is called.
     ///
-    /// - Parameter quicConnection: The QUIC connection to serve
-    /// - Throws: `HTTP3Error` if initialization fails
-    public func serveConnection(_ quicConnection: any QUICConnectionProtocol) async throws {
-        guard state == .idle || state == .listening else {
-            throw HTTP3Error(
-                code: .internalError,
-                reason: "WebTransport server not in valid state (state: \(state))"
-            )
-        }
+    /// - Parameters:
+    ///   - host: The host address to bind to (e.g., `"0.0.0.0"`)
+    ///   - port: The port number to listen on
+    /// - Throws: `HTTP3Error` if the server cannot start, or QUIC/socket errors
+    public func listen(
+        host: String,
+        port: UInt16
+    ) async throws {
+        // Enable WebTransport on the HTTP3Server (deferred from init for actor isolation)
+        await enableWebTransportIfNeeded()
 
-        state = .listening
-
-        // Build HTTP/3 settings
-        var settings = configuration.additionalSettings
-        settings.enableConnectProtocol = true
-        settings.enableH3Datagram = true
-        settings.webtransportMaxSessions = configuration.maxSessionsPerConnection
-
-        // Create and initialize the HTTP/3 connection
-        let h3Connection = HTTP3Connection(
-            quicConnection: quicConnection,
-            role: .server,
-            settings: settings
+        let (endpoint, runTask) = try await QUICEndpoint.serve(
+            host: host,
+            port: port,
+            configuration: configuration.quic
         )
 
-        let connectionID = ObjectIdentifier(quicConnection as AnyObject)
-        activeConnections[connectionID] = h3Connection
+        self.quicEndpoint = endpoint
+        self.quicRunTask = runTask
 
-        defer {
-            activeConnections.removeValue(forKey: connectionID)
-        }
+        Self.logger.info(
+            "WebTransport server listening",
+            metadata: [
+                "host": "\(host)",
+                "port": "\(port)",
+                "maxSessions": "\(configuration.maxSessions)",
+            ]
+        )
 
-        try await h3Connection.initialize()
+        let connectionStream = await endpoint.incomingConnections
 
-        // Process Extended CONNECT requests for WebTransport
-        let allowedPaths = configuration.allowedPaths
-        let maxSessions = configuration.maxSessionsPerConnection
-        let sessionsContinuation = incomingSessionsContinuation
-
-        // Handle Extended CONNECT in a background task
-        let extConnectTask = Task { [weak self] in
-            for await context in await h3Connection.incomingExtendedConnect {
-                guard context.request.isWebTransportConnect else {
-                    try? await context.reject(status: 501)
-                    continue
-                }
-
-                if !allowedPaths.isEmpty && !allowedPaths.contains(context.request.path) {
-                    try? await context.reject(status: 404)
-                    continue
-                }
-
-                // Enforce per-connection session quota
-                let activeCount = await h3Connection.activeWebTransportSessionCount
-                if maxSessions > 0 && activeCount >= Int(maxSessions) {
-                    Self.logger.warning(
-                        "WebTransport session limit reached on connection",
-                        metadata: [
-                            "active": "\(activeCount)",
-                            "limit": "\(maxSessions)",
-                        ]
-                    )
-                    try? await context.reject(
-                        status: 429,
-                        headers: [("content-type", "text/plain")],
-                        // body: Data("Too many WebTransport sessions".utf8)
-                    )
-                    continue
-                }
-
-                // Accept the session
-                do {
-                    try await context.accept()
-
-                    let session = try await h3Connection.createWebTransportSession(
-                        from: context,
-                        role: .server
-                    )
-
-                    sessionsContinuation?.yield(session)
-
-                    if let self = self {
-                        await self.incrementSessionCount()
-                    }
-
-                    Self.logger.info(
-                        "WebTransport session created",
-                        metadata: [
-                            "sessionID": "\(session.sessionID)",
-                            "path": "\(context.request.path)",
-                        ]
-                    )
-                } catch {
-                    Self.logger.warning("Failed to create WebTransport session: \(error)")
-                    try? await context.reject(status: 500)
-                }
-            }
-        }
-
-        defer { extConnectTask.cancel() }
-
-        // Process regular HTTP/3 requests if a handler is registered
-        if let handler = requestHandler {
-            for await context in await h3Connection.incomingRequests {
-                let capturedHandler = handler
-                Task {
-                    do {
-                        try await capturedHandler(context)
-                    } catch {
-                        try? await context.respond(
-                            status: 500,
-                            Data("Internal Server Error".utf8)
-                        )
-                    }
-                }
-            }
-        } else {
-            // Keep alive — wait for incoming requests to end (connection close)
-            for await _ in await h3Connection.incomingRequests {
-                // Discard non-WT requests with 404
-            }
+        do {
+            try await serve(connectionSource: connectionStream)
+        } catch {
+            await endpoint.stop()
+            runTask.cancel()
+            self.quicEndpoint = nil
+            self.quicRunTask = nil
+            throw error
         }
     }
 
     /// Stops the server gracefully.
     ///
-    /// If the server was started via `listen(host:port:quicConfiguration:)`,
-    /// the underlying QUIC endpoint and I/O loop are also shut down.
+    /// Delegates to the underlying `HTTP3Server.stop()` and also tears
+    /// down any QUIC resources created by `listen()`.
     ///
     /// - Parameter gracePeriod: Maximum time to wait for sessions to drain
     public func stop(gracePeriod: Duration = .seconds(5)) async {
@@ -520,8 +306,6 @@ public actor WebTransportServer {
         // Finish the sessions stream
         incomingSessionsContinuation?.finish()
         incomingSessionsContinuation = nil
-
-        activeConnections.removeAll()
 
         // Tear down the QUIC endpoint if we own it (created by listen())
         if let endpoint = quicEndpoint {
@@ -536,17 +320,32 @@ public actor WebTransportServer {
 
     // MARK: - Internal Helpers
 
-    /// Increments the total session counter.
-    private func incrementSessionCount() {
-        totalSessionsAccepted += 1
+    /// Enables WebTransport on the underlying `HTTP3Server` (idempotent).
+    ///
+    /// Called lazily in `serve()` / `listen()` because `HTTP3Server` is an
+    /// actor and `enableWebTransport()` must be awaited.
+    private func enableWebTransportIfNeeded() async {
+        guard !webTransportEnabled else { return }
+        webTransportEnabled = true
+
+        let h3Sessions = await httpServer.enableWebTransport(
+            WebTransportOptions(
+                maxSessionsPerConnection: configuration.maxSessions,
+                allowedPaths: serverOptions.allowedPaths
+            )
+        )
+
+        // Forward sessions from the HTTP3Server stream to our own stream
+        let continuation = incomingSessionsContinuation
+        Task {
+            for await session in h3Sessions {
+                continuation?.yield(session)
+            }
+            continuation?.finish()
+        }
     }
 
     // MARK: - Server Info
-
-    /// The total number of WebTransport sessions accepted.
-    public var totalSessions: UInt64 {
-        totalSessionsAccepted
-    }
 
     /// Whether the server is currently listening.
     public var isListening: Bool {
@@ -558,87 +357,100 @@ public actor WebTransportServer {
         state == .stopped
     }
 
+    /// The number of active HTTP/3 connections.
+    public var activeConnectionCount: Int {
+        get async { await httpServer.activeConnectionCount }
+    }
+
     /// A debug description of the server.
     public var debugDescription: String {
         var parts = [String]()
         parts.append("state=\(state)")
-        parts.append("maxSessions=\(configuration.maxSessionsPerConnection)")
-        parts.append("totalSessions=\(totalSessionsAccepted)")
-        parts.append("activeConnections=\(activeConnections.count)")
+        parts.append("maxSessions=\(configuration.maxSessions)")
         return "WebTransportServer(\(parts.joined(separator: ", ")))"
     }
+}
 
-    // MARK: - Convenience: listen
+// MARK: - Convenience API (Static Factory)
 
-    /// Starts the WebTransport server on the specified host and port.
+extension WebTransportServer {
+
+    /// Creates and starts a WebTransport server in a single call.
     ///
-    /// This is a convenience method that creates the full QUIC stack
-    /// internally (UDP socket → QUIC endpoint → connection stream) and
-    /// feeds incoming connections to the WebTransport server.
-    ///
-    /// The method blocks until `stop()` is called or the connection
-    /// source ends. Call `stop()` from another task to shut down.
-    ///
-    /// - Parameters:
-    ///   - host: The host address to bind to (e.g., `"0.0.0.0"` or `"127.0.0.1"`)
-    ///   - port: The port number to listen on
-    ///   - quicConfiguration: QUIC transport configuration (TLS, flow control, etc.)
-    /// - Throws: `HTTP3Error` if the server cannot start, or QUIC/socket errors
+    /// This static factory creates the full QUIC stack, begins listening, and
+    /// returns the server immediately. Incoming sessions are available via
+    /// `incomingSessions` without blocking.
     ///
     /// ## Usage
     ///
     /// ```swift
-    /// let server = WebTransportServer(maxSessions: 4)
-    ///
-    /// Task {
-    ///     for await session in await server.incomingSessions {
-    ///         Task { await handleSession(session) }
-    ///     }
-    /// }
-    ///
-    /// // Blocks until stop() is called
-    /// try await server.listen(
+    /// let config = WebTransportConfiguration(quic: quicConfig, maxSessions: 4)
+    /// let server = try await WebTransportServer.listen(
     ///     host: "0.0.0.0",
-    ///     port: 443,
-    ///     quicConfiguration: quicConfig
+    ///     port: 4433,
+    ///     configuration: config
     /// )
+    ///
+    /// for await session in server.incomingSessions {
+    ///     Task { await handleSession(session) }
+    /// }
     /// ```
-    public func listen(
+    ///
+    /// - Parameters:
+    ///   - host: The host address to bind to (e.g. `"0.0.0.0"`)
+    ///   - port: The port number to listen on
+    ///   - configuration: WebTransport configuration (includes QUIC config)
+    ///   - serverOptions: Server-specific options (default: `.default`)
+    /// - Returns: A `WebTransportServer` that is already listening
+    /// - Throws: `HTTP3Error` if the QUIC endpoint cannot start
+    public static func listen(
         host: String,
         port: UInt16,
-        quicConfiguration: QUICConfiguration
-    ) async throws {
+        configuration: WebTransportConfiguration,
+        serverOptions: ServerOptions = .default
+    ) async throws -> WebTransportServer {
+        let server = WebTransportServer(
+            configuration: configuration,
+            serverOptions: serverOptions
+        )
+
+        // Start the QUIC endpoint so we fail fast on bind errors
         let (endpoint, runTask) = try await QUICEndpoint.serve(
             host: host,
             port: port,
-            configuration: quicConfiguration
+            configuration: configuration.quic
         )
 
-        self.quicEndpoint = endpoint
-        self.quicRunTask = runTask
+        await server.storeQuicResources(endpoint: endpoint, runTask: runTask)
 
         Self.logger.info(
             "WebTransport server listening",
             metadata: [
                 "host": "\(host)",
                 "port": "\(port)",
-                "maxSessions": "\(configuration.maxSessionsPerConnection)",
+                "maxSessions": "\(configuration.maxSessions)",
             ]
         )
 
+        // Start serve() in a background task so we return immediately.
         let connectionStream = await endpoint.incomingConnections
 
-        // serve() blocks until the connection source ends or stop() is called.
-        // On return (or throw), the QUIC resources are cleaned up by stop().
-        do {
-            try await serve(connectionSource: connectionStream)
-        } catch {
-            // Ensure QUIC resources are cleaned up on error
-            await endpoint.stop()
-            runTask.cancel()
-            self.quicEndpoint = nil
-            self.quicRunTask = nil
-            throw error
+        Task {
+            do {
+                try await server.serve(connectionSource: connectionStream)
+            } catch {
+                Self.logger.warning("WebTransport server serve loop ended with error: \(error)")
+            }
         }
+
+        return server
+    }
+
+    // MARK: - Internal Helpers
+
+    /// Stores QUIC resources so `stop()` can tear them down.
+    private func storeQuicResources(endpoint: QUICEndpoint, runTask: Task<Void, Error>) {
+        self.quicEndpoint = endpoint
+        self.quicRunTask = runTask
     }
 }
