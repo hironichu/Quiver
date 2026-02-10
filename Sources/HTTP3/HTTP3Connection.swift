@@ -80,7 +80,9 @@ import Logging
 /// }
 /// ```
 public actor HTTP3Connection {
+
     static let logger = QuiverLogging.logger(label: "http3.connection")
+
 
     // MARK: - Types
 
