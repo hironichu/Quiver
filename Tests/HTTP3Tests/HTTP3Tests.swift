@@ -1070,7 +1070,7 @@ final class HTTP3TypesTests: XCTestCase {
         let response = HTTP3Response(status: 200, body: Data("Hello".utf8))
         XCTAssertEqual(response.description, "200 OK (5 bytes)")
 
-        let streamResponse = HTTP3Response(status: 404, body: HTTP3Body(stream: AsyncStream<Data> { $0.finish() }))
+        let streamResponse = HTTP3Response(status: 404, bodyStream: AsyncStream<Data> { $0.finish() })
         XCTAssertEqual(streamResponse.description, "404 Not Found (stream)")
     }
 
