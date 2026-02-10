@@ -68,7 +68,7 @@ import Logging
 /// let server = HTTP3Server(settings: .webTransport())
 ///
 /// server.onRequest { context in
-///     try await context.respond(HTTP3Response(status: 200, body: Data("Hello".utf8)))
+///     try await context.respond(status: 200, Data("Hello".utf8))
 /// }
 ///
 /// server.onExtendedConnect { context in
@@ -244,19 +244,19 @@ public actor HTTP3Server {
     /// server.onRequest { context in
     ///     switch context.request.path {
     ///     case "/":
-    ///         try await context.respond(HTTP3Response(
+    ///         try await context.respond(
     ///             status: 200,
     ///             headers: [("content-type", "text/html")],
     ///             body: Data("<h1>Home</h1>".utf8)
-    ///         ))
+    ///         )
     ///     case "/api/health":
-    ///         try await context.respond(HTTP3Response(
+    ///         try await context.respond(
     ///             status: 200,
     ///             headers: [("content-type", "application/json")],
     ///             body: Data("{\"status\":\"ok\"}".utf8)
-    ///         ))
+    ///         )
     ///     default:
-    ///         try await context.respond(HTTP3Response(status: 404))
+    ///         try await context.respond(status: 404)
     ///     }
     /// }
     /// ```
@@ -477,11 +477,11 @@ public actor HTTP3Server {
                             try await capturedHandler(context)
                         } catch {
                             // Handler threw an error — send 500 if possible
-                            try? await context.respond(HTTP3Response(
+                            try? await context.respond(
                                 status: 500,
                                 headers: [("content-type", "text/plain")],
-                                body: Data("Internal Server Error".utf8)
-                            ))
+                                Data("Internal Server Error".utf8)
+                            )
                         }
                     }
                 }
@@ -521,7 +521,7 @@ public actor HTTP3Server {
                         try? await context.reject(
                             status: 500,
                             headers: [("content-type", "text/plain")],
-                            body: Data("Internal Server Error".utf8)
+                            // body: Data("Internal Server Error".utf8)
                         )
                     }
                 }
@@ -531,7 +531,7 @@ public actor HTTP3Server {
                     try? await context.reject(
                         status: 501,
                         headers: [("content-type", "text/plain")],
-                        body: Data("Extended CONNECT not supported".utf8)
+                        // body: Data("Extended CONNECT not supported".utf8)
                     )
                 }
             }
@@ -614,7 +614,7 @@ public actor HTTP3Server {
     /// let server = HTTP3Server(settings: .literalOnly, maxConnections: 100)
     ///
     /// await server.onRequest { context in
-    ///     try await context.respond(HTTP3Response(status: 200, body: Data("OK".utf8)))
+    ///     try await context.respond(status: 200, Data("OK".utf8))
     /// }
     ///
     /// // Blocks until stop() is called
@@ -683,7 +683,7 @@ public actor HTTP3Server {
     /// let server = HTTP3Server()
     ///
     /// await server.onRequest { context in
-    ///     try await context.respond(HTTP3Response(status: 200, body: Data("OK".utf8)))
+    ///     try await context.respond(status: 200, Data("OK".utf8))
     /// }
     ///
     /// let sessions = await server.enableWebTransport(
@@ -723,7 +723,7 @@ public actor HTTP3Server {
                 try await context.reject(
                     status: 501,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Only WebTransport is supported via Extended CONNECT".utf8)
+                    // body: Data("Only WebTransport is supported via Extended CONNECT".utf8)
                 )
                 return
             }
@@ -734,7 +734,7 @@ public actor HTTP3Server {
                     try await context.reject(
                         status: 404,
                         headers: [("content-type", "text/plain")],
-                        body: Data("WebTransport path not found".utf8)
+                        // body: Data("WebTransport path not found".utf8)
                     )
                     return
                 }
@@ -755,7 +755,7 @@ public actor HTTP3Server {
                 try await context.reject(
                     status: 429,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Too many WebTransport sessions".utf8)
+                    // body: Data("Too many WebTransport sessions".utf8)
                 )
                 return
             }
@@ -805,10 +805,10 @@ public actor HTTP3Server {
 /// ```swift
 /// let router = HTTP3Router()
 /// router.get("/") { context in
-///     try await context.respond(HTTP3Response(
+///     try await context.respond(
 ///         status: 200,
-///         body: Data("Home".utf8)
-///     ))
+///         Data("Home".utf8)
+///     )
 /// }
 /// router.post("/api/data") { context in
 ///     // handle POST
@@ -835,11 +835,11 @@ public final class HTTP3Router: Sendable {
     public init() {
         self.routes = LockedBox([])
         self.notFoundHandler = LockedBox({ context in
-            try await context.respond(HTTP3Response(
+            try await context.respond(
                 status: 404,
                 headers: [("content-type", "text/plain")],
-                body: Data("Not Found".utf8)
-            ))
+                Data("Not Found".utf8)
+            )
         })
     }
 

@@ -23,7 +23,7 @@ import QUICCore
 ///
 /// - Warning: This class is only available in DEBUG builds.
 ///   Never use MockTLSProvider in production code.
-public final class MockTLSProvider: TLS13Provider, Sendable {
+package final class MockTLSProvider: TLS13Provider, Sendable {
     /// Internal state
     private let state: Mutex<MockTLSState>
 
@@ -43,7 +43,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
     ///   - configuration: TLS configuration
     ///   - immediateCompletion: If true, handshake completes in one round trip
     ///   - simulatedDelay: Optional delay to simulate network latency
-    public init(
+    package init(
         configuration: TLSConfiguration = TLSConfiguration(),
         immediateCompletion: Bool = true,
         simulatedDelay: Duration? = nil
@@ -56,7 +56,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
 
     // MARK: - TLS13Provider Protocol
 
-    public func startHandshake(isClient: Bool) async throws -> [TLSOutput] {
+    package func startHandshake(isClient: Bool) async throws -> [TLSOutput] {
         if let delay = simulatedDelay {
             try await Task.sleep(for: delay)
         }
@@ -115,7 +115,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
         }
     }
 
-    public func processHandshakeData(_ data: Data, at level: EncryptionLevel) async throws -> [TLSOutput] {
+    package func processHandshakeData(_ data: Data, at level: EncryptionLevel) async throws -> [TLSOutput] {
         if let delay = simulatedDelay {
             try await Task.sleep(for: delay)
         }
@@ -135,52 +135,52 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
         }
     }
 
-    public func getLocalTransportParameters() -> Data {
+    package func getLocalTransportParameters() -> Data {
         state.withLock { state in
             state.localTransportParameters ?? Data()
         }
     }
 
-    public func setLocalTransportParameters(_ params: Data) throws {
+    package func setLocalTransportParameters(_ params: Data) throws {
         state.withLock { state in
             state.localTransportParameters = params
         }
     }
 
-    public func getPeerTransportParameters() -> Data? {
+    package func getPeerTransportParameters() -> Data? {
         state.withLock { state in
             state.peerTransportParameters
         }
     }
 
-    public var isHandshakeComplete: Bool {
+    package var isHandshakeComplete: Bool {
         state.withLock { $0.handshakeComplete }
     }
 
-    public var isClient: Bool {
+    package var isClient: Bool {
         state.withLock { $0.isClient }
     }
 
-    public var negotiatedALPN: String? {
+    package var negotiatedALPN: String? {
         state.withLock { $0.negotiatedALPN }
     }
 
-    public func configureResumption(ticket: SessionTicketData, attemptEarlyData: Bool) throws {
+    package func configureResumption(ticket: SessionTicketData, attemptEarlyData: Bool) throws {
         state.withLock { state in
             state.resumptionTicket = ticket
             state.attemptEarlyData = attemptEarlyData
         }
     }
 
-    public var is0RTTAccepted: Bool {
+    package var is0RTTAccepted: Bool {
         state.withLock { $0.is0RTTAccepted }
     }
 
-    public var is0RTTAttempted: Bool {
+    package var is0RTTAttempted: Bool {
         state.withLock { $0.is0RTTAttempted }
     }
 
-    public func requestKeyUpdate() async throws -> [TLSOutput] {
+    package func requestKeyUpdate() async throws -> [TLSOutput] {
         state.withLock { state in
             state.keyUpdateCount += 1
 
@@ -202,7 +202,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
         }
     }
 
-    public func exportKeyingMaterial(
+    package func exportKeyingMaterial(
         label: String,
         context: Data?,
         length: Int
@@ -215,7 +215,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
     // MARK: - Mock Specific Methods
 
     /// Sets peer transport parameters (for testing)
-    public func setPeerTransportParameters(_ params: Data) {
+    package func setPeerTransportParameters(_ params: Data) {
         state.withLock { state in
             state.peerTransportParameters = params
         }
@@ -228,7 +228,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
     /// 1. `isHandshakeComplete` returns true
     /// 2. `getPeerTransportParameters()` returns valid encoded parameters
     /// 3. Stream limits are properly configured (initialMaxStreamsBidi = 100, etc.)
-    public func forceComplete() {
+    package func forceComplete() {
         state.withLock { state in
             state.handshakeComplete = true
             // Set peer transport parameters with RFC-compliant encoding
@@ -241,7 +241,7 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
     }
 
     /// Resets the mock state
-    public func reset() {
+    package func reset() {
         state.withLock { state in
             state = MockTLSState()
         }
@@ -531,8 +531,8 @@ private struct MockTLSState: Sendable {
 /// fatal error if somehow called.
 ///
 /// - Warning: This type should never be instantiated in release builds.
-public final class MockTLSProvider: TLS13Provider, Sendable {
-    public init(
+package final class MockTLSProvider: TLS13Provider, Sendable {
+    package init(
         configuration: TLSConfiguration = TLSConfiguration(),
         immediateCompletion: Bool = true,
         simulatedDelay: Duration? = nil
@@ -540,68 +540,68 @@ public final class MockTLSProvider: TLS13Provider, Sendable {
         fatalError("MockTLSProvider is not available in release builds. Configure a real TLS provider using QUICConfiguration.production() or QUICConfiguration.development().")
     }
 
-    public func startHandshake(isClient: Bool) async throws -> [TLSOutput] {
+    package func startHandshake(isClient: Bool) async throws -> [TLSOutput] {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func processHandshakeData(_ data: Data, at level: EncryptionLevel) async throws -> [TLSOutput] {
+    package func processHandshakeData(_ data: Data, at level: EncryptionLevel) async throws -> [TLSOutput] {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func getLocalTransportParameters() -> Data {
+    package func getLocalTransportParameters() -> Data {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func setLocalTransportParameters(_ params: Data) throws {
+    package func setLocalTransportParameters(_ params: Data) throws {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func getPeerTransportParameters() -> Data? {
+    package func getPeerTransportParameters() -> Data? {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public var isHandshakeComplete: Bool {
+    package var isHandshakeComplete: Bool {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public var isClient: Bool {
+    package var isClient: Bool {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public var negotiatedALPN: String? {
+    package var negotiatedALPN: String? {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func configureResumption(ticket: SessionTicketData, attemptEarlyData: Bool) throws {
+    package func configureResumption(ticket: SessionTicketData, attemptEarlyData: Bool) throws {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public var is0RTTAccepted: Bool {
+    package var is0RTTAccepted: Bool {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public var is0RTTAttempted: Bool {
+    package var is0RTTAttempted: Bool {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func requestKeyUpdate() async throws -> [TLSOutput] {
+    package func requestKeyUpdate() async throws -> [TLSOutput] {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func exportKeyingMaterial(label: String, context: Data?, length: Int) throws -> Data {
+    package func exportKeyingMaterial(label: String, context: Data?, length: Int) throws -> Data {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
     // Mock-specific methods that will fail in release builds
-    public func setPeerTransportParameters(_ params: Data) {
+    package func setPeerTransportParameters(_ params: Data) {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func forceComplete() {
+    package func forceComplete() {
         fatalError("MockTLSProvider is not available in release builds")
     }
 
-    public func reset() {
+    package func reset() {
         fatalError("MockTLSProvider is not available in release builds")
     }
 }

@@ -1,4 +1,12 @@
-/// Managed Connection
+/// QUIC Managed Connection
+///
+/// ## ECN Integration
+///
+/// `processDatagram` and `processIncomingPacket` accept an optional
+/// `ECNCodepoint` from the socket layer (`IncomingPacket.ecnCodepoint`).
+/// After each packet is decrypted and its encryption level is known,
+/// the codepoint is fed into `handler.ecnManager.recordIncoming(_:level:)`
+/// for ACK-frame ECN count reporting (RFC 9000 §13.4).
 ///
 /// High-level connection wrapper that orchestrates handshake, packet processing,
 /// and stream management. Implements QUICConnectionProtocol for public API.
@@ -12,32 +20,8 @@ import QUICConnection
 import QUICStream
 import QUICRecovery
 
-// MARK: - Handshake State
-
-/// Connection handshake state
-public enum HandshakeState: Sendable, Equatable {
-    /// Connection not yet started
-    case idle
-
-    /// Client: Initial packet sent, waiting for server response
-    /// Server: Not applicable
-    case connecting
-
-    /// Server: Initial received, handshake in progress
-    /// Client: Handshake packets being exchanged
-    case handshakeInProgress
-
-    /// Handshake complete, connection established
-    case established
-
-    /// Connection is closing
-    case closing
-
-    /// Connection is closed
-    case closed
-}
-
 // MARK: - Managed Connection
+
 
 /// High-level managed connection for QUIC
 ///
@@ -48,34 +32,40 @@ public enum HandshakeState: Sendable, Equatable {
 /// - Stream management via QUICConnectionProtocol
 /// - Anti-amplification limit enforcement (RFC 9000 Section 8.1)
 public final class ManagedConnection: Sendable {
-    private static let logger = QuiverLogging.logger(label: "quic.connection.managed")
+
+    static let logger = QuiverLogging.logger(label: "quic.connection.managed")
 
     // MARK: - Properties
 
     /// Connection handler (low-level orchestration)
-    private let handler: QUICConnectionHandler
+    let handler: QUICConnectionHandler
 
     /// Packet processor (encryption/decryption)
-    private let packetProcessor: PacketProcessor
+    let packetProcessor: PacketProcessor
 
     /// TLS provider
-    private let tlsProvider: any TLS13Provider
+    let tlsProvider: any TLS13Provider
 
     /// Anti-amplification limiter (RFC 9000 Section 8.1)
     /// Servers must not send more than 3x bytes received until address is validated
-    private let amplificationLimiter: AntiAmplificationLimiter
+    let amplificationLimiter: AntiAmplificationLimiter
 
     /// Path validation manager for connection migration (RFC 9000 Section 9.3)
-    private let pathValidationManager: PathValidationManager
+    let pathValidationManager: PathValidationManager
 
     /// Connection ID manager for connection migration (RFC 9000 Section 9.5)
-    private let connectionIDManager: ConnectionIDManager
+    let connectionIDManager: ConnectionIDManager
 
     /// Internal state
-    private let state: Mutex<ManagedConnectionState>
+    let state: Mutex<ManagedConnectionState>
+
+    /// Serializes concurrent calls to `generateOutboundPackets()` (RC1 fix).
+    /// Both `outboundSendLoop` and `packetReceiveLoop` may call it concurrently;
+    /// this lock ensures only one executes at a time.
+    private let packetGenerationLock = Mutex(())
 
     /// State for stream read continuations
-    private struct StreamContinuationsState: Sendable {
+    struct StreamContinuationsState: Sendable {
         var continuations: [UInt64: CheckedContinuation<Data, any Error>] = [:]
         /// Buffer for stream data received before read() is called
         var pendingData: [UInt64: [Data]] = [:]
@@ -86,44 +76,44 @@ public final class ManagedConnection: Sendable {
     }
 
     /// Stream continuations for async stream API
-    private let streamContinuationsState: Mutex<StreamContinuationsState>
+    let streamContinuationsState: Mutex<StreamContinuationsState>
 
     /// State for incoming stream AsyncStream (lazy initialization pattern)
-    private struct IncomingStreamState: Sendable {
+    struct IncomingStreamState: Sendable {
         var continuation: AsyncStream<any QUICStreamProtocol>.Continuation?
         var stream: AsyncStream<any QUICStreamProtocol>?
         var isShutdown: Bool = false
         /// Buffer for streams that arrive before incomingStreams is accessed
         var pendingStreams: [any QUICStreamProtocol] = []
     }
-    private let incomingStreamState: Mutex<IncomingStreamState>
+    let incomingStreamState: Mutex<IncomingStreamState>
 
     /// State for incoming datagram AsyncStream (RFC 9221)
-    private struct IncomingDatagramState: Sendable {
+    struct IncomingDatagramState: Sendable {
         var continuation: AsyncStream<Data>.Continuation?
         var stream: AsyncStream<Data>?
         var isShutdown: Bool = false
         /// Buffer for datagrams that arrive before incomingDatagrams is accessed
         var pendingDatagrams: [Data] = []
     }
-    private let incomingDatagramState: Mutex<IncomingDatagramState>
+    let incomingDatagramState: Mutex<IncomingDatagramState>
 
     /// State for session ticket stream (lazy initialization pattern)
-    private struct SessionTicketState: Sendable {
+    struct SessionTicketState: Sendable {
         var continuation: AsyncStream<NewSessionTicketInfo>.Continuation?
         var stream: AsyncStream<NewSessionTicketInfo>?
         var isShutdown: Bool = false
         /// Buffer for tickets that arrive before sessionTickets is accessed
         var pendingTickets: [NewSessionTicketInfo] = []
     }
-    private let sessionTicketState: Mutex<SessionTicketState>
+    let sessionTicketState: Mutex<SessionTicketState>
 
     /// Original connection ID (for Initial key derivation)
     /// This is the DCID from the first client Initial packet
-    private let originalConnectionID: ConnectionID
+    let originalConnectionID: ConnectionID
 
     /// Transport parameters (stored for TLS)
-    private let transportParameters: TransportParameters
+    let transportParameters: TransportParameters
 
     /// Local address
     public let localAddress: SocketAddress?
@@ -133,7 +123,7 @@ public final class ManagedConnection: Sendable {
 
     /// Closure called when a new connection ID is received
     /// Used to register the CID with the ConnectionRouter
-    private let onNewConnectionID: Mutex<(@Sendable (ConnectionID) -> Void)?>
+    let onNewConnectionID: Mutex<(@Sendable (ConnectionID) -> Void)?>
 
     // MARK: - Initialization
 
@@ -148,7 +138,7 @@ public final class ManagedConnection: Sendable {
     ///   - tlsProvider: TLS 1.3 provider
     ///   - localAddress: Local socket address (optional)
     ///   - remoteAddress: Remote socket address
-    public init(
+    public convenience init(
         role: ConnectionRole,
         version: QUICVersion,
         sourceConnectionID: ConnectionID,
@@ -157,7 +147,56 @@ public final class ManagedConnection: Sendable {
         transportParameters: TransportParameters,
         tlsProvider: any TLS13Provider,
         localAddress: SocketAddress? = nil,
-        remoteAddress: SocketAddress
+        remoteAddress: SocketAddress,
+        maxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
+    ) {
+        self.init(
+            role: role,
+            version: version,
+            sourceConnectionID: sourceConnectionID,
+            destinationConnectionID: destinationConnectionID,
+            originalConnectionID: originalConnectionID,
+            transportParameters: transportParameters,
+            tlsProvider: tlsProvider,
+            congestionControllerFactory: NewRenoFactory(),
+            localAddress: localAddress,
+            remoteAddress: remoteAddress,
+            maxDatagramSize: maxDatagramSize
+        )
+    }
+
+    /// Creates a new managed connection with a custom congestion controller factory.
+    ///
+    /// This initializer is `package` access because `CongestionControllerFactory`
+    /// and its dependency types are package-internal. Use the public `init` for
+    /// default NewReno congestion control.
+    ///
+    /// - Parameters:
+    ///   - role: Connection role (client or server)
+    ///   - version: QUIC version
+    ///   - sourceConnectionID: Local connection ID
+    ///   - destinationConnectionID: Remote connection ID
+    ///   - originalConnectionID: Original DCID for Initial key derivation (defaults to destinationConnectionID)
+    ///   - transportParameters: Transport parameters to use
+    ///   - tlsProvider: TLS 1.3 provider
+    ///   - congestionControllerFactory: Factory for creating the congestion controller
+    ///   - localAddress: Local socket address (optional)
+    ///   - remoteAddress: Remote socket address
+    ///   - maxDatagramSize: Configured path MTU from
+    ///     `QUICConfiguration.maxUDPPayloadSize`.  Plumbed into
+    ///     `QUICConnectionHandler` and `PacketProcessor`.
+    package init(
+        role: ConnectionRole,
+        version: QUICVersion,
+        sourceConnectionID: ConnectionID,
+        destinationConnectionID: ConnectionID,
+        originalConnectionID: ConnectionID? = nil,
+        transportParameters: TransportParameters,
+        tlsProvider: any TLS13Provider,
+        congestionControllerFactory: any CongestionControllerFactory,
+        localAddress: SocketAddress? = nil,
+        remoteAddress: SocketAddress,
+        maxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
     ) {
         self.incomingDatagramState = Mutex(IncomingDatagramState())
         self.handler = QUICConnectionHandler(
@@ -165,9 +204,14 @@ public final class ManagedConnection: Sendable {
             version: version,
             sourceConnectionID: sourceConnectionID,
             destinationConnectionID: destinationConnectionID,
-            transportParameters: transportParameters
+            transportParameters: transportParameters,
+            congestionControllerFactory: congestionControllerFactory,
+            maxDatagramSize: maxDatagramSize
         )
-        self.packetProcessor = PacketProcessor(dcidLength: sourceConnectionID.length)
+        self.packetProcessor = PacketProcessor(
+            dcidLength: sourceConnectionID.length,
+            maxDatagramSize: maxDatagramSize
+        )
         self.tlsProvider = tlsProvider
         self.amplificationLimiter = AntiAmplificationLimiter(isServer: role == .server)
         self.pathValidationManager = PathValidationManager()
@@ -352,10 +396,161 @@ public final class ManagedConnection: Sendable {
         )
     }
 
+    // MARK: - ECN Control
+
+    /// Enables ECN marking on outgoing packets and starts ECN validation.
+    ///
+    /// Call this after confirming the socket was created with ECN support
+    /// (i.e. `PlatformSocketOptions.ecnEnabled == true`).
+    public func enableECN() {
+        handler.ecnManager.enableECN()
+    }
+
+    /// Disables ECN marking on outgoing packets.
+    public func disableECN() {
+        handler.ecnManager.disableECN()
+    }
+
+    /// Whether ECN is currently enabled on this connection.
+    public var isECNEnabled: Bool {
+        handler.ecnManager.isEnabled
+    }
+
+    /// Current ECN validation state for this connection's path.
+    public var ecnValidationState: ECNValidationState {
+        handler.ecnManager.validationState
+    }
+
+    /// Whether ECN validation has succeeded on this path.
+    public var isECNValidated: Bool {
+        handler.ecnManager.isValidated
+    }
+
+    // MARK: - DPLPMTUD Control
+
+    /// Enables DPLPMTUD probing on this connection.
+    ///
+    /// Call this after confirming the socket has the DF bit set
+    /// (i.e. `PlatformSocketOptions.dfEnabled == true`).
+    /// Without DF, routers may silently fragment and probes always
+    /// "succeed", yielding an incorrect path MTU.
+    public func enablePMTUD() {
+        handler.pmtuDiscovery.enable()
+    }
+
+    /// Disables DPLPMTUD and reverts to the base MTU.
+    public func disablePMTUD() {
+        handler.pmtuDiscovery.disable()
+    }
+
+    /// The currently confirmed path MTU from DPLPMTUD.
+    ///
+    /// In `disabled` or `error` states this returns `basePLPMTU`
+    /// (i.e. `ProtocolLimits.minimumMaximumDatagramSize`).
+    public var currentPathMTU: Int {
+        handler.pmtuDiscovery.currentPLPMTU
+    }
+
+    /// Current DPLPMTUD state machine phase.
+    public var pmtuState: PMTUState {
+        handler.pmtuDiscovery.state
+    }
+
+    /// Resets DPLPMTUD state after a path change (connection migration).
+    ///
+    /// Reverts the confirmed MTU to base and restarts the search
+    /// on the next timer tick.
+    public func resetPMTUDForPathChange() {
+        handler.pmtuDiscovery.resetForPathChange()
+    }
+
+    /// Diagnostic summary of the DPLPMTUD state for logging.
+    public var pmtuDiagnostics: String {
+        handler.pmtuDiscovery.diagnosticSummary
+    }
+
+    /// The number of confirmed MTU entries in the PMTUD history.
+    public var pmtuHistoryCount: Int {
+        handler.pmtuDiscovery.mtuHistory.count
+    }
+
+    /// Attempts to generate a DPLPMTUD probe.
+    ///
+    /// Returns `nil` when the state machine is not in a probing phase
+    /// (e.g. `disabled`, `searchComplete`, or an active probe is already
+    /// in flight).
+    public func generatePMTUProbe() -> PMTUDiscoveryManager.ProbeRequest? {
+        handler.pmtuDiscovery.generateProbe()
+    }
+
+    /// Generates a DPLPMTUD probe, builds a padded packet, enqueues it
+    /// for transmission, and signals the outbound send loop.
+    ///
+    /// The probe packet contains a PATH_CHALLENGE frame plus PADDING
+    /// frames to reach the target probe size.  It bypasses the normal
+    /// frame queue because its size intentionally exceeds
+    /// `maxDatagramSize`.
+    ///
+    /// - Returns: The probe request metadata, or `nil` if no probe is
+    ///   needed (PMTUD disabled, search complete, or probe already in
+    ///   flight).
+    @discardableResult
+    public func sendPMTUProbe() throws -> PMTUDiscoveryManager.ProbeRequest? {
+        guard let probe = generatePMTUProbe() else { return nil }
+
+        // Build the probe packet directly (not via the frame queue,
+        // because probe.packetSize > maxDatagramSize).
+        let dcid = state.withLock { $0.destinationConnectionID }
+        let pn = handler.getNextPacketNumber(for: .application)
+        let header = ShortHeader(
+            destinationConnectionID: dcid,
+            packetNumberLength: 4,
+            spinBit: false,
+            keyPhase: false
+        )
+
+        // Compute per-packet overhead so we can size the PADDING frame.
+        //   1           first byte
+        // + dcid.count  DCID
+        // + pnLength    packet number (before encryption)
+        // + 16          AEAD tag  (PacketConstants.aeadTagSize)
+        // + 9           PATH_CHALLENGE (1 type + 8 data)
+        let overhead = 1 + dcid.bytes.count + header.packetNumberLength
+                     + PacketConstants.aeadTagSize + 9
+        let paddingCount = max(0, probe.packetSize - overhead)
+
+        var frames: [Frame] = [probe.frame]
+        if paddingCount > 0 {
+            frames.append(.padding(count: paddingCount))
+        }
+
+        let encrypted = try packetProcessor.encryptShortHeaderPacket(
+            frames: frames,
+            header: header,
+            packetNumber: pn,
+            maxPacketSize: probe.packetSize
+        )
+
+        Self.logger.info(
+            "DPLPMTUD: sending probe packet (\(encrypted.count) bytes, target=\(probe.packetSize), challenge=\(probe.challengeData.count) bytes)"
+        )
+
+        // Enqueue and signal the outbound send loop.
+        state.withLock { $0.probePacketQueue.append(encrypted) }
+        signalNeedsSend()
+
+        return probe
+    }
+
+    // MARK: - Packet Processing
+
     /// Processes an incoming packet
-    /// - Parameter data: The encrypted packet data
+    /// - Parameters:
+    ///   - data: The encrypted packet data
+    ///   - ecnCodepoint: ECN codepoint from the IP header (via `IncomingPacket`).
+    ///     Defaults to `.notECT` when the transport does not provide ECN metadata.
     /// - Returns: Outbound packets to send in response
-    public func processIncomingPacket(_ data: Data) async throws -> [Data] {
+    public func processIncomingPacket(_ data: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws -> [Data] {
         // Record received bytes for anti-amplification limit
         amplificationLimiter.recordBytesReceived(UInt64(data.count))
 
@@ -392,6 +587,9 @@ public final class ManagedConnection: Sendable {
             amplificationLimiter.validateAddress()
         }
 
+        // Record ECN codepoint for this packet's encryption level
+        handler.ecnManager.recordIncoming(ecnCodepoint, level: parsed.encryptionLevel)
+
         // Record received packet
         handler.recordReceivedPacket(
             packetNumber: parsed.packetNumber,
@@ -415,7 +613,12 @@ public final class ManagedConnection: Sendable {
     }
 
     /// Processes a coalesced datagram (multiple packets)
-    /// - Parameter datagram: The UDP datagram
+    /// - Parameters:
+    ///   - datagram: The UDP datagram
+    ///   - ecnCodepoint: ECN codepoint from the IP header (via `IncomingPacket`).
+    ///     Applied to every coalesced packet within the datagram (a single UDP
+    ///     datagram has exactly one IP header, so all coalesced QUIC packets
+    ///     share the same ECN marking). Defaults to `.notECT`.
     /// - Returns: Outbound packets to send in response
     ///
     /// RFC 9000 Section 12.2: A single UDP datagram may contain multiple
@@ -431,7 +634,7 @@ public final class ManagedConnection: Sendable {
     /// This caused the Handshake packet to be silently dropped (no keys yet),
     /// losing the first 110 bytes of Handshake-level CRYPTO data and stalling
     /// the TLS handshake.
-    public func processDatagram(_ datagram: Data) async throws -> [Data] {
+    public func processDatagram(_ datagram: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws -> [Data] {
         // Record received bytes for anti-amplification limit
         amplificationLimiter.recordBytesReceived(UInt64(datagram.count))
 
@@ -508,6 +711,11 @@ public final class ManagedConnection: Sendable {
             if parsed.encryptionLevel == .handshake {
                 amplificationLimiter.validateAddress()
             }
+
+            // Record ECN codepoint for this packet's encryption level.
+            // All coalesced packets in a single UDP datagram share the
+            // same IP header, so the ECN codepoint applies uniformly.
+            handler.ecnManager.recordIncoming(ecnCodepoint, level: parsed.encryptionLevel)
 
             // Record received packet
             handler.recordReceivedPacket(
@@ -674,7 +882,7 @@ public final class ManagedConnection: Sendable {
                 frames: frames,
                 header: header,
                 packetNumber: pn,
-                padToMinimum: true  // Initial packets must be padded to 1200 bytes
+                padToMinimum: true  // Initial packets must be padded to minimumInitialPacketSize (RFC 9000 Section 14.1)
             )
             initialPackets.append(encrypted)
         }
@@ -685,74 +893,112 @@ public final class ManagedConnection: Sendable {
     /// Generates outbound packets ready to send
     /// - Returns: Array of encrypted packet data
     public func generateOutboundPackets() throws -> [Data] {
-        let outboundPackets = handler.getOutboundPackets()
-        var result: [Data] = []
+        // Phase 1: Serialize so outboundSendLoop + packetReceiveLoop
+        // cannot interleave frame queue operations (RC1).
+        try packetGenerationLock.withLock { _ in
+            try _generateOutboundPacketsLocked()
+        }
+    }
 
-        // Consolidate all frames by encryption level into a single packet
-        // per level.  Previously each frame was wrapped in its own
-        // OutboundPacket, leading to many tiny packets (one per CRYPTO
-        // frame, one per ACK, etc.).  Consolidating reduces packet count,
-        // saves packet numbers, and ensures the peer receives all handshake
-        // CRYPTO data in a single packet that can be processed atomically.
+    /// The actual packet generation logic, called under `packetGenerationLock`.
+    private func _generateOutboundPacketsLocked() throws -> [Data] {
+        // Drain pre-built PMTUD probe packets first — these were
+        // constructed by sendPMTUProbe() and already encrypted.
+        var result: [Data] = state.withLock { s in
+            let probes = s.probePacketQueue
+            s.probePacketQueue.removeAll(keepingCapacity: true)
+            return probes
+        }
+
+        let outboundPackets = handler.getOutboundPackets()
+
+        // Consolidate all frames by encryption level.
         var framesByLevel: [EncryptionLevel: [Frame]] = [:]
 
         for packet in outboundPackets {
             // Skip levels whose keys have already been discarded.
-            // This can happen due to a race between the outboundSendLoop
-            // (which calls generateOutboundPackets via signalNeedsSend)
-            // and the inline processTLSOutputs path that discards
-            // Initial/Handshake keys after handshake completion.
             guard packetProcessor.hasKeys(for: packet.level) else {
                 continue
             }
-
             framesByLevel[packet.level, default: []].append(contentsOf: packet.frames)
         }
 
-        // Build one packet per encryption level (ordering: Initial, Handshake, Application)
-
-        if let initialFrames = framesByLevel[.initial], !initialFrames.isEmpty {
-            let pn = handler.getNextPacketNumber(for: .initial)
-            let header = buildPacketHeader(for: .initial, packetNumber: pn)
-            if case .long(let longHeader) = header {
-                let encrypted = try packetProcessor.encryptLongHeaderPacket(
-                    frames: initialFrames,
-                    header: longHeader,
-                    packetNumber: pn,
-                    padToMinimum: true
-                )
-                result.append(encrypted)
-            }
+        // Phase 3: For each level, pack frames into MTU-sized packets
+        // instead of cramming all frames into a single packet (RC2/RC4).
+        for level in [EncryptionLevel.initial, .handshake, .application] {
+            guard let frames = framesByLevel[level], !frames.isEmpty else { continue }
+            let packets = try buildMTUPackets(frames: frames, level: level)
+            result.append(contentsOf: packets)
         }
 
-        if let handshakeFrames = framesByLevel[.handshake], !handshakeFrames.isEmpty {
-            let pn = handler.getNextPacketNumber(for: .handshake)
-            let header = buildPacketHeader(for: .handshake, packetNumber: pn)
-            if case .long(let longHeader) = header {
-                let encrypted = try packetProcessor.encryptLongHeaderPacket(
-                    frames: handshakeFrames,
-                    header: longHeader,
-                    packetNumber: pn,
-                    padToMinimum: false
-                )
-                result.append(encrypted)
-            }
-        }
+        return result
+    }
 
-        if let appFrames = framesByLevel[.application], !appFrames.isEmpty {
-            let pn = handler.getNextPacketNumber(for: .application)
-            let header = buildPacketHeader(for: .application, packetNumber: pn)
-            if case .short(let shortHeader) = header {
-                let encrypted = try packetProcessor.encryptShortHeaderPacket(
-                    frames: appFrames,
-                    header: shortHeader,
-                    packetNumber: pn
-                )
-                result.append(encrypted)
+    // MARK: - MTU-Aware Packet Builder (Phase 3)
+
+    /// Splits `frames` into one or more packets that each fit within `maxDatagramSize`.
+    ///
+    /// Delegates pure batching logic to ``MTUFramePacker.pack(frames:maxPayload:)``
+    /// and encrypts each batch via ``encryptAndFlush(_:level:)``.
+    ///
+    /// If a single frame exceeds the MTU payload budget it is emitted alone so that
+    /// other frames are not lost when the encoder throws `packetTooLarge` (RC4 fix).
+    private func buildMTUPackets(frames: [Frame], level: EncryptionLevel) throws -> [Data] {
+        let (scid, dcid) = state.withLock { s in
+            (s.sourceConnectionID, s.destinationConnectionID)
+        }
+        let maxPayload = MTUFramePacker.maxPayload(
+            for: level,
+            maxDatagramSize: packetProcessor.maxDatagramSize,
+            dcidLength: dcid.length,
+            scidLength: scid.length
+        )
+
+        let batches = MTUFramePacker.pack(frames: frames, maxPayload: maxPayload)
+        var result: [Data] = []
+
+        for batch in batches {
+            if batch.isOversized {
+                // Oversized single frame -- attempt encryption but don't
+                // propagate the error so subsequent batches survive.
+                do {
+                    result.append(try encryptAndFlush(batch.frames, level: level))
+                } catch {
+                    Self.logger.warning("Oversized frame (\(batch.totalSize) > \(maxPayload)) at \(level): \(error)")
+                }
+            } else {
+                result.append(try encryptAndFlush(batch.frames, level: level))
             }
         }
 
         return result
+    }
+
+    /// Encrypts a batch of frames into a single packet at the given level.
+    private func encryptAndFlush(_ frames: [Frame], level: EncryptionLevel) throws -> Data {
+        let pn = handler.getNextPacketNumber(for: level)
+        let header = buildPacketHeader(for: level, packetNumber: pn)
+
+        let encrypted: Data
+        switch (level, header) {
+        case (.initial, .long(let lh)):
+            encrypted = try packetProcessor.encryptLongHeaderPacket(
+                frames: frames, header: lh, packetNumber: pn, padToMinimum: true
+            )
+        case (.handshake, .long(let lh)):
+            encrypted = try packetProcessor.encryptLongHeaderPacket(
+                frames: frames, header: lh, packetNumber: pn, padToMinimum: false
+            )
+        case (.application, .short(let sh)):
+            encrypted = try packetProcessor.encryptShortHeaderPacket(
+                frames: frames, header: sh, packetNumber: pn
+            )
+        default:
+            throw PacketCodecError.invalidPacketFormat("Header type mismatch for level \(level)")
+        }
+
+        Self.logger.trace("Emitting \(level) packet: \(encrypted.count) bytes (\(frames.count) frames)")
+        return encrypted
     }
 
     /// Called when a timer expires
@@ -1050,6 +1296,18 @@ public final class ManagedConnection: Sendable {
             }
         }
 
+        // Handle DPLPMTUD probe acknowledgment — a PATH_RESPONSE matched
+        // an active PMTUD probe and confirmed a new path MTU.
+        if let newMTU = result.discoveredPLPMTU {
+            Self.logger.info("DPLPMTUD: path MTU confirmed at \(newMTU) bytes (was \(handler.maxDatagramSize))")
+            // NOTE: maxDatagramSize on the handler is currently a `let`.
+            // Full runtime MTU update (congestion window recalculation,
+            // pacing adjustment) requires making it mutable and notifying
+            // the congestion controller.  For now the discovered value is
+            // recorded in the PMTUD manager's history and logged; callers
+            // can query handler.pmtuDiscovery.currentPLPMTU.
+        }
+
         return outboundPackets
     }
 
@@ -1143,884 +1401,4 @@ public final class ManagedConnection: Sendable {
         // Use proper TransportParameterCodec for RFC 9000 compliant decoding
         return try? TransportParameterCodec.decode(data)
     }
-}
-
-// MARK: - QUICConnectionProtocol
-
-extension ManagedConnection: QUICConnectionProtocol {
-    public var isEstablished: Bool {
-        state.withLock { $0.handshakeState == .established }
-    }
-
-    public func openStream() async throws -> any QUICStreamProtocol {
-        let streamID = try handler.openStream(bidirectional: true)
-        return ManagedStream(
-            id: streamID,
-            connection: self,
-            isUnidirectional: false
-        )
-    }
-
-    public func openUniStream() async throws -> any QUICStreamProtocol {
-        let streamID = try handler.openStream(bidirectional: false)
-        return ManagedStream(
-            id: streamID,
-            connection: self,
-            isUnidirectional: true
-        )
-    }
-
-    public var incomingStreams: AsyncStream<any QUICStreamProtocol> {
-        incomingStreamState.withLock { state in
-            // If shutdown, return existing finished stream or create a finished one
-            // This prevents new iterators from hanging after shutdown
-            if state.isShutdown {
-                if let existing = state.stream { return existing }
-                // Create an already-finished stream
-                let (stream, continuation) = AsyncStream<any QUICStreamProtocol>.makeStream()
-                continuation.finish()
-                state.stream = stream
-                return stream
-            }
-
-            // Return existing stream if already created (lazy initialization)
-            if let existing = state.stream { return existing }
-
-            // Create new stream using makeStream() pattern (per coding guidelines)
-            let (stream, continuation) = AsyncStream<any QUICStreamProtocol>.makeStream()
-            state.stream = stream
-            state.continuation = continuation
-
-            // Drain any pending streams that arrived before this was accessed
-            for pendingStream in state.pendingStreams {
-                continuation.yield(pendingStream)
-            }
-            state.pendingStreams.removeAll()
-
-            return stream
-        }
-    }
-
-    /// Stream of session tickets received from the server
-    ///
-    /// Use this to receive `NewSessionTicket` messages for session resumption.
-    /// Store these tickets in a `ClientSessionCache` for future 0-RTT connections.
-    ///
-    /// ## Usage
-    /// ```swift
-    /// let sessionCache = ClientSessionCache()
-    /// Task {
-    ///     for await ticketInfo in connection.sessionTickets {
-    ///         sessionCache.storeTicket(
-    ///             ticketInfo.ticket,
-    ///             resumptionMasterSecret: ticketInfo.resumptionMasterSecret,
-    ///             cipherSuite: ticketInfo.cipherSuite,
-    ///             alpn: ticketInfo.alpn,
-    ///             serverIdentity: "\(connection.remoteAddress)"
-    ///         )
-    ///     }
-    /// }
-    /// ```
-    public var sessionTickets: AsyncStream<NewSessionTicketInfo> {
-        sessionTicketState.withLock { state in
-            // If shutdown, return existing finished stream or create a finished one
-            if state.isShutdown {
-                if let existing = state.stream { return existing }
-                let (stream, continuation) = AsyncStream<NewSessionTicketInfo>.makeStream()
-                continuation.finish()
-                state.stream = stream
-                return stream
-            }
-
-            // Return existing stream if already created
-            if let existing = state.stream { return existing }
-
-            // Create new stream
-            let (stream, continuation) = AsyncStream<NewSessionTicketInfo>.makeStream()
-            state.stream = stream
-            state.continuation = continuation
-
-            // Drain any pending tickets
-            for pendingTicket in state.pendingTickets {
-                continuation.yield(pendingTicket)
-            }
-            state.pendingTickets.removeAll()
-
-            return stream
-        }
-    }
-
-    /// Notifies that a session ticket was received (internal helper)
-    private func notifySessionTicketReceived(_ ticketInfo: NewSessionTicketInfo) {
-        sessionTicketState.withLock { state in
-            guard !state.isShutdown else { return }
-
-            if let continuation = state.continuation {
-                // Stream is active, yield directly
-                continuation.yield(ticketInfo)
-            } else {
-                // Buffer until sessionTickets is accessed
-                state.pendingTickets.append(ticketInfo)
-            }
-        }
-    }
-
-    public func sendDatagram(_ data: Data) async throws {
-        guard isEstablished else {
-            throw QUICDatagramError.connectionNotReady
-        }
-
-        // Check that datagrams are supported via transport parameters
-        let maxSize = transportParameters.maxDatagramFrameSize ?? 0
-        guard maxSize > 0 else {
-            throw QUICDatagramError.datagramsNotSupported
-        }
-
-        // Check payload size (the max includes framing overhead; be conservative)
-        guard data.count <= Int(maxSize) else {
-            throw QUICDatagramError.datagramTooLarge(size: data.count, maxAllowed: Int(maxSize))
-        }
-
-        // Write datagram payload through the handler
-        // The handler encodes it as a DATAGRAM frame on the wire
-        try handler.sendDatagram(data)
-        signalNeedsSend()
-    }
-
-    public var incomingDatagrams: AsyncStream<Data> {
-        incomingDatagramState.withLock { state in
-            // If shutdown, return existing finished stream or create a finished one
-            if state.isShutdown {
-                if let existing = state.stream { return existing }
-                let (stream, continuation) = AsyncStream<Data>.makeStream()
-                continuation.finish()
-                state.stream = stream
-                return stream
-            }
-
-            // Return existing stream if already created (lazy initialization)
-            if let existing = state.stream { return existing }
-
-            // Create new stream
-            let (stream, continuation) = AsyncStream<Data>.makeStream()
-            state.stream = stream
-            state.continuation = continuation
-
-            // Drain any pending datagrams that arrived before this was accessed
-            for pendingDatagram in state.pendingDatagrams {
-                continuation.yield(pendingDatagram)
-            }
-            state.pendingDatagrams.removeAll()
-
-            return stream
-        }
-    }
-
-    /// Delivers an incoming datagram payload (internal helper called by packet processing)
-    public func notifyDatagramReceived(_ data: Data) {
-        incomingDatagramState.withLock { state in
-            guard !state.isShutdown else { return }
-
-            if let continuation = state.continuation {
-                // Stream is active, yield directly
-                continuation.yield(data)
-            } else {
-                // Buffer until incomingDatagrams is accessed
-                state.pendingDatagrams.append(data)
-            }
-        }
-    }
-
-    public func close(error: UInt64?) async {
-        let scid = state.withLock { $0.sourceConnectionID }
-        Self.logger.debug("close(error: \(String(describing: error))) called for SCID=\(scid)")
-        handler.close(error: error.map { ConnectionCloseError(code: $0) })
-        state.withLock { $0.handshakeState = .closing }
-        shutdown()
-    }
-
-    public func close(applicationError errorCode: UInt64, reason: String) async {
-        let scid = state.withLock { $0.sourceConnectionID }
-        Self.logger.info("close(applicationError: \(errorCode), reason: \(reason)) called for SCID=\(scid)")
-        handler.close(error: ConnectionCloseError(code: errorCode, reason: reason))
-        state.withLock { $0.handshakeState = .closing }
-        shutdown()
-    }
-
-    /// Shuts down the connection and finishes all async streams
-    ///
-    /// This is required per coding guidelines: AsyncStream services MUST
-    /// call continuation.finish() to prevent for-await loops from hanging.
-    ///
-    /// Note: We set isShutdown=true but keep the stream reference.
-    /// This allows existing iterators to complete normally while preventing
-    /// new iterators from hanging (they get an already-finished stream).
-    public func shutdown() {
-        let (scid, handshakeWaiters) = state.withLock { s -> (ConnectionID, [(id: UUID, continuation: CheckedContinuation<Void, any Error>)]) in
-            let w = s.handshakeCompletionContinuations
-            s.handshakeCompletionContinuations.removeAll()
-            return (s.sourceConnectionID, w)
-        }
-        Self.logger.debug("shutdown() called for SCID=\(scid)")
-
-        // Resume any callers waiting in waitForHandshake() with an error
-        // This prevents them from hanging indefinitely when the connection
-        // is torn down before handshake completes.
-        for waiter in handshakeWaiters {
-            waiter.continuation.resume(throwing: ManagedConnectionError.connectionClosed)
-        }
-
-        // Finish incoming stream continuation and mark as shutdown
-        // Guard against concurrent calls - finish() is idempotent but we avoid duplicate work
-        incomingStreamState.withLock { state in
-            guard !state.isShutdown else { return }  // Already shutdown
-            state.isShutdown = true  // Mark as shutdown FIRST
-            state.continuation?.finish()
-            state.continuation = nil
-            state.pendingStreams.removeAll()  // Clear any buffered streams
-            // DO NOT set stream = nil - existing iterators need it
-        }
-
-        // Finish session ticket stream and mark as shutdown
-        sessionTicketState.withLock { state in
-            guard !state.isShutdown else { return }  // Already shutdown
-            state.isShutdown = true
-            state.continuation?.finish()
-            state.continuation = nil
-            state.pendingTickets.removeAll()
-        }
-
-        // Finish incoming datagram stream and mark as shutdown
-        incomingDatagramState.withLock { state in
-            guard !state.isShutdown else { return }  // Already shutdown
-            state.isShutdown = true
-            state.continuation?.finish()
-            state.continuation = nil
-            state.pendingDatagrams.removeAll()
-        }
-
-        // Resume any waiting stream readers with connection closed error
-        // and mark as shutdown to prevent new readers from hanging
-        streamContinuationsState.withLock { state in
-            guard !state.isShutdown else { return }  // Already shutdown
-            state.isShutdown = true  // Mark as shutdown FIRST
-            for (_, continuation) in state.continuations {
-                continuation.resume(throwing: ManagedConnectionError.connectionClosed)
-            }
-            state.continuations.removeAll()
-        }
-
-        // Finish send signal stream to stop outboundSendLoop in QUICEndpoint
-        state.withLock { s in
-            guard !s.isSendSignalShutdown else { return }  // Already shutdown
-            Self.logger.debug("shutdown() finishing sendSignal for SCID=\(s.sourceConnectionID), hasContinuation=\(s.sendSignalContinuation != nil)")
-            s.isSendSignalShutdown = true
-            s.sendSignalContinuation?.finish()
-            s.sendSignalContinuation = nil
-        }
-    }
-}
-
-// MARK: - Internal Stream Access
-
-extension ManagedConnection {
-    /// Writes data to a stream (called by ManagedStream)
-    func writeToStream(_ streamID: UInt64, data: Data) throws {
-        try handler.writeToStream(streamID, data: data)
-        signalNeedsSend()
-    }
-
-    /// Reads data from a stream (called by ManagedStream)
-    ///
-    /// Thread-safe: Prevents concurrent reads on the same stream.
-    /// Only one reader can wait for data at a time per stream.
-    /// Returns connectionClosed error if called after shutdown.
-    ///
-    /// Data sources (in priority order):
-    /// 1. Pending data buffer (from processFrameResult)
-    /// 2. Handler's stream buffer
-    /// 3. Wait for data via continuation
-    func readFromStream(_ streamID: UInt64) async throws -> Data {
-        // Try to get data atomically - check buffer first, then handler
-        return try await withCheckedThrowingContinuation { continuation in
-            streamContinuationsState.withLock { state in
-                // Check if shutdown
-                guard !state.isShutdown else {
-                    continuation.resume(throwing: ManagedConnectionError.connectionClosed)
-                    return
-                }
-
-                // Priority 1: Check pending data buffer
-                if var pending = state.pendingData[streamID], !pending.isEmpty {
-                    let data = pending.removeFirst()
-                    if pending.isEmpty {
-                        state.pendingData.removeValue(forKey: streamID)
-                    } else {
-                        state.pendingData[streamID] = pending
-                    }
-                    continuation.resume(returning: data)
-                    return
-                }
-
-                // Priority 2: Check handler's stream buffer
-                if let data = handler.readFromStream(streamID) {
-                    continuation.resume(returning: data)
-                    return
-                }
-
-                // Priority 3: Check if stream receive side is complete (FIN)
-                // or was reset by the peer.  Return empty Data to signal
-                // end-of-stream so that callers break out of read loops.
-                //
-                // IMPORTANT: We intentionally do NOT check
-                // `handler.isStreamReceiveComplete(streamID)` here.
-                // processFrames() reads (consumes) data from the DataStream
-                // buffer inline, then processFrameResult() delivers it to
-                // pendingData / a continuation *later*.  Between those two
-                // steps the DataStream buffer is empty and
-                // isStreamReceiveComplete returns true — but the data has
-                // not been delivered yet.  A concurrent reader hitting this
-                // window would get a premature EOS (0 bytes).
-                //
-                // `state.finishedStreams` is populated by processFrameResult
-                // AFTER delivering data, so it is the safe signal for FIN.
-                // `isStreamResetByPeer` is safe because a reset carries no
-                // data — the reader should return empty immediately.
-                if state.finishedStreams.contains(streamID)
-                    || handler.isStreamResetByPeer(streamID)
-                {
-                    state.finishedStreams.insert(streamID)
-                    continuation.resume(returning: Data())
-                    return
-                }
-
-                // Priority 4: Wait for data
-                // Prevent concurrent reads on the same stream
-                guard state.continuations[streamID] == nil else {
-                    continuation.resume(throwing: ManagedConnectionError.invalidState("Concurrent read on stream \(streamID)"))
-                    return
-                }
-                state.continuations[streamID] = continuation
-            }
-        }
-    }
-
-    /// Finishes a stream (sends FIN)
-    func finishStream(_ streamID: UInt64) throws {
-        try handler.finishStream(streamID)
-        signalNeedsSend()
-    }
-
-    /// Resets a stream
-    func resetStream(_ streamID: UInt64, errorCode: UInt64) {
-        handler.closeStream(streamID)
-    }
-
-    /// Stops sending on a stream
-    func stopSending(_ streamID: UInt64, errorCode: UInt64) {
-        // Handler will generate STOP_SENDING frame
-        handler.closeStream(streamID)
-    }
-}
-
-// MARK: - Send Signal
-
-extension ManagedConnection {
-    /// Whether any stream still has data waiting to be sent.
-    ///
-    /// The outbound send loop uses this after generating a batch of packets
-    /// to decide whether another `generateOutboundPackets()` round is needed
-    /// (the single call is capped at 1200 bytes of stream frames, so large
-    /// or multi-stream writes may require several rounds).
-    internal var hasPendingStreamData: Bool {
-        handler.hasPendingStreamData
-    }
-
-    /// Signal that packets need to be sent.
-    ///
-    /// QUICEndpoint monitors this stream and, upon receiving a signal,
-    /// calls `generateOutboundPackets()` to send packets.
-    ///
-    /// Multiple writes before signal processing will be coalesced into
-    /// a single packet generation (efficient batching via `bufferingNewest(1)`).
-    ///
-    /// ## Usage
-    /// ```swift
-    /// // In QUICEndpoint
-    /// Task {
-    ///     for await _ in connection.sendSignal {
-    ///         let packets = try connection.generateOutboundPackets()
-    ///         for packet in packets {
-    ///             socket.send(packet, to: address)
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    public var sendSignal: AsyncStream<Void> {
-        state.withLock { s in
-            // After shutdown, return an already-finished stream
-            if s.isSendSignalShutdown {
-                Self.logger.trace("sendSignal accessed AFTER shutdown for SCID=\(s.sourceConnectionID)")
-                if let existing = s.sendSignalStream { return existing }
-                let (stream, continuation) = AsyncStream<Void>.makeStream(
-                    bufferingPolicy: .bufferingNewest(1)
-                )
-                continuation.finish()
-                s.sendSignalStream = stream
-                return stream
-            }
-
-            // Return existing stream if already created (lazy initialization)
-            if let existing = s.sendSignalStream {
-                Self.logger.trace("sendSignal returning EXISTING stream for SCID=\(s.sourceConnectionID), hasContinuation=\(s.sendSignalContinuation != nil)")
-                return existing
-            }
-
-            // Create new stream with bufferingNewest(1) for coalescing
-            // Multiple yields before consumption result in only one signal
-            let (stream, continuation) = AsyncStream<Void>.makeStream(
-                bufferingPolicy: .bufferingNewest(1)
-            )
-            s.sendSignalStream = stream
-            s.sendSignalContinuation = continuation
-            Self.logger.trace("sendSignal CREATED new stream for SCID=\(s.sourceConnectionID)")
-            return stream
-        }
-    }
-
-    /// Notifies that packets need to be sent.
-    ///
-    /// Called after `writeToStream()` or `finishStream()` to trigger
-    /// packet generation and transmission in QUICEndpoint.
-    public func signalNeedsSend() {
-        state.withLock { s in
-            guard !s.isSendSignalShutdown else {
-                Self.logger.trace("signalNeedsSend SKIPPED (shutdown) for SCID=\(s.sourceConnectionID)")
-                return
-            }
-            let hasContinuation = s.sendSignalContinuation != nil
-            if !hasContinuation {
-                Self.logger.warning("signalNeedsSend: no continuation for SCID=\(s.sourceConnectionID), streamExists=\(s.sendSignalStream != nil)")
-            }
-            s.sendSignalContinuation?.yield(())
-        }
-    }
-}
-
-// MARK: - Connection IDs
-
-extension ManagedConnection {
-    /// The TLS provider used for this connection.
-    ///
-    /// Provides access to the underlying TLS 1.3 provider for custom
-    /// authentication schemes (e.g., certificate-based peer identity extraction).
-    public var underlyingTLSProvider: any TLS13Provider {
-        tlsProvider
-    }
-
-    /// Whether 0-RTT early data was accepted by the server.
-    ///
-    /// Only meaningful after handshake completes. Before that, always `false`.
-    /// The value is propagated from the TLS provider's `is0RTTAccepted` once
-    /// the server's EncryptedExtensions has been processed.
-    public var is0RTTAccepted: Bool {
-        state.withLock { $0.is0RTTAccepted }
-    }
-
-    // MARK: - Handshake Completion
-
-    /// Suspends the caller until the QUIC handshake completes.
-    ///
-    /// - If the handshake is already complete (`.established`), returns
-    ///   immediately.
-    /// - If the connection is already closed/closing, throws
-    ///   ``ManagedConnectionError/connectionClosed``.
-    /// - Otherwise, the caller is suspended until one of the above
-    ///   conditions is reached.
-    ///
-    /// This replaces the previous poll-based `while !isEstablished` loop
-    /// in `QUICEndpoint.dial()` with an efficient continuation-based wait.
-    ///
-    /// ## Thread-Safety
-    /// Multiple concurrent callers are supported; all are resumed together
-    /// when the handshake completes.
-    public func waitForHandshake() async throws {
-        // We need a stable identity so the cancellation handler can
-        // locate and remove the exact continuation that was parked.
-        let id = UUID()
-
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                state.withLock { s in
-                    // Re-check cancellation under the lock so we never
-                    // park a continuation that is already doomed.
-                    if Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                        return
-                    }
-
-                    switch s.handshakeState {
-                    case .established:
-                        // Already done — resume immediately
-                        continuation.resume()
-                    case .closed, .closing:
-                        // Connection already torn down
-                        continuation.resume(throwing: ManagedConnectionError.connectionClosed)
-                    default:
-                        // Handshake still in progress — park the continuation
-                        s.handshakeCompletionContinuations.append((id: id, continuation: continuation))
-                    }
-                }
-            }
-        } onCancel: {
-            // Task was cancelled (e.g. dial() timeout).
-            // Remove our continuation from the list and resume it with
-            // CancellationError so the structured-concurrency task group
-            // can finish instead of hanging forever.
-            let removed: CheckedContinuation<Void, any Error>? = state.withLock { s in
-                if let idx = s.handshakeCompletionContinuations.firstIndex(where: { $0.id == id }) {
-                    let entry = s.handshakeCompletionContinuations.remove(at: idx)
-                    return entry.continuation
-                }
-                return nil
-            }
-            removed?.resume(throwing: CancellationError())
-        }
-    }
-
-    /// Source connection ID
-    public var sourceConnectionID: ConnectionID {
-        state.withLock { $0.sourceConnectionID }
-    }
-
-    /// Destination connection ID
-    public var destinationConnectionID: ConnectionID {
-        state.withLock { $0.destinationConnectionID }
-    }
-
-    /// Current handshake state
-    public var handshakeState: HandshakeState {
-        state.withLock { $0.handshakeState }
-    }
-
-    /// Connection role
-    public var role: ConnectionRole {
-        state.withLock { $0.role }
-    }
-
-    // Note: Connection ID tracking is now managed by ConnectionRouter.
-    // Use router.registeredConnectionIDs(for:) to query CIDs for a connection.
-
-    // MARK: - Amplification Limit
-
-    /// Whether the connection is blocked by the anti-amplification limit
-    ///
-    /// When blocked, the server must wait for more data from the client
-    /// before it can send additional packets.
-    public var isAmplificationBlocked: Bool {
-        amplificationLimiter.isBlocked
-    }
-
-    /// Whether the client's address has been validated
-    ///
-    /// Address validation lifts the anti-amplification limit.
-    public var isAddressValidated: Bool {
-        amplificationLimiter.isAddressValidated
-    }
-
-    // MARK: - Version Negotiation
-
-    /// Whether we have received and successfully processed any valid packet
-    ///
-    /// RFC 9000 Section 6.2: A client MUST discard any Version Negotiation packet
-    /// if it has received and successfully processed any other packet.
-    public var hasReceivedValidPacket: Bool {
-        get async { state.withLock { $0.hasReceivedValidPacket } }
-    }
-
-    /// Retry the connection with a different QUIC version
-    ///
-    /// Called when a Version Negotiation packet is received offering a version we support.
-    /// This resets the connection state and restarts the handshake with the new version.
-    ///
-    /// - Parameter version: The new version to use
-    public func retryWithVersion(_ version: QUICVersion) async throws {
-        // This is a complex operation that requires:
-        // 1. Resetting TLS state
-        // 2. Regenerating Initial keys with the new version
-        // 3. Rebuilding and resending ClientHello
-        // For now, throw an error indicating manual reconnection is needed
-        throw QUICVersionError.versionNegotiationReceived(
-            offeredVersions: [version]
-        )
-    }
-
-    // MARK: - Connection Migration (RFC 9000 Section 9)
-
-    /// The current remote address (may differ from initial address after migration)
-    public var currentRemoteAddress: SocketAddress {
-        state.withLock { $0.currentRemoteAddress ?? remoteAddress }
-    }
-
-    /// Whether the current path has been validated
-    public var isPathValidated: Bool {
-        state.withLock { $0.pathValidated }
-    }
-
-    /// Handles a packet received from a different address (potential migration)
-    ///
-    /// RFC 9000 Section 9.3: When receiving a packet from a new peer address,
-    /// the endpoint MUST perform path validation if it has not previously done so.
-    ///
-    /// - Parameters:
-    ///   - packet: The received packet data
-    ///   - newAddress: The new remote address from which the packet was received
-    /// - Returns: Packets to send in response (may include PATH_CHALLENGE)
-    /// - Throws: `MigrationError` if migration is not allowed
-    public func handleAddressChange(
-        packet: Data,
-        newAddress: SocketAddress
-    ) async throws -> [Data] {
-        // Check if migration is allowed
-        let (allowMigration, currentAddress) = state.withLock { s in
-            (
-                !s.peerDisableActiveMigration,
-                s.currentRemoteAddress ?? remoteAddress
-            )
-        }
-
-        // If address hasn't changed, process normally
-        if newAddress == currentAddress {
-            return try await processIncomingPacket(packet)
-        }
-
-        // Check if peer allows migration
-        guard allowMigration else {
-            throw MigrationError.migrationDisabled
-        }
-
-        // Update address and mark path as not validated
-        state.withLock { s in
-            s.currentRemoteAddress = newAddress
-            s.pathValidated = false
-        }
-
-        // For servers: reset anti-amplification limit for new path (RFC 9000 Section 9.3)
-        // Note: Address validation needs to be completed via PATH_CHALLENGE/RESPONSE
-        // The amplification limiter will be reset once path validation completes
-
-        // Record bytes received for anti-amplification
-        amplificationLimiter.recordBytesReceived(UInt64(packet.count))
-
-        // Process the packet
-        var responses = try await processIncomingPacket(packet)
-
-        // Initiate path validation by sending PATH_CHALLENGE
-        let path = NetworkPath(
-            localAddress: localAddress?.description ?? "",
-            remoteAddress: newAddress.description
-        )
-        let challengeData = pathValidationManager.startValidation(for: path)
-
-        // Queue PATH_CHALLENGE to be sent with next packet
-        state.withLock { s in
-            s.pendingPathChallenges.append(challengeData)
-        }
-
-        // Generate a packet with PATH_CHALLENGE if we can
-        if let challengePacket = try createPathChallengePacket(challengeData: challengeData) {
-            responses.append(challengePacket)
-        }
-
-        return responses
-    }
-
-    /// Handles a PATH_CHALLENGE frame
-    ///
-    /// RFC 9000 Section 9.3.2: An endpoint MUST respond immediately to a
-    /// PATH_CHALLENGE frame with a PATH_RESPONSE frame containing the same data.
-    ///
-    /// - Parameter data: The 8-byte challenge data
-    /// - Returns: PATH_RESPONSE packet to send
-    public func handlePathChallenge(_ data: Data) throws -> Data? {
-        // Generate PATH_RESPONSE
-        _ = pathValidationManager.handleChallenge(data)
-
-        // Queue response to be sent
-        state.withLock { s in
-            s.pendingPathResponses.append(data)
-        }
-
-        // Create packet with PATH_RESPONSE
-        return try createPathResponsePacket(data: data)
-    }
-
-    /// Handles a PATH_RESPONSE frame
-    ///
-    /// RFC 9000 Section 9.3.3: Receipt of a PATH_RESPONSE frame indicates
-    /// that the path is valid.
-    ///
-    /// - Parameter data: The 8-byte response data
-    /// - Returns: Whether this completes path validation
-    public func handlePathResponse(_ data: Data) -> Bool {
-        if let _ = pathValidationManager.handleResponse(data) {
-            // Path validated successfully
-            state.withLock { s in
-                s.pathValidated = true
-            }
-            return true
-        }
-        return false
-    }
-
-    /// Sets whether peer allows active migration (from transport parameters)
-    ///
-    /// Called when processing peer's transport parameters.
-    public func setPeerDisableActiveMigration(_ disabled: Bool) {
-        state.withLock { s in
-            s.peerDisableActiveMigration = disabled
-        }
-    }
-
-    /// Gets pending PATH_CHALLENGE frames to include in next packet
-    public func getPendingPathChallenges() -> [Data] {
-        state.withLock { s in
-            let challenges = s.pendingPathChallenges
-            s.pendingPathChallenges.removeAll()
-            return challenges
-        }
-    }
-
-    /// Gets pending PATH_RESPONSE frames to include in next packet
-    public func getPendingPathResponses() -> [Data] {
-        state.withLock { s in
-            let responses = s.pendingPathResponses
-            s.pendingPathResponses.removeAll()
-            return responses
-        }
-    }
-
-    // MARK: - Migration Private Helpers
-
-    /// Creates a packet containing a PATH_CHALLENGE frame
-    ///
-    /// - Note: This queues the frame to be sent with the next outbound packet.
-    ///   The actual packet creation happens via the normal packet sending mechanism.
-    private func createPathChallengePacket(challengeData: Data) throws -> Data? {
-        // PATH_CHALLENGE will be included in the next 1-RTT packet
-        // Queue the frame via the handler
-        handler.queueFrame(.pathChallenge(challengeData), level: .application)
-
-        // Return nil - the frame will be sent with normal packet flow
-        // This avoids duplicating packet creation logic
-        return nil
-    }
-
-    /// Creates a packet containing a PATH_RESPONSE frame
-    ///
-    /// - Note: This queues the frame to be sent with the next outbound packet.
-    private func createPathResponsePacket(data: Data) throws -> Data? {
-        // PATH_RESPONSE must be sent immediately (RFC 9000 Section 8.2.2)
-        // Queue the frame via the handler
-        handler.queueFrame(.pathResponse(data), level: .application)
-
-        // Return nil - the frame will be sent with normal packet flow
-        return nil
-    }
-}
-
-/// Connection migration errors
-public enum MigrationError: Error, Sendable {
-    /// Migration is disabled by peer (disable_active_migration transport parameter)
-    case migrationDisabled
-
-    /// Path validation failed
-    case pathValidationFailed(reason: String)
-
-    /// No active connection ID available for migration
-    case noActiveConnectionID
-}
-
-// MARK: - Internal State
-
-private struct ManagedConnectionState: Sendable {
-    var role: ConnectionRole
-    var handshakeState: HandshakeState = .idle
-    var sourceConnectionID: ConnectionID
-    var destinationConnectionID: ConnectionID
-    var negotiatedALPN: String? = nil
-    /// Whether 0-RTT was attempted in this connection
-    var is0RTTAttempted: Bool = false
-    /// Whether 0-RTT was accepted by server (set after receiving EncryptedExtensions)
-    var is0RTTAccepted: Bool = false
-    /// Whether we have received and successfully processed any valid packet
-    /// RFC 9000 Section 6.2: Used to discard late Version Negotiation packets
-    var hasReceivedValidPacket: Bool = false
-
-    // MARK: - Handshake Completion Signaling
-
-    /// Continuations waiting for handshake completion.
-    ///
-    /// `waitForHandshake()` appends an `(id, continuation)` pair here when
-    /// the handshake is still in progress.  The `id` allows the
-    /// cancellation handler to locate and remove a specific entry.
-    ///
-    /// Once the handshake completes (server: `processTLSOutputs`, client:
-    /// `completeHandshake`), or the connection is closed/shut down, all
-    /// pending continuations are resumed.
-    var handshakeCompletionContinuations: [(id: UUID, continuation: CheckedContinuation<Void, any Error>)] = []
-
-    // MARK: - Retry State (RFC 9000 Section 8.1)
-
-    /// Whether we have already processed a Retry packet
-    /// RFC 9000: A client MUST accept and process at most one Retry packet
-    var hasProcessedRetry: Bool = false
-
-    /// Retry token received from server (to include in subsequent Initial packets)
-    var retryToken: Data? = nil
-
-    // MARK: - Connection Migration State
-
-    /// Current remote address (may change during connection migration)
-    var currentRemoteAddress: SocketAddress?
-
-    /// Whether the current path has been validated (RFC 9000 Section 9.3)
-    var pathValidated: Bool = true
-
-    /// Whether peer allows active migration (from transport parameters)
-    var peerDisableActiveMigration: Bool = false
-
-    /// Pending PATH_CHALLENGE frames to send
-    var pendingPathChallenges: [Data] = []
-
-    /// Pending PATH_RESPONSE frames to send
-    var pendingPathResponses: [Data] = []
-
-    // MARK: - Send Signal State
-
-    /// Continuation for send signal stream
-    var sendSignalContinuation: AsyncStream<Void>.Continuation?
-
-    /// Send signal stream (lazily initialized)
-    var sendSignalStream: AsyncStream<Void>?
-
-    /// Whether send signal has been shutdown
-    var isSendSignalShutdown: Bool = false
-}
-
-// MARK: - Errors
-
-/// Errors from ManagedConnection
-public enum ManagedConnectionError: Error, Sendable {
-    /// Connection is closed
-    case connectionClosed
-
-    /// Handshake not complete
-    case handshakeNotComplete
-
-    /// Stream not found
-    case streamNotFound(UInt64)
-
-    /// Invalid state
-    case invalidState(String)
 }

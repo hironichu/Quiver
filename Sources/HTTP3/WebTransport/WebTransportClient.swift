@@ -315,7 +315,7 @@ public actor WebTransportClient {
         )
 
         // Send the Extended CONNECT request
-        let (response, connectStream): (HTTP3Response, any QUICStreamProtocol)
+        let (response, connectStream): (HTTP3ResponseHead, any QUICStreamProtocol)
         do {
             (response, connectStream) = try await connection.sendExtendedConnect(request)
         } catch {

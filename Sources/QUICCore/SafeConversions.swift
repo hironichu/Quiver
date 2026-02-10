@@ -21,7 +21,7 @@ public enum SafeConversions {
     /// Use this for network data that doesn't have a specific protocol limit,
     /// but must fit in an Int for array indexing or Data operations.
     @inlinable
-    public static func toInt(_ value: UInt64) throws -> Int {
+    public static func toInt(_ value: UInt64) throws(ConversionError) -> Int {
         guard value <= UInt64(Int.max) else {
             throw ConversionError.overflow(value: value, targetType: "Int")
         }
@@ -44,7 +44,7 @@ public enum SafeConversions {
         _ value: UInt64,
         maxAllowed limit: Int,
         context: String
-    ) throws -> Int {
+    ) throws(ConversionError) -> Int {
         guard value <= UInt64(limit) else {
             throw ConversionError.exceedsLimit(
                 value: value,
@@ -66,7 +66,7 @@ public enum SafeConversions {
     /// Use this when computing lengths or offsets from untrusted data
     /// where a negative result would be invalid.
     @inlinable
-    public static func subtract(_ a: Int, _ b: Int) throws -> Int {
+    public static func subtract(_ a: Int, _ b: Int) throws(ConversionError) -> Int {
         guard a >= b else {
             throw ConversionError.underflow(minuend: a, subtrahend: b)
         }
@@ -95,7 +95,7 @@ public enum SafeConversions {
     /// - Returns: a + b
     /// - Throws: `ConversionError.additionOverflow` if result exceeds Int.max
     @inlinable
-    public static func add(_ a: Int, _ b: Int) throws -> Int {
+    public static func add(_ a: Int, _ b: Int) throws(ConversionError) -> Int {
         let (result, overflow) = a.addingReportingOverflow(b)
         guard !overflow else {
             throw ConversionError.additionOverflow(a: a, b: b)

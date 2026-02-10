@@ -5,323 +5,36 @@
 
 import Foundation
 
-// MARK: - RFC 9218 Priority Header Parsing
+// MARK: - StreamScheduling Protocol
 
-/// Parser for the RFC 9218 Priority header field value.
+/// Protocol for pluggable stream scheduling strategies.
 ///
-/// The Priority header uses the Structured Fields syntax (RFC 8941) in
-/// Dictionary form. It supports the following parameters:
+/// Conforming types determine the order in which streams are served,
+/// enabling alternative scheduling algorithms such as:
+/// - FIFO (first-in, first-out)
+/// - Weighted fair queuing
+/// - Deadline-based scheduling
+/// - Custom application-specific ordering
 ///
-/// - `u` (urgency): Integer 0-7, default 3. Lower is higher priority.
-/// - `i` (incremental): Boolean, default false. Whether the response
-///   benefits from incremental delivery.
-///
-/// ## Wire Format
-///
-/// ```
-/// Priority: u=3, i
-/// Priority: u=0
-/// Priority: i
-/// Priority: u=7, i=?0
-/// ```
-///
-/// ## Usage
-///
-/// ```swift
-/// let priority = PriorityHeaderParser.parse("u=1, i")
-/// // StreamPriority(urgency: 1, incremental: true)
-///
-/// let defaultPriority = PriorityHeaderParser.parse(nil)
-/// // StreamPriority(urgency: 3, incremental: false) — the default
-/// ```
-public enum PriorityHeaderParser {
-
-    /// Parses an RFC 9218 Priority header field value into a StreamPriority.
+/// The default implementation is ``StreamScheduler``, which implements
+/// RFC 9218 Extensible Priorities with incremental-aware scheduling.
+public protocol StreamScheduling: Sendable {
+    /// Schedules streams and returns them in priority order.
     ///
-    /// If the header value is nil or empty, returns the default priority
-    /// (urgency=3, incremental=false) per RFC 9218 Section 4.
+    /// - Parameter streams: Dictionary of stream ID to DataStream
+    /// - Returns: Array of (streamID, stream) tuples ordered by the scheduling policy
+    mutating func scheduleStreams(
+        _ streams: [UInt64: DataStream]
+    ) -> [(streamID: UInt64, stream: DataStream)]
+
+    /// Advances the cursor for a specific urgency level.
     ///
-    /// Unknown parameters are ignored per RFC 9218 Section 4.
-    ///
-    /// - Parameter headerValue: The raw Priority header field value
-    /// - Returns: The parsed StreamPriority
-    public static func parse(_ headerValue: String?) -> StreamPriority {
-        guard let value = headerValue, !value.isEmpty else {
-            return .default
-        }
+    /// Call this after a stream at the given urgency has sent data
+    /// to ensure fair rotation.
+    mutating func advanceCursor(for urgency: UInt8, groupSize: Int)
 
-        var urgency: UInt8 = 3
-        var incremental: Bool = false
-
-        // Split on commas to get individual parameters
-        let parameters = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-
-        for param in parameters {
-            if param.hasPrefix("u=") {
-                // Parse urgency value
-                let valueStr = String(param.dropFirst(2))
-                if let parsed = UInt8(valueStr), parsed <= 7 {
-                    urgency = parsed
-                }
-                // Invalid urgency values are ignored (use default)
-            } else if param == "i" || param == "i=?1" {
-                // Boolean true in Structured Fields syntax
-                incremental = true
-            } else if param == "i=?0" {
-                // Boolean false in Structured Fields syntax
-                incremental = false
-            }
-            // Unknown parameters are silently ignored per RFC 9218
-        }
-
-        return StreamPriority(urgency: urgency, incremental: incremental)
-    }
-
-    /// Serializes a StreamPriority into an RFC 9218 Priority header field value.
-    ///
-    /// Only includes parameters that differ from the defaults:
-    /// - `u` is omitted if urgency == 3 (the default)
-    /// - `i` is omitted if incremental == false (the default)
-    ///
-    /// - Parameter priority: The priority to serialize
-    /// - Returns: The Priority header field value string
-    public static func serialize(_ priority: StreamPriority) -> String {
-        var parts: [String] = []
-
-        if priority.urgency != 3 {
-            parts.append("u=\(priority.urgency)")
-        }
-
-        if priority.incremental {
-            parts.append("i")
-        }
-
-        if parts.isEmpty {
-            // All defaults — return minimal representation
-            // An empty value is technically valid, but some implementations
-            // prefer at least one parameter, so we include the default urgency.
-            return "u=3"
-        }
-
-        return parts.joined(separator: ", ")
-    }
-}
-
-// MARK: - PRIORITY_UPDATE Frame (RFC 9218 Section 7)
-
-/// PRIORITY_UPDATE frame for dynamic stream reprioritization.
-///
-/// HTTP/3 uses two PRIORITY_UPDATE frame types:
-/// - Type 0x0f0700: For request streams (client-initiated bidirectional)
-/// - Type 0x0f0701: For push streams
-///
-/// ## Wire Format
-///
-/// ```
-/// PRIORITY_UPDATE Frame {
-///   Type (i) = 0x0f0700 or 0x0f0701,
-///   Length (i),
-///   Prioritized Element ID (i),    // Stream ID or Push ID
-///   Priority Field Value (..),     // ASCII, Structured Fields Dictionary
-/// }
-/// ```
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create a priority update for request stream 4
-/// let update = PriorityUpdate(
-///     elementID: 4,
-///     priority: StreamPriority(urgency: 1, incremental: true),
-///     isRequestStream: true
-/// )
-///
-/// // Encode to bytes
-/// let encoded = update.encode()
-///
-/// // Decode from bytes
-/// let decoded = try PriorityUpdate.decode(from: data, isRequestStream: true)
-/// ```
-public struct PriorityUpdate: Sendable, Hashable {
-    /// Frame type for request stream PRIORITY_UPDATE (RFC 9218 Section 7.1)
-    public static let requestStreamFrameType: UInt64 = 0x0f0700
-
-    /// Frame type for push stream PRIORITY_UPDATE (RFC 9218 Section 7.2)
-    public static let pushStreamFrameType: UInt64 = 0x0f0701
-
-    /// The stream ID or push ID being reprioritized.
-    public let elementID: UInt64
-
-    /// The new priority for the element.
-    public let priority: StreamPriority
-
-    /// Whether this update targets a request stream (true) or push stream (false).
-    public let isRequestStream: Bool
-
-    /// Creates a PRIORITY_UPDATE.
-    ///
-    /// - Parameters:
-    ///   - elementID: The stream or push ID to reprioritize
-    ///   - priority: The new priority
-    ///   - isRequestStream: Whether this targets a request stream (default: true)
-    public init(elementID: UInt64, priority: StreamPriority, isRequestStream: Bool = true) {
-        self.elementID = elementID
-        self.priority = priority
-        self.isRequestStream = isRequestStream
-    }
-
-    /// The HTTP/3 frame type for this update.
-    public var frameType: UInt64 {
-        isRequestStream ? Self.requestStreamFrameType : Self.pushStreamFrameType
-    }
-
-    /// Encodes the PRIORITY_UPDATE payload (without frame type/length).
-    ///
-    /// The payload consists of:
-    /// 1. Prioritized Element ID (varint)
-    /// 2. Priority Field Value (ASCII bytes)
-    ///
-    /// - Returns: The encoded payload data
-    public func encodePayload() -> Data {
-        var data = Data()
-
-        // Encode element ID as varint
-        data.append(contentsOf: Self.varintEncode(elementID))
-
-        // Encode Priority Field Value as ASCII
-        let fieldValue = PriorityHeaderParser.serialize(priority)
-        data.append(contentsOf: fieldValue.utf8)
-
-        return data
-    }
-
-    /// Decodes a PRIORITY_UPDATE from its payload data.
-    ///
-    /// - Parameters:
-    ///   - data: The payload data (after frame type and length)
-    ///   - isRequestStream: Whether this is a request stream update
-    /// - Returns: The decoded PriorityUpdate
-    /// - Throws: If the payload is malformed
-    public static func decode(from data: Data, isRequestStream: Bool) throws -> PriorityUpdate {
-        guard !data.isEmpty else {
-            throw PriorityUpdateError.emptyPayload
-        }
-
-        // Decode element ID varint
-        let (elementID, consumed) = try varintDecode(from: data)
-
-        // Remaining bytes are the Priority Field Value
-        let remaining = data.suffix(from: data.startIndex + consumed)
-        let fieldValue = String(data: Data(remaining), encoding: .utf8)
-
-        let priority = PriorityHeaderParser.parse(fieldValue)
-
-        return PriorityUpdate(
-            elementID: elementID,
-            priority: priority,
-            isRequestStream: isRequestStream
-        )
-    }
-
-    /// Checks if a frame type is a PRIORITY_UPDATE frame.
-    ///
-    /// - Parameter frameType: The frame type to check
-    /// - Returns: A `PriorityUpdateClassification` if this is a PRIORITY_UPDATE, or nil otherwise
-    public static func classify(_ frameType: UInt64) -> PriorityUpdateClassification? {
-        switch frameType {
-        case requestStreamFrameType:
-            return PriorityUpdateClassification(isRequestStream: true)
-        case pushStreamFrameType:
-            return PriorityUpdateClassification(isRequestStream: false)
-        default:
-            return nil
-        }
-    }
-
-    // MARK: - Varint Helpers (minimal, self-contained)
-
-    /// Encodes a UInt64 as a QUIC variable-length integer.
-    private static func varintEncode(_ value: UInt64) -> [UInt8] {
-        if value <= 63 {
-            return [UInt8(value)]
-        } else if value <= 16383 {
-            return [
-                UInt8(0x40 | (value >> 8)),
-                UInt8(value & 0xFF)
-            ]
-        } else if value <= 1_073_741_823 {
-            return [
-                UInt8(0x80 | (value >> 24)),
-                UInt8((value >> 16) & 0xFF),
-                UInt8((value >> 8) & 0xFF),
-                UInt8(value & 0xFF)
-            ]
-        } else {
-            return [
-                UInt8(0xC0 | (value >> 56)),
-                UInt8((value >> 48) & 0xFF),
-                UInt8((value >> 40) & 0xFF),
-                UInt8((value >> 32) & 0xFF),
-                UInt8((value >> 24) & 0xFF),
-                UInt8((value >> 16) & 0xFF),
-                UInt8((value >> 8) & 0xFF),
-                UInt8(value & 0xFF)
-            ]
-        }
-    }
-
-    /// Decodes a QUIC variable-length integer from data.
-    private static func varintDecode(from data: Data) throws -> (UInt64, Int) {
-        guard let firstByte = data.first else {
-            throw PriorityUpdateError.insufficientData
-        }
-
-        let prefix = firstByte >> 6
-        let length: Int
-
-        switch prefix {
-        case 0: length = 1
-        case 1: length = 2
-        case 2: length = 4
-        case 3: length = 8
-        default: length = 1  // unreachable
-        }
-
-        guard data.count >= length else {
-            throw PriorityUpdateError.insufficientData
-        }
-
-        var value = UInt64(firstByte & 0x3F)
-        for i in 1..<length {
-            value = (value << 8) | UInt64(data[data.startIndex + i])
-        }
-
-        return (value, length)
-    }
-}
-
-/// Result of classifying a frame type as a PRIORITY_UPDATE.
-public struct PriorityUpdateClassification: Sendable, Hashable {
-    /// Whether this targets a request stream (true) or push stream (false).
-    public let isRequestStream: Bool
-}
-
-/// Errors from PRIORITY_UPDATE decoding.
-public enum PriorityUpdateError: Error, Sendable, CustomStringConvertible {
-    /// The payload was empty
-    case emptyPayload
-
-    /// Not enough data to decode the varint
-    case insufficientData
-
-    public var description: String {
-        switch self {
-        case .emptyPayload:
-            return "PRIORITY_UPDATE payload is empty"
-        case .insufficientData:
-            return "Insufficient data for PRIORITY_UPDATE varint"
-        }
-    }
+    /// Resets all internal scheduling state (e.g., cursors).
+    mutating func resetCursors()
 }
 
 // MARK: - Scheduling Strategy
@@ -372,7 +85,7 @@ public enum SchedulingStrategy: Sendable, Hashable {
 ///
 /// ## Thread Safety
 /// This struct is not thread-safe by itself. It should be used within a synchronized context.
-public struct StreamScheduler: Sendable {
+public struct StreamScheduler: StreamScheduling, Sendable {
     /// Round-robin cursors per urgency level
     ///
     /// Key: urgency level (0-7)
@@ -449,48 +162,58 @@ public struct StreamScheduler: Sendable {
         _ group: [(UInt64, DataStream)],
         urgency: UInt8
     ) -> [(streamID: UInt64, stream: DataStream)] {
-        // Partition into non-incremental and incremental
-        let nonIncremental = group.filter { !$0.1.priority.incremental }
-        let incremental = group.filter { $0.1.priority.incremental }
+        // Single-pass partition into non-incremental and incremental indices
+        var nonIncrementalIndices: [Int] = []
+        var incrementalIndices: [Int] = []
+        nonIncrementalIndices.reserveCapacity(group.count)
+        incrementalIndices.reserveCapacity(group.count)
+        for i in group.indices {
+            if group[i].1.priority.incremental {
+                incrementalIndices.append(i)
+            } else {
+                nonIncrementalIndices.append(i)
+            }
+        }
 
         var result: [(streamID: UInt64, stream: DataStream)] = []
+        result.reserveCapacity(group.count)
 
         // Handle non-incremental streams: serve only the active one first
-        if !nonIncremental.isEmpty {
+        if !nonIncrementalIndices.isEmpty {
             let cursor = cursors[urgency] ?? 0
-            let validCursor = cursor % nonIncremental.count
+            let validCursor = cursor % nonIncrementalIndices.count
 
             // The active non-incremental stream goes first
-            let active = nonIncremental[validCursor]
-            result.append((streamID: active.0, stream: active.1))
-
-            // Remaining non-incremental streams go after incremental ones
-            var remaining: [(streamID: UInt64, stream: DataStream)] = []
-            for (i, entry) in nonIncremental.enumerated() where i != validCursor {
-                remaining.append((streamID: entry.0, stream: entry.1))
-            }
+            let activeIdx = nonIncrementalIndices[validCursor]
+            result.append((streamID: group[activeIdx].0, stream: group[activeIdx].1))
 
             // Incremental streams interleaved after active non-incremental
-            if !incremental.isEmpty {
-                // Use a separate cursor space for incremental within same urgency
-                let incrementalCursorKey = urgency &+ 128  // offset to avoid collision
+            // (index-offset iteration — no temporary array allocation)
+            if !incrementalIndices.isEmpty {
+                let incrementalCursorKey = urgency &+ 128
                 let incCursor = cursors[incrementalCursorKey] ?? 0
-                let validIncCursor = incCursor % incremental.count
-                let rotated = rotateArray(incremental, startingAt: validIncCursor)
-                for entry in rotated {
-                    result.append((streamID: entry.0, stream: entry.1))
+                let validIncCursor = incCursor % incrementalIndices.count
+                let incCount = incrementalIndices.count
+                for j in 0..<incCount {
+                    let idx = incrementalIndices[(validIncCursor + j) % incCount]
+                    result.append((streamID: group[idx].0, stream: group[idx].1))
                 }
             }
 
-            // Append remaining non-incremental
-            result.append(contentsOf: remaining)
-        } else if !incremental.isEmpty {
-            // Only incremental streams — round-robin all of them
+            // Remaining non-incremental streams go last
+            let niCount = nonIncrementalIndices.count
+            for j in 1..<niCount {
+                let idx = nonIncrementalIndices[(validCursor + j) % niCount]
+                result.append((streamID: group[idx].0, stream: group[idx].1))
+            }
+        } else if !incrementalIndices.isEmpty {
+            // Only incremental streams — round-robin via index offset
             let cursor = cursors[urgency] ?? 0
-            let validCursor = cursor % incremental.count
-            let rotated = rotateArray(incremental, startingAt: validCursor)
-            for entry in rotated {
-                result.append((streamID: entry.0, stream: entry.1))
+            let validCursor = cursor % incrementalIndices.count
+            let incCount = incrementalIndices.count
+            for j in 0..<incCount {
+                let idx = incrementalIndices[(validCursor + j) % incCount]
+                result.append((streamID: group[idx].0, stream: group[idx].1))
             }
         }
 
@@ -504,17 +227,18 @@ public struct StreamScheduler: Sendable {
     ) -> [(streamID: UInt64, stream: DataStream)] {
         let cursor = cursors[urgency] ?? 0
         let validCursor = cursor % group.count
+        let count = group.count
 
-        // Rotate the group to start from cursor position
-        let rotated = rotateArray(group, startingAt: validCursor)
-
+        // Index-offset iteration — no temporary array allocation
         var result: [(streamID: UInt64, stream: DataStream)] = []
-        for entry in rotated {
-            result.append((streamID: entry.0, stream: entry.1))
+        result.reserveCapacity(count)
+        for j in 0..<count {
+            let idx = (validCursor + j) % count
+            result.append((streamID: group[idx].0, stream: group[idx].1))
         }
 
         // Update cursor for next round (advance by group size)
-        cursors[urgency] = (validCursor + group.count) % group.count
+        cursors[urgency] = (validCursor + count) % count
 
         return result
     }
@@ -577,14 +301,6 @@ public struct StreamScheduler: Sendable {
     }
 
     // MARK: - Private
-
-    /// Rotates an array to start at a specific index.
-    private func rotateArray<T>(_ array: [T], startingAt index: Int) -> [T] {
-        guard !array.isEmpty, index > 0, index < array.count else {
-            return array
-        }
-        return Array(array[index...]) + Array(array[..<index])
-    }
 }
 
 // MARK: - StreamScheduler Statistics

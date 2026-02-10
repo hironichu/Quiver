@@ -107,23 +107,23 @@ public enum QUICCipherSuite: Sendable {
 // MARK: - Key Material
 
 /// Cryptographic key material derived from a secret
-public struct KeyMaterial: Sendable {
+package struct KeyMaterial: Sendable {
     /// The packet protection key
-    public let key: SymmetricKey
+    package let key: SymmetricKey
 
     /// The packet protection IV
-    public let iv: Data
+    package let iv: Data
 
     /// The header protection key
-    public let hp: SymmetricKey
+    package let hp: SymmetricKey
 
     /// The cipher suite used to derive this key material
-    public let cipherSuite: QUICCipherSuite
+    package let cipherSuite: QUICCipherSuite
 
     /// Derives key material from a secret using AES-128-GCM (default)
     /// - Parameter secret: The secret to derive from
     /// - Returns: The derived key material
-    public static func derive(from secret: SymmetricKey) throws -> KeyMaterial {
+    package static func derive(from secret: SymmetricKey) throws -> KeyMaterial {
         return try derive(from: secret, cipherSuite: .aes128GcmSha256)
     }
 
@@ -140,7 +140,7 @@ public struct KeyMaterial: Sendable {
     ///
     /// The HkdfLabel uses "tls13 " prefix per RFC 8446, so final labels are:
     /// "tls13 quic key", "tls13 quic iv", "tls13 quic hp"
-    public static func derive(
+    package static func derive(
         from secret: SymmetricKey,
         cipherSuite: QUICCipherSuite
     ) throws -> KeyMaterial {
@@ -181,7 +181,7 @@ public struct KeyMaterial: Sendable {
 
     /// Creates opener and sealer for this key material
     /// - Returns: Tuple of (opener, sealer)
-    public func createCrypto() throws -> (opener: any PacketOpener, sealer: any PacketSealer) {
+    package func createCrypto() throws -> (opener: any PacketOpener, sealer: any PacketSealer) {
         switch cipherSuite {
         case .aes128GcmSha256:
             let opener = try AES128GCMOpener(keyMaterial: self)

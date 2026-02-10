@@ -5,6 +5,7 @@
 import Foundation
 import QUICCore
 import QUICCrypto
+import QUICRecovery
 
 // MARK: - Security Mode
 
@@ -36,9 +37,13 @@ public enum QUICSecurityMode: Sendable {
     /// Development environment: TLS required but self-signed certificates allowed
     case development(tlsProviderFactory: @Sendable () -> any TLS13Provider)
 
+    #if DEBUG
     /// Testing environment: Uses MockTLSProvider
     /// - Warning: Never use in production. This mode disables encryption.
+    /// - Note: This case is only available in DEBUG builds, matching the
+    ///   `QUICConfiguration.testing()` factory method guard.
     case testing
+    #endif
 }
 
 // MARK: - Security Errors
@@ -72,6 +77,117 @@ public enum QUICSecurityError: Error, Sendable {
 /// ```
 public typealias TLSProviderFactory = @Sendable (_ isClient: Bool) -> any TLS13Provider
 
+// MARK: - Socket Configuration
+
+/// UDP socket-level tuning for a QUIC endpoint.
+///
+/// These values are applied when the endpoint creates its underlying
+/// `NIOQUICSocket`.  They do **not** affect the QUIC protocol itself
+/// but control OS-level buffer sizing and the maximum datagram the
+/// socket layer will accept.
+///
+/// ## Relationship to `QUICConfiguration.maxUDPPayloadSize`
+///
+/// `maxDatagramSize` is the **OS/NIO transport ceiling** — the largest
+/// UDP payload the socket will accept or send.  It must always be
+/// `>= QUICConfiguration.maxUDPPayloadSize` (the QUIC-level path MTU).
+///
+/// Typical values:
+/// - `maxDatagramSize = 65507` (UDP theoretical max — the default)
+/// - `maxUDPPayloadSize = 1200` (RFC 9000 minimum, safe default)
+///
+/// After DPLPMTUD probing discovers a larger path MTU,
+/// `maxUDPPayloadSize` can be raised without touching this value.
+///
+/// ## Platform Notes
+///
+/// - **Linux**: `SO_RCVBUF` / `SO_SNDBUF` are capped by
+///   `net.core.rmem_max` / `net.core.wmem_max`.  If the requested
+///   value exceeds the kernel limit the actual buffer may be smaller.
+/// - **macOS / iOS**: The kernel may silently round buffer sizes.
+public struct SocketConfiguration: Sendable {
+    /// Receive buffer size in bytes (`SO_RCVBUF`).
+    ///
+    /// A larger buffer reduces the chance of packet drops under burst
+    /// load.  Set to `nil` to use the OS default.
+    ///
+    /// - Default: `65536`
+    public var receiveBufferSize: Int?
+
+    /// Send buffer size in bytes (`SO_SNDBUF`).
+    ///
+    /// - Default: `65536`
+    public var sendBufferSize: Int?
+
+    /// Maximum datagram size the socket layer will accept or send.
+    ///
+    /// This is an **OS/NIO transport limit**, not the QUIC-level path MTU.
+    /// It must be `>= QUICConfiguration.maxUDPPayloadSize`.
+    /// Typically left at the UDP theoretical maximum (`65507`).
+    ///
+    /// - Default: `65507`
+    public var maxDatagramSize: Int
+
+    /// Whether to enable ECN (Explicit Congestion Notification) on the socket.
+    ///
+    /// When `true`, the socket layer will:
+    /// - Set `IP_RECVTOS` / `IPV6_RECVTCLASS` to receive ECN codepoints
+    ///   on incoming packets via ancillary data.
+    /// - Set `IP_TOS` / `IPV6_TCLASS` to mark outgoing packets with
+    ///   the ECN codepoint chosen by `ECNManager`.
+    ///
+    /// Requires platform support (`PlatformSocketConstants.isECNSupported`).
+    ///
+    /// - Default: `true`
+    public var enableECN: Bool
+
+    /// Whether to set the Don't Fragment (DF) bit on outgoing packets.
+    ///
+    /// Required for DPLPMTUD (RFC 8899) to function correctly.
+    /// Without DF, intermediate routers may silently fragment packets,
+    /// making path MTU discovery impossible.
+    ///
+    /// - Linux: sets `IP_MTU_DISCOVER = IP_PMTUDISC_DO`
+    /// - macOS/iOS: sets `IP_DONTFRAG = 1`
+    ///
+    /// Requires platform support (`PlatformSocketConstants.isDFSupported`).
+    ///
+    /// - Default: `true`
+    public var enableDF: Bool
+
+    /// Creates a default socket configuration.
+    public init() {
+        self.receiveBufferSize = 65536
+        self.sendBufferSize = 65536
+        self.maxDatagramSize = 65507
+        self.enableECN = true
+        self.enableDF = true
+    }
+
+    /// Creates a custom socket configuration.
+    ///
+    /// - Parameters:
+    ///   - receiveBufferSize: `SO_RCVBUF` value, or `nil` for OS default.
+    ///   - sendBufferSize: `SO_SNDBUF` value, or `nil` for OS default.
+    ///   - maxDatagramSize: Maximum datagram the socket will handle.
+    ///     Must be `>= ProtocolLimits.minimumMaximumDatagramSize`.
+    ///   - enableECN: Enable ECN socket options. Default `true`.
+    ///   - enableDF: Enable Don't Fragment bit. Default `true`.
+    public init(
+        receiveBufferSize: Int?,
+        sendBufferSize: Int?,
+        maxDatagramSize: Int = 65507,
+        enableECN: Bool = true,
+        enableDF: Bool = true
+    ) {
+        self.receiveBufferSize = receiveBufferSize
+        self.sendBufferSize = sendBufferSize
+        self.maxDatagramSize = maxDatagramSize
+        self.enableECN = enableECN
+        self.enableDF = enableDF
+    }
+}
+
 // MARK: - QUIC Configuration
 
 /// Configuration for a QUIC endpoint
@@ -81,7 +197,21 @@ public struct QUICConfiguration: Sendable {
     /// Maximum idle timeout (default: 30 seconds)
     public var maxIdleTimeout: Duration
 
-    /// Maximum UDP payload size (default: 1200)
+    /// Maximum UDP payload size — the QUIC-level path MTU used for
+    /// packet construction, congestion-window calculations, stream-frame
+    /// sizing, and Initial-packet padding.
+    ///
+    /// RFC 9000 Section 14 mandates a minimum of 1200 bytes
+    /// (`ProtocolLimits.minimumMaximumDatagramSize`).  Larger values
+    /// (e.g. 1452 for typical Ethernet) can be used when the path is
+    /// known to support them, or after DPLPMTUD probing.
+    ///
+    /// This single value is the **source of truth** that flows into
+    /// `PacketProcessor`, `CongestionController`, `StreamManager`,
+    /// and `CoalescedPacketBuilder`.  Changing it here propagates
+    /// everywhere — no other file should hard-code a datagram size.
+    ///
+    /// - Default: `ProtocolLimits.minimumMaximumDatagramSize` (1200)
     public var maxUDPPayloadSize: Int
 
     // MARK: - Flow Control
@@ -150,33 +280,7 @@ public struct QUICConfiguration: Sendable {
     /// configuration, use `TLSConfiguration.alpnProtocols` instead.
     public var alpn: [String]
 
-    // MARK: - TLS (Legacy — prefer TLSConfiguration)
-
-    /// Path to certificate file (for servers).
-    ///
-    /// - Warning: **Legacy field.** This field is **not consumed** by
-    ///   `TLS13Handler` and exists only for backward compatibility.
-    ///   Use `TLSConfiguration.certificatePath` or
-    ///   `TLSConfiguration.server(certificatePath:privateKeyPath:)` instead.
-    ///   This field will be removed in a future release.
-    public var certificatePath: String?
-
-    /// Path to private key file (for servers).
-    ///
-    /// - Warning: **Legacy field.** This field is **not consumed** by
-    ///   `TLS13Handler` and exists only for backward compatibility.
-    ///   Use `TLSConfiguration.privateKeyPath` or
-    ///   `TLSConfiguration.server(certificatePath:privateKeyPath:)` instead.
-    ///   This field will be removed in a future release.
-    public var privateKeyPath: String?
-
-    /// Whether to verify peer certificates (default: true).
-    ///
-    /// - Warning: **Legacy field.** This field is **not consumed** by
-    ///   `TLS13Handler` and exists only for backward compatibility.
-    ///   Use `TLSConfiguration.verifyPeer` instead.
-    ///   This field will be removed in a future release.
-    public var verifyPeer: Bool
+    // MARK: - TLS Provider
 
     /// Custom TLS provider factory (legacy).
     ///
@@ -209,18 +313,44 @@ public struct QUICConfiguration: Sendable {
     /// ```
     public var securityMode: QUICSecurityMode?
 
+    // MARK: - Congestion Control
+
+    /// Factory for creating congestion control algorithm instances.
+    ///
+    /// Defaults to `NewRenoFactory()` (RFC 9002 NewReno). Set this to inject
+    /// a custom congestion control algorithm (e.g., CUBIC, BBR) for all
+    /// connections created with this configuration.
+    ///
+    /// - Note: This property is `package` access because the `CongestionControllerFactory`
+    ///   protocol and its dependency types (`CongestionController`, `RTTEstimator`,
+    ///   `SentPacket`) are package-internal. When these types are promoted to `public`,
+    ///   this property should be promoted as well.
+    package var congestionControllerFactory: any CongestionControllerFactory
+
+    // MARK: - Socket / Transport
+
+    /// UDP socket-level tuning (buffer sizes, max datagram).
+    ///
+    /// Applied when the endpoint creates its `NIOQUICSocket` via
+    /// `serve(host:port:)` or `dial(address:)`.  Has no effect when
+    /// a pre-built socket is supplied directly.
+    ///
+    /// - Default: ``SocketConfiguration()``
+    public var socketConfiguration: SocketConfiguration
+
     // MARK: - Initialization
 
     /// Creates a default configuration.
     ///
-    /// - Note: The legacy TLS fields (`certificatePath`, `privateKeyPath`,
-    ///   `verifyPeer`) are initialized for backward compatibility but are **not**
-    ///   consumed by the TLS stack. Use `TLSConfiguration` for all TLS settings,
-    ///   and prefer `QUICConfiguration.production()` or `.development()` factory
+    /// All sizes derive from ``ProtocolLimits`` so that no bare `1200`
+    /// literals exist in the configuration layer.
+    ///
+    /// - Note: Use `TLSConfiguration` for all TLS settings, and prefer
+    ///   `QUICConfiguration.production()` or `.development()` factory
     ///   methods for new code.
     public init() {
         self.maxIdleTimeout = .seconds(30)
-        self.maxUDPPayloadSize = 1200
+        self.maxUDPPayloadSize = ProtocolLimits.minimumMaximumDatagramSize
         self.initialMaxData = 10_000_000
         self.initialMaxStreamDataBidiLocal = 1_000_000
         self.initialMaxStreamDataBidiRemote = 1_000_000
@@ -234,11 +364,61 @@ public struct QUICConfiguration: Sendable {
         self.alpn = ["h3"]
         self.enableDatagrams = false
         self.maxDatagramFrameSize = 65535
-        self.certificatePath = nil
-        self.privateKeyPath = nil
-        self.verifyPeer = true
         self.tlsProviderFactory = nil
         self.securityMode = nil
+        self.congestionControllerFactory = NewRenoFactory()
+        self.socketConfiguration = SocketConfiguration()
+    }
+
+    // MARK: - Validation
+
+    /// Configuration validation errors.
+    public enum ValidationError: Error, CustomStringConvertible, Sendable {
+        /// `maxUDPPayloadSize` is below the RFC 9000 minimum (1200).
+        case payloadSizeBelowMinimum(configured: Int, minimum: Int)
+
+        /// `socketConfiguration.maxDatagramSize` is smaller than `maxUDPPayloadSize`.
+        case socketDatagramSizeTooSmall(socketMax: Int, quicPayload: Int)
+
+        /// `connectionIDLength` is outside the valid range (0-20).
+        case connectionIDLengthOutOfRange(Int)
+
+        public var description: String {
+            switch self {
+            case .payloadSizeBelowMinimum(let configured, let minimum):
+                return "maxUDPPayloadSize (\(configured)) < RFC 9000 minimum (\(minimum))"
+            case .socketDatagramSizeTooSmall(let socketMax, let quicPayload):
+                return "socketConfiguration.maxDatagramSize (\(socketMax)) < maxUDPPayloadSize (\(quicPayload))"
+            case .connectionIDLengthOutOfRange(let length):
+                return "connectionIDLength (\(length)) outside valid range 0...20"
+            }
+        }
+    }
+
+    /// Validates internal consistency of the configuration.
+    ///
+    /// Checks:
+    /// 1. `maxUDPPayloadSize >= ProtocolLimits.minimumMaximumDatagramSize`
+    /// 2. `socketConfiguration.maxDatagramSize >= maxUDPPayloadSize`
+    /// 3. `connectionIDLength` in `0...20`
+    ///
+    /// - Throws: ``ValidationError`` on the first violated constraint.
+    public func validate() throws {
+        if maxUDPPayloadSize < ProtocolLimits.minimumMaximumDatagramSize {
+            throw ValidationError.payloadSizeBelowMinimum(
+                configured: maxUDPPayloadSize,
+                minimum: ProtocolLimits.minimumMaximumDatagramSize
+            )
+        }
+        if socketConfiguration.maxDatagramSize < maxUDPPayloadSize {
+            throw ValidationError.socketDatagramSizeTooSmall(
+                socketMax: socketConfiguration.maxDatagramSize,
+                quicPayload: maxUDPPayloadSize
+            )
+        }
+        if connectionIDLength < 0 || connectionIDLength > ProtocolLimits.maxConnectionIDLength {
+            throw ValidationError.connectionIDLengthOutOfRange(connectionIDLength)
+        }
     }
 
     // MARK: - Security Mode Factory Methods

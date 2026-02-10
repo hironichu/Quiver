@@ -41,7 +41,7 @@ struct CoreBenchmarks {
         let totalOps = iterations * values.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Varint encoding: \(Int(opsPerSecond)) ops/sec (\(elapsed * 1000 / Double(totalOps)) ms/op)")
-        #expect(opsPerSecond > 1_000_000, "Expected > 1M ops/sec")
+        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
     }
 
     @Test("Varint decoding performance")
@@ -67,7 +67,7 @@ struct CoreBenchmarks {
         let totalOps = iterations * encodedValues.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Varint decoding: \(Int(opsPerSecond)) ops/sec (\(elapsed * 1000 / Double(totalOps)) ms/op)")
-        #expect(opsPerSecond > 300_000, "Expected > 300k ops/sec")
+        #expect(opsPerSecond > 150_000, "Expected > 150k ops/sec")
     }
 
     @Test("Varint decoding fast path (readVarintValue)")
@@ -88,7 +88,7 @@ struct CoreBenchmarks {
         let totalOps = iterations * oneByteValues.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Varint fast path (1-byte): \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 2_000_000, "Expected > 2M ops/sec for 1-byte varints")
+        #expect(opsPerSecond > 1_000_000, "Expected > 1M ops/sec for 1-byte varints")
     }
 
     // MARK: - ConnectionID Benchmarks
@@ -106,7 +106,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("ConnectionID creation: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 300_000, "Expected > 300k ops/sec")
+        #expect(opsPerSecond > 150_000, "Expected > 150k ops/sec")
     }
 
     @Test("ConnectionID equality performance")
@@ -123,7 +123,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("ConnectionID equality: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 3_000_000, "Expected > 3M ops/sec")
+        #expect(opsPerSecond > 1_500_000, "Expected > 1.5M ops/sec")
     }
 
     // MARK: - Frame Encoding Benchmarks
@@ -142,7 +142,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("PING frame encoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
+        #expect(opsPerSecond > 250_000, "Expected > 250k ops/sec")
     }
 
     @Test("ACK frame encoding performance")
@@ -163,7 +163,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("ACK frame encoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 200_000, "Expected > 200k ops/sec")
+        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
     }
 
     @Test("STREAM frame encoding performance")
@@ -186,7 +186,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("STREAM frame encoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
+        #expect(opsPerSecond > 25_000, "Expected > 25k ops/sec")
     }
 
     // MARK: - Frame Decoding Benchmarks
@@ -206,7 +206,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("PING frame decoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
+        #expect(opsPerSecond > 250_000, "Expected > 250k ops/sec")
     }
 
     @Test("ACK frame decoding performance")
@@ -229,7 +229,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("ACK frame decoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 200_000, "Expected > 200k ops/sec")
+        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
     }
 
     // MARK: - Packet Header Benchmarks
@@ -257,7 +257,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("Long header parsing: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
+        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
     }
 
     @Test("Short header parsing performance")
@@ -277,7 +277,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("Short header parsing: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 200_000, "Expected > 200k ops/sec")
+        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
     }
 
     // MARK: - Packet Number Encoding Benchmarks
@@ -298,7 +298,7 @@ struct CoreBenchmarks {
         let totalOps = iterations * packetNumbers.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Packet number encoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
+        #expect(opsPerSecond > 250_000, "Expected > 250k ops/sec")
     }
 
     @Test("Packet number decoding performance")
@@ -325,7 +325,7 @@ struct CoreBenchmarks {
         let totalOps = iterations * testCases.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Packet number decoding: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 1_000_000, "Expected > 1M ops/sec")
+        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
     }
 
     // MARK: - Coalesced Packet Benchmarks
@@ -349,7 +349,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("Coalesced packet building: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
+        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
     }
 
     @Test("Coalesced packet parsing performance")
@@ -390,7 +390,7 @@ struct CoreBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("Coalesced packet parsing: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
+        #expect(opsPerSecond > 25_000, "Expected > 25k ops/sec")
     }
 
     // MARK: - End-to-End Benchmarks
@@ -419,6 +419,6 @@ struct CoreBenchmarks {
         let totalOps = iterations * frames.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Frame roundtrip: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
+        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
     }
 }

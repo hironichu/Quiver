@@ -23,14 +23,14 @@ public struct ConnectionID: Hashable, Sendable {
     ///
     /// Use this initializer when creating a ConnectionID from untrusted input
     /// (e.g., network data, user input).
-    public init(bytes: Data) throws {
+    public init(bytes: borrowing Data) throws(ConnectionIDError) {
         guard bytes.count <= Self.maxLength else {
             throw ConnectionIDError.tooLong(
                 length: bytes.count,
                 maxAllowed: Self.maxLength
             )
         }
-        self.bytes = bytes
+        self.bytes = copy bytes
     }
 
     /// Creates a connection ID from raw bytes without validation
@@ -51,7 +51,7 @@ public struct ConnectionID: Hashable, Sendable {
     /// Creates a connection ID from a byte sequence with validation
     ///
     /// - Throws: `ConnectionIDError.tooLong` if bytes exceed 20 bytes
-    public init<S: Sequence>(_ bytes: S) throws where S.Element == UInt8 {
+    public init<S: Sequence>(_ bytes: S) throws(ConnectionIDError) where S.Element == UInt8 {
         try self.init(bytes: Data(bytes))
     }
 

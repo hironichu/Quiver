@@ -57,11 +57,11 @@ public protocol FrameDecoder: Sendable {
 /// - `@inlinable` アノテーションにより、モジュール境界を越えてインライン展開可能
 /// - 関数呼び出しオーバーヘッドを削減し、さらなるコンパイラ最適化を有効化
 /// - 特に小さなフレーム（PING, ACK）で効果的
-public struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
+package struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
     private static let logger = QuiverLogging.logger(label: "quic.core.frame-codec")
 
     @inlinable
-    public init() {}
+    package init() {}
 
     // MARK: - Encoding
 
@@ -71,7 +71,7 @@ public struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
     /// - `@inlinable` により呼び出し元でインライン展開可能
     /// - 事前サイズ計算により再割り当てを回避
     @inlinable
-    public func encode(_ frame: Frame) throws -> Data {
+    package func encode(_ frame: Frame) throws -> Data {
         // Pre-calculate frame size and allocate exact capacity to avoid reallocations
         let frameSize = FrameSize.frame(frame)
         var writer = DataWriter(capacity: frameSize)
@@ -81,7 +81,7 @@ public struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
 
     /// 複数フレームをバイナリデータにエンコード
     @inlinable
-    public func encodeFrames(_ frames: [Frame]) throws -> Data {
+    package func encodeFrames(_ frames: [Frame]) throws -> Data {
         // Pre-calculate total size for all frames to avoid reallocations
         let totalSize = frames.reduce(0) { $0 + FrameSize.frame($1) }
         var writer = DataWriter(capacity: totalSize)
@@ -321,7 +321,7 @@ public struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
     /// - `@inlinable` により呼び出し元でインライン展開可能
     /// - 1バイトvarint（フレームタイプ0x00-0x3F）の高速パス
     @inlinable
-    public func decode(from reader: inout DataReader) throws -> Frame {
+    package func decode(from reader: inout DataReader) throws -> Frame {
         guard let firstByte = reader.peekByte() else {
             throw FrameCodecError.insufficientData
         }
@@ -427,7 +427,7 @@ public struct StandardFrameCodec: FrameEncoder, FrameDecoder, Sendable {
 
     /// 複数フレームをデコード
     @inlinable
-    public func decodeFrames(from data: Data) throws -> [Frame] {
+    package func decodeFrames(from data: Data) throws -> [Frame] {
         var reader = DataReader(data)
         var frames: [Frame] = []
         var lastFrameHadNoLength = false

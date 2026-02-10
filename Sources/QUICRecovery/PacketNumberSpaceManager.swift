@@ -13,23 +13,23 @@ import QUICCore
 /// RFC 9002 Section 6.2: When a PTO expires, the sender MUST send
 /// one or two probe datagrams. This struct describes what action
 /// to take.
-public struct PTOAction: Sendable, Equatable {
+package struct PTOAction: Sendable, Equatable {
     /// The encryption level at which to send the probe
-    public let level: EncryptionLevel
+    package let level: EncryptionLevel
 
     /// Number of probe packets to send (1 or 2)
     ///
     /// RFC 9002 Section 6.2.4: It is RECOMMENDED that implementations
     /// send two probe datagrams to improve detection of packet loss.
-    public let probeCount: Int
+    package let probeCount: Int
 
     /// Packets that can be retransmitted as probes (if any)
     ///
     /// If empty, the sender should send a PING frame.
-    public let packetsToProbe: [SentPacket]
+    package let packetsToProbe: [SentPacket]
 
     /// Creates a PTO action
-    public init(
+    package init(
         level: EncryptionLevel,
         probeCount: Int = 2,
         packetsToProbe: [SentPacket] = []
@@ -39,7 +39,7 @@ public struct PTOAction: Sendable, Equatable {
         self.packetsToProbe = packetsToProbe
     }
 
-    public static func == (lhs: PTOAction, rhs: PTOAction) -> Bool {
+    package static func == (lhs: PTOAction, rhs: PTOAction) -> Bool {
         lhs.level == rhs.level &&
         lhs.probeCount == rhs.probeCount &&
         lhs.packetsToProbe.count == rhs.packetsToProbe.count
@@ -47,12 +47,12 @@ public struct PTOAction: Sendable, Equatable {
 }
 
 /// Manages loss detection and ACK state for all packet number spaces
-public final class PacketNumberSpaceManager: Sendable {
+package final class PacketNumberSpaceManager: Sendable {
     /// Loss detectors per encryption level (packet number space)
-    public let lossDetectors: [EncryptionLevel: LossDetector]
+    package let lossDetectors: [EncryptionLevel: LossDetector]
 
     /// ACK managers per encryption level
-    public let ackManagers: [EncryptionLevel: AckManager]
+    package let ackManagers: [EncryptionLevel: AckManager]
 
     /// RTT estimator (shared across all spaces)
     private let _rttEstimator: Mutex<RTTEstimator>
@@ -74,7 +74,7 @@ public final class PacketNumberSpaceManager: Sendable {
 
     /// Creates a new PacketNumberSpaceManager
     /// - Parameter maxAckDelay: Maximum ACK delay for ACK generation
-    public init(maxAckDelay: Duration = LossDetectionConstants.defaultMaxAckDelay) {
+    package init(maxAckDelay: Duration = LossDetectionConstants.defaultMaxAckDelay) {
         var detectors: [EncryptionLevel: LossDetector] = [:]
         var acks: [EncryptionLevel: AckManager] = [:]
 
@@ -95,17 +95,17 @@ public final class PacketNumberSpaceManager: Sendable {
     }
 
     /// Gets the current RTT estimator state
-    public var rttEstimator: RTTEstimator {
+    package var rttEstimator: RTTEstimator {
         _rttEstimator.withLock { $0 }
     }
 
     /// Gets the current PTO count
-    public var ptoCount: Int {
+    package var ptoCount: Int {
         _ptoCount.withLock { $0 }
     }
 
     /// Whether handshake is confirmed
-    public var handshakeConfirmed: Bool {
+    package var handshakeConfirmed: Bool {
         get { _handshakeConfirmed.withLock { $0 } }
         set { _handshakeConfirmed.withLock { $0 = newValue } }
     }
@@ -114,7 +114,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///
     /// Set this when peer's transport parameters are received during handshake.
     /// Before handshake completion, the default value (25ms) is used.
-    public var peerMaxAckDelay: Duration {
+    package var peerMaxAckDelay: Duration {
         get { _peerMaxAckDelay.withLock { $0 } }
         set { _peerMaxAckDelay.withLock { $0 = newValue } }
     }
@@ -135,7 +135,7 @@ public final class PacketNumberSpaceManager: Sendable {
     /// - Parameters:
     ///   - sample: The RTT sample
     ///   - ackDelay: The ack delay reported by peer in the ACK frame
-    public func updateRTT(
+    package func updateRTT(
         sample: Duration,
         ackDelay: Duration
     ) {
@@ -153,7 +153,7 @@ public final class PacketNumberSpaceManager: Sendable {
 
     /// Discards an encryption level (called after handshake completion)
     /// - Parameter level: The encryption level to discard
-    public func discardLevel(_ level: EncryptionLevel) {
+    package func discardLevel(_ level: EncryptionLevel) {
         lossDetectors[level]?.clear()
         ackManagers[level]?.clear()
     }
@@ -164,7 +164,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///
     /// - Parameter now: Current time
     /// - Returns: The PTO deadline
-    public func nextPTODeadline(now: ContinuousClock.Instant) -> ContinuousClock.Instant {
+    package func nextPTODeadline(now: ContinuousClock.Instant) -> ContinuousClock.Instant {
         let maxDelay = effectiveMaxAckDelay
 
         let pto = _rttEstimator.withLock { rtt in
@@ -176,18 +176,18 @@ public final class PacketNumberSpaceManager: Sendable {
     }
 
     /// Increments PTO count on timeout
-    public func onPTOExpired() {
+    package func onPTOExpired() {
         _ptoCount.withLock { $0 += 1 }
     }
 
     /// Resets PTO count on successful ACK
-    public func resetPTOCount() {
+    package func resetPTOCount() {
         _ptoCount.withLock { $0 = 0 }
     }
 
     /// Gets the earliest loss time across all levels
     /// - Returns: The earliest loss time, or nil if none
-    public func earliestLossTime() -> (level: EncryptionLevel, time: ContinuousClock.Instant)? {
+    package func earliestLossTime() -> (level: EncryptionLevel, time: ContinuousClock.Instant)? {
         var earliest: (level: EncryptionLevel, time: ContinuousClock.Instant)? = nil
 
         for level in [EncryptionLevel.initial, .handshake, .application] {
@@ -203,7 +203,7 @@ public final class PacketNumberSpaceManager: Sendable {
 
     /// Gets the earliest ACK time across all levels
     /// - Returns: The earliest ACK time, or nil if none
-    public func earliestAckTime() -> (level: EncryptionLevel, time: ContinuousClock.Instant)? {
+    package func earliestAckTime() -> (level: EncryptionLevel, time: ContinuousClock.Instant)? {
         var earliest: (level: EncryptionLevel, time: ContinuousClock.Instant)? = nil
 
         for level in [EncryptionLevel.initial, .handshake, .application] {
@@ -218,7 +218,7 @@ public final class PacketNumberSpaceManager: Sendable {
     }
 
     /// Whether any level has ack-eliciting packets in flight
-    public var hasAckElicitingInFlight: Bool {
+    package var hasAckElicitingInFlight: Bool {
         for level in [EncryptionLevel.initial, .handshake, .application] {
             if let detector = lossDetectors[level], detector.ackElicitingInFlight > 0 {
                 return true
@@ -228,7 +228,7 @@ public final class PacketNumberSpaceManager: Sendable {
     }
 
     /// Total bytes in flight across all levels
-    public var totalBytesInFlight: Int {
+    package var totalBytesInFlight: Int {
         var total = 0
         for level in [EncryptionLevel.initial, .handshake, .application] {
             total += lossDetectors[level]?.bytesInFlight ?? 0
@@ -238,7 +238,7 @@ public final class PacketNumberSpaceManager: Sendable {
 
     /// Records a sent packet
     /// - Parameter packet: The sent packet
-    public func onPacketSent(_ packet: SentPacket) {
+    package func onPacketSent(_ packet: SentPacket) {
         lossDetectors[packet.encryptionLevel]?.onPacketSent(packet)
     }
 
@@ -248,7 +248,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///   - level: The encryption level
     ///   - isAckEliciting: Whether the packet is ack-eliciting
     ///   - receiveTime: When the packet was received
-    public func onPacketReceived(
+    package func onPacketReceived(
         packetNumber: UInt64,
         level: EncryptionLevel,
         isAckEliciting: Bool,
@@ -270,7 +270,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///   - level: The encryption level
     ///   - receiveTime: When the ACK was received
     /// - Returns: The loss detection result
-    public func onAckReceived(
+    package func onAckReceived(
         ackFrame: AckFrame,
         level: EncryptionLevel,
         receiveTime: ContinuousClock.Instant
@@ -307,13 +307,15 @@ public final class PacketNumberSpaceManager: Sendable {
     ///   - level: The encryption level
     ///   - now: Current time
     ///   - ackDelayExponent: The ACK delay exponent
+    ///   - ecnCounts: ECN counts to include in the ACK frame (from `ECNManager.countsForACK`)
     /// - Returns: An ACK frame, or nil if not needed
-    public func generateAckFrame(
+    package func generateAckFrame(
         for level: EncryptionLevel,
         now: ContinuousClock.Instant,
-        ackDelayExponent: UInt64
+        ackDelayExponent: UInt64,
+        ecnCounts: ECNCounts? = nil
     ) -> AckFrame? {
-        ackManagers[level]?.generateAckFrame(now: now, ackDelayExponent: ackDelayExponent)
+        ackManagers[level]?.generateAckFrame(now: now, ackDelayExponent: ackDelayExponent, ecnCounts: ecnCounts)
     }
 
     // MARK: - Persistent Congestion Detection
@@ -344,7 +346,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///
     /// - Parameter lostPackets: The packets detected as lost in this ACK processing
     /// - Returns: `true` if persistent congestion is detected
-    public func checkPersistentCongestion(lostPackets: [SentPacket]) -> Bool {
+    package func checkPersistentCongestion(lostPackets: [SentPacket]) -> Bool {
         // Requirement 1: Need at least 2 lost packets to measure a time span
         guard lostPackets.count >= 2 else { return false }
 
@@ -387,7 +389,7 @@ public final class PacketNumberSpaceManager: Sendable {
     /// - Parameter hasInitialKeys: Whether Initial keys are available
     /// - Parameter hasHandshakeKeys: Whether Handshake keys are available
     /// - Returns: The encryption level for probing, or nil if none needed
-    public func getPTOSpace(
+    package func getPTOSpace(
         hasInitialKeys: Bool,
         hasHandshakeKeys: Bool
     ) -> EncryptionLevel? {
@@ -438,7 +440,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///   - hasInitialKeys: Whether Initial keys are available
     ///   - hasHandshakeKeys: Whether Handshake keys are available
     /// - Returns: The action to take, or nil if no probing needed
-    public func handlePTOTimeout(
+    package func handlePTOTimeout(
         hasInitialKeys: Bool,
         hasHandshakeKeys: Bool
     ) -> PTOAction? {
@@ -474,7 +476,7 @@ public final class PacketNumberSpaceManager: Sendable {
     ///
     /// RFC 9002 Section 6.2.2.1: If there are no ack-eliciting packets in
     /// flight, the client SHOULD set a PTO timer to send probe packets.
-    public var needsPTOProbeEvenWithoutInFlight: Bool {
+    package var needsPTOProbeEvenWithoutInFlight: Bool {
         !handshakeConfirmed && !hasAckElicitingInFlight
     }
 }

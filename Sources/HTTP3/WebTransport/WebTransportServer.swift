@@ -18,7 +18,7 @@
 ///
 /// // Optionally handle regular HTTP/3 requests alongside WebTransport
 /// server.onRequest { context in
-///     try await context.respond(HTTP3Response(status: 200, body: Data("OK".utf8)))
+///     try await context.respond(status: 200, Data("OK".utf8))
 /// }
 ///
 /// // Accept WebTransport sessions
@@ -273,11 +273,11 @@ public actor WebTransportServer {
                 try await handler(context)
             } else {
                 // Default: return 404 for non-WebTransport requests
-                try await context.respond(HTTP3Response(
+                try await context.respond(
                     status: 404,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Not Found".utf8)
-                ))
+                    Data("Not Found".utf8)
+                )
             }
         }
 
@@ -292,7 +292,7 @@ public actor WebTransportServer {
                 try await context.reject(
                     status: 501,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Only WebTransport is supported".utf8)
+                    // body: Data("Only WebTransport is supported".utf8)
                 )
                 return
             }
@@ -303,7 +303,7 @@ public actor WebTransportServer {
                     try await context.reject(
                         status: 404,
                         headers: [("content-type", "text/plain")],
-                        body: Data("WebTransport path not found".utf8)
+                        // body: Data("WebTransport path not found".utf8)
                     )
                     return
                 }
@@ -324,7 +324,7 @@ public actor WebTransportServer {
                 try await context.reject(
                     status: 429,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Too many WebTransport sessions".utf8)
+                    // body: Data("Too many WebTransport sessions".utf8)
                 )
                 return
             }
@@ -445,7 +445,7 @@ public actor WebTransportServer {
                     try? await context.reject(
                         status: 429,
                         headers: [("content-type", "text/plain")],
-                        body: Data("Too many WebTransport sessions".utf8)
+                        // body: Data("Too many WebTransport sessions".utf8)
                     )
                     continue
                 }
@@ -489,10 +489,10 @@ public actor WebTransportServer {
                     do {
                         try await capturedHandler(context)
                     } catch {
-                        try? await context.respond(HTTP3Response(
+                        try? await context.respond(
                             status: 500,
-                            body: Data("Internal Server Error".utf8)
-                        ))
+                            Data("Internal Server Error".utf8)
+                        )
                     }
                 }
             }

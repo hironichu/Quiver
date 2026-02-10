@@ -10,7 +10,7 @@ import QUICCore
 // MARK: - Client State Machine
 
 /// Client-side TLS 1.3 state machine
-public final class ClientStateMachine: Sendable {
+package final class ClientStateMachine: Sendable {
 
     private let state = Mutex<ClientState>(ClientState())
 
@@ -22,7 +22,7 @@ public final class ClientStateMachine: Sendable {
 
     // MARK: - Initialization
 
-    public init() {}
+    package init() {}
 
     // MARK: - Start Handshake
 
@@ -33,7 +33,7 @@ public final class ClientStateMachine: Sendable {
     ///   - sessionTicket: Optional session ticket for resumption
     ///   - attemptEarlyData: Whether to attempt 0-RTT early data
     /// - Returns: The ClientHello message and any TLS outputs
-    public func startHandshake(
+    package func startHandshake(
         configuration: TLSConfiguration,
         transportParameters: Data,
         sessionTicket: SessionTicketData? = nil,
@@ -249,7 +249,7 @@ public final class ClientStateMachine: Sendable {
     /// Process a ServerHello message
     /// - Parameter data: The ServerHello message content (without handshake header)
     /// - Returns: TLS outputs (keys available, etc.)
-    public func processServerHello(_ data: Data) throws -> [TLSOutput] {
+    package func processServerHello(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             // Accept ServerHello in waitServerHello or waitServerHelloRetry states
             guard state.handshakeState == .waitServerHello ||
@@ -489,7 +489,7 @@ public final class ClientStateMachine: Sendable {
     /// Process an EncryptedExtensions message
     /// - Parameter data: The EncryptedExtensions message content
     /// - Returns: TLS outputs
-    public func processEncryptedExtensions(_ data: Data) throws -> [TLSOutput] {
+    package func processEncryptedExtensions(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             guard state.handshakeState == .waitEncryptedExtensions else {
                 throw TLSHandshakeError.unexpectedMessage("Unexpected EncryptedExtensions")
@@ -548,7 +548,7 @@ public final class ClientStateMachine: Sendable {
     /// Client stores the context and will send Certificate + CertificateVerify after receiving Finished.
     /// - Parameter data: The CertificateRequest message content
     /// - Returns: TLS outputs
-    public func processCertificateRequest(_ data: Data) throws -> [TLSOutput] {
+    package func processCertificateRequest(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             // CertificateRequest comes after EncryptedExtensions, before server's Certificate
             guard state.handshakeState == .waitCertificateOrCertificateRequest else {
@@ -577,7 +577,7 @@ public final class ClientStateMachine: Sendable {
     /// Process a Certificate message
     /// - Parameter data: The Certificate message content
     /// - Returns: TLS outputs
-    public func processCertificate(_ data: Data) throws -> [TLSOutput] {
+    package func processCertificate(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             // Accept Certificate from either waiting state
             guard state.handshakeState == .waitCertificate ||
@@ -665,7 +665,7 @@ public final class ClientStateMachine: Sendable {
     /// Process a CertificateVerify message
     /// - Parameter data: The CertificateVerify message content
     /// - Returns: TLS outputs
-    public func processCertificateVerify(_ data: Data) throws -> [TLSOutput] {
+    package func processCertificateVerify(_ data: Data) throws -> [TLSOutput] {
         return try state.withLock { state in
             guard state.handshakeState == .waitCertificateVerify else {
                 throw TLSHandshakeError.unexpectedMessage("Unexpected CertificateVerify")
@@ -744,7 +744,7 @@ public final class ClientStateMachine: Sendable {
     /// Process a server Finished message
     /// - Parameter data: The Finished message content
     /// - Returns: TLS outputs including application keys and client Finished
-    public func processServerFinished(_ data: Data) throws -> (outputs: [TLSOutput], clientFinished: Data) {
+    package func processServerFinished(_ data: Data) throws -> (outputs: [TLSOutput], clientFinished: Data) {
         return try state.withLock { state in
             // SECURITY: Only accept Finished in .waitFinished state.
             //
@@ -913,7 +913,7 @@ public final class ClientStateMachine: Sendable {
     /// Process a NewSessionTicket message (received post-handshake)
     /// - Parameter data: The NewSessionTicket message content
     /// - Returns: The derived session ticket data for future use
-    public func processNewSessionTicket(_ data: Data) throws -> SessionTicketData {
+    package func processNewSessionTicket(_ data: Data) throws -> SessionTicketData {
         return try state.withLock { state in
             guard state.handshakeState == .connected else {
                 throw TLSHandshakeError.unexpectedMessage("NewSessionTicket received before handshake complete")
@@ -963,52 +963,52 @@ public final class ClientStateMachine: Sendable {
     // MARK: - Accessors
 
     /// Current handshake state
-    public var handshakeState: ClientHandshakeState {
+    package var handshakeState: ClientHandshakeState {
         state.withLock { $0.handshakeState }
     }
 
     /// Whether the handshake is complete
-    public var isConnected: Bool {
+    package var isConnected: Bool {
         state.withLock { $0.handshakeState == .connected }
     }
 
     /// Negotiated ALPN protocol
-    public var negotiatedALPN: String? {
+    package var negotiatedALPN: String? {
         state.withLock { $0.context.negotiatedALPN }
     }
 
     /// Peer transport parameters
-    public var peerTransportParameters: Data? {
+    package var peerTransportParameters: Data? {
         state.withLock { $0.context.peerTransportParameters }
     }
 
     /// Exporter master secret (available after handshake completion)
-    public var exporterMasterSecret: SymmetricKey? {
+    package var exporterMasterSecret: SymmetricKey? {
         state.withLock { $0.context.exporterMasterSecret }
     }
 
     /// Whether PSK was used in this handshake
-    public var pskUsed: Bool {
+    package var pskUsed: Bool {
         state.withLock { $0.context.pskUsed }
     }
 
     /// Whether early data (0-RTT) was accepted by the server
-    public var earlyDataAccepted: Bool {
+    package var earlyDataAccepted: Bool {
         state.withLock { $0.context.earlyDataState.earlyDataAccepted }
     }
 
     /// Resumption master secret (for deriving new session tickets)
-    public var resumptionMasterSecret: SymmetricKey? {
+    package var resumptionMasterSecret: SymmetricKey? {
         state.withLock { $0.context.resumptionMasterSecret }
     }
 
     /// Peer certificates (raw DER data, leaf certificate first)
-    public var peerCertificates: [Data]? {
+    package var peerCertificates: [Data]? {
         state.withLock { $0.context.peerCertificates }
     }
 
     /// Parsed peer leaf certificate
-    public var peerCertificate: X509Certificate? {
+    package var peerCertificate: X509Certificate? {
         state.withLock { $0.context.peerCertificate }
     }
 
@@ -1016,7 +1016,7 @@ public final class ClientStateMachine: Sendable {
     ///
     /// This contains the value returned by `TLSConfiguration.certificateValidator`
     /// after successful certificate validation (e.g., application-specific peer identity).
-    public var validatedPeerInfo: (any Sendable)? {
+    package var validatedPeerInfo: (any Sendable)? {
         state.withLock { $0.context.validatedPeerInfo }
     }
 

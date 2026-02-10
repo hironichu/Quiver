@@ -25,8 +25,11 @@ public struct TransportParameterCodec: Sendable {
     /// TLS extension codepoint for QUIC transport parameters
     public static let extensionType: UInt16 = 0x0039  // 57 decimal
 
-    /// Minimum value for max_udp_payload_size
-    public static let minMaxUDPPayloadSize: UInt64 = 1200
+    /// Minimum value for max_udp_payload_size (RFC 9000 Section 18.2).
+    ///
+    /// References ``ProtocolLimits/minimumMaximumDatagramSize`` to avoid
+    /// a bare `1200` literal.
+    public static let minMaxUDPPayloadSize: UInt64 = UInt64(ProtocolLimits.minimumMaximumDatagramSize)
 
     /// Maximum value for ack_delay_exponent
     public static let maxAckDelayExponent: UInt64 = 20

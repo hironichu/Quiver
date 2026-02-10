@@ -7,27 +7,27 @@ import Foundation
 // MARK: - RTT Estimator
 
 /// Estimates round-trip time for a QUIC connection
-public struct RTTEstimator: Sendable {
+package struct RTTEstimator: Sendable {
     /// Minimum RTT observed
-    public private(set) var minRTT: Duration
+    package private(set) var minRTT: Duration
 
     /// Smoothed RTT (EWMA)
-    public private(set) var smoothedRTT: Duration
+    package private(set) var smoothedRTT: Duration
 
     /// RTT variance
-    public private(set) var rttVariance: Duration
+    package private(set) var rttVariance: Duration
 
     /// Latest RTT sample
-    public private(set) var latestRTT: Duration
+    package private(set) var latestRTT: Duration
 
     /// Whether we have received at least one RTT sample
-    public private(set) var hasEstimate: Bool
+    package private(set) var hasEstimate: Bool
 
     /// Initial RTT (used before first sample)
-    public static let initialRTT: Duration = .milliseconds(333)
+    package static let initialRTT: Duration = .milliseconds(333)
 
     /// Creates a new RTT estimator
-    public init() {
+    package init() {
         self.minRTT = .zero
         self.smoothedRTT = Self.initialRTT
         self.rttVariance = Self.initialRTT / 2
@@ -47,7 +47,7 @@ public struct RTTEstimator: Sendable {
     ///   - ackDelay: The acknowledgment delay reported by the peer
     ///   - maxAckDelay: The peer's max_ack_delay transport parameter
     ///   - handshakeConfirmed: Whether the handshake has been confirmed
-    public mutating func updateRTT(
+    package mutating func updateRTT(
         rttSample: Duration,
         ackDelay: Duration,
         maxAckDelay: Duration,
@@ -103,7 +103,7 @@ public struct RTTEstimator: Sendable {
     /// Calculates the Probe Timeout (PTO) value
     /// - Parameter maxAckDelay: The peer's max_ack_delay transport parameter
     /// - Returns: The PTO duration
-    public func probeTimeout(maxAckDelay: Duration) -> Duration {
+    package func probeTimeout(maxAckDelay: Duration) -> Duration {
         // PTO = smoothed_rtt + max(4*rttvar, kGranularity) + max_ack_delay
         let granularity: Duration = .milliseconds(1)
         let k = max(rttVariance * 4, granularity)
@@ -111,31 +111,4 @@ public struct RTTEstimator: Sendable {
     }
 }
 
-// MARK: - Duration Extensions
 
-extension Duration {
-    /// Divides a duration by an integer
-    /// Note: +, - operators exist in standard library, but * and / with Int do not
-    static func / (lhs: Duration, rhs: Int) -> Duration {
-        let (seconds, attoseconds) = lhs.components
-        let totalNs = seconds * 1_000_000_000 + attoseconds / 1_000_000_000
-        return .nanoseconds(totalNs / Int64(rhs))
-    }
-
-    /// Multiplies a duration by an integer
-    static func * (lhs: Duration, rhs: Int) -> Duration {
-        let (seconds, attoseconds) = lhs.components
-        let totalNs = seconds * 1_000_000_000 + attoseconds / 1_000_000_000
-        return .nanoseconds(totalNs * Int64(rhs))
-    }
-
-    /// Absolute value of a duration
-    static func abs(_ duration: Duration) -> Duration {
-        let (seconds, attoseconds) = duration.components
-        let totalNs = seconds * 1_000_000_000 + attoseconds / 1_000_000_000
-        if totalNs < 0 {
-            return .nanoseconds(-totalNs)
-        }
-        return duration
-    }
-}

@@ -14,7 +14,7 @@ import Synchronization
 import QUICCore
 
 /// Loss detection for a single packet number space (RFC 9002)
-public final class LossDetector: Sendable {
+package final class LossDetector: Sendable {
     private let state: Mutex<LossState>
 
     private struct LossState {
@@ -51,7 +51,7 @@ public final class LossDetector: Sendable {
     }
 
     /// Creates a new LossDetector
-    public init() {
+    package init() {
         self.state = Mutex(LossState())
     }
 
@@ -61,7 +61,7 @@ public final class LossDetector: Sendable {
     /// ## Performance
     /// - Fast path (in-order): O(1) append
     /// - Slow path (out-of-order): O(n) insert (rare in practice)
-    public func onPacketSent(_ packet: SentPacket) {
+    package func onPacketSent(_ packet: SentPacket) {
         state.withLock { state in
             let pn = packet.packetNumber
 
@@ -103,7 +103,7 @@ public final class LossDetector: Sendable {
     /// - largestAckedPacket is only updated after successful ACK processing
     /// - RTT sample is taken from the largest newly acknowledged ack-eliciting packet
     /// - isFirstAckElicitingAck is set only when an ack-eliciting packet is actually acknowledged
-    public func onAckReceived(
+    package func onAckReceived(
         ackFrame: AckFrame,
         ackReceivedTime: ContinuousClock.Instant,
         rttEstimator: RTTEstimator
@@ -427,7 +427,7 @@ public final class LossDetector: Sendable {
     ///   - now: Current time
     ///   - rttEstimator: The RTT estimator
     /// - Returns: Packets detected as lost
-    public func detectLostPackets(
+    package func detectLostPackets(
         now: ContinuousClock.Instant,
         rttEstimator: RTTEstimator
     ) -> [SentPacket] {
@@ -437,12 +437,12 @@ public final class LossDetector: Sendable {
     }
 
     /// Gets the earliest loss time for timer scheduling
-    public func earliestLossTime() -> ContinuousClock.Instant? {
+    package func earliestLossTime() -> ContinuousClock.Instant? {
         state.withLock { $0.lossTime }
     }
 
     /// Gets packets that need retransmission (ack-eliciting packets still in flight)
-    public func getRetransmittablePackets() -> [SentPacket] {
+    package func getRetransmittablePackets() -> [SentPacket] {
         state.withLock { state in
             // Use lazy filter to avoid intermediate array allocation,
             // then collect only matching packets
@@ -456,22 +456,22 @@ public final class LossDetector: Sendable {
     }
 
     /// Gets the current bytes in flight
-    public var bytesInFlight: Int {
+    package var bytesInFlight: Int {
         state.withLock { $0.bytesInFlight }
     }
 
     /// Gets the count of ack-eliciting packets in flight
-    public var ackElicitingInFlight: Int {
+    package var ackElicitingInFlight: Int {
         state.withLock { $0.ackElicitingInFlight }
     }
 
     /// Gets the largest acknowledged packet number
-    public var largestAckedPacket: UInt64? {
+    package var largestAckedPacket: UInt64? {
         state.withLock { $0.largestAckedPacket }
     }
 
     /// Gets the smallest unacked packet number
-    public var smallestUnacked: UInt64? {
+    package var smallestUnacked: UInt64? {
         state.withLock { $0.smallestUnacked }
     }
 
@@ -482,7 +482,7 @@ public final class LossDetector: Sendable {
     ///
     /// - Parameter count: Maximum number of packets to return (typically 2)
     /// - Returns: Oldest unacked ack-eliciting packets, sorted by packet number
-    public func getOldestUnackedPackets(count: Int) -> [SentPacket] {
+    package func getOldestUnackedPackets(count: Int) -> [SentPacket] {
         state.withLock { state in
             // sentPackets is already sorted by packet number
             // Just iterate from the beginning and take first `count` ack-eliciting packets
@@ -503,7 +503,7 @@ public final class LossDetector: Sendable {
     }
 
     /// Clears state (called when encryption level is discarded)
-    public func clear() {
+    package func clear() {
         state.withLock { state in
             state.sentPackets.removeAll(keepingCapacity: true)
             state.largestAckedPacket = nil

@@ -24,12 +24,14 @@ public struct Varint: Hashable, Sendable {
     /// Creates a Varint from a UInt64 value
     /// - Parameter value: The value (must be <= 2^62 - 1)
     /// - Precondition: value must be representable in 62 bits
+    @inlinable
     public init(_ value: UInt64) {
         precondition(value <= Self.maxValue, "Varint value exceeds maximum (2^62 - 1)")
         self.value = value
     }
 
     /// Creates a Varint from any BinaryInteger
+    @inlinable
     public init<T: BinaryInteger>(_ value: T) {
         self.init(UInt64(value))
     }
@@ -153,18 +155,6 @@ extension Varint {
 
             return (Varint(value), length)
         }
-    }
-
-    /// Decodes a varint from a DataReader, advancing the reader position
-    ///
-    /// - Note: This method is deprecated. Use `DataReader.readVarint()` or
-    ///   `DataReader.readVarintValue()` instead for better performance.
-    ///   Those methods avoid creating intermediate Data slices.
-    @available(*, deprecated, message: "Use DataReader.readVarint() or readVarintValue() for better performance")
-    @inlinable
-    public static func decode(from reader: inout DataReader) throws -> Varint {
-        // Forward to the optimized path
-        return try reader.readVarint()
     }
 
     /// Returns the encoded length for the first varint in the data without fully decoding
