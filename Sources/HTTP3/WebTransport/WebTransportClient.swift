@@ -56,9 +56,9 @@
 /// - [RFC 9297: HTTP Datagrams and the Capsule Protocol](https://www.rfc-editor.org/rfc/rfc9297.html)
 
 import Foundation
+import Logging
 import QUIC
 import QUICCore
-import Logging
 
 // MARK: - WebTransport Client
 
@@ -291,7 +291,8 @@ public actor WebTransportClient {
                 )
             }
             if !peer.enableH3Datagram {
-                Self.logger.warning("Peer has not enabled SETTINGS_H3_DATAGRAM — datagrams may not work")
+                Self.logger.warning(
+                    "Peer has not enabled SETTINGS_H3_DATAGRAM — datagrams may not work")
             }
             if let maxSessions = peer.webtransportMaxSessions, maxSessions == 0 {
                 throw WebTransportError.maxSessionsExceeded(limit: 0)
@@ -521,5 +522,223 @@ public actor WebTransportClient {
         parts.append("activeSessions=\(activeSessions.count)")
         parts.append("totalSessions=\(totalSessionsCreated)")
         return "WebTransportClient(\(parts.joined(separator: ", ")))"
+    }
+}
+
+// MARK: - Convenience API (Three-Tier)
+
+extension WebTransportClient {
+
+    // MARK: - Tier 1: Simple (Web API style)
+
+    /// Establishes a WebTransport session from a URL in a single call.
+    ///
+    /// This is the simplest way to connect. Internally creates a QUIC endpoint,
+    /// dials the server, initializes HTTP/3, sends Extended CONNECT, and returns
+    /// a ready-to-use session.
+    ///
+    /// ## Usage
+    ///
+    /// ```swift
+    /// let config = WebTransportConfiguration(quic: .testing())
+    /// let session = try await WebTransportClient.connect(
+    ///     url: "https://example.com:4433/wt",
+    ///     configuration: config
+    /// )
+    ///
+    /// let stream = try await session.openBidirectionalStream()
+    /// try await stream.write(Data("Hello!".utf8))
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - url: The WebTransport URL (e.g. `"https://example.com:4433/wt"`)
+    ///   - configuration: WebTransport configuration (QUIC + WT options)
+    /// - Returns: An established `WebTransportSession`
+    /// - Throws: `WebTransportError` if the URL is invalid, connection fails,
+    ///   or the server rejects the session
+    public static func connect(
+        url: String,
+        configuration: WebTransportConfiguration
+    ) async throws -> WebTransportSession {
+        // Parse URL
+        guard let components = URLComponents(string: url) else {
+            throw WebTransportError.internalError(
+                "Invalid URL: \(url)",
+                underlying: nil
+            )
+        }
+
+        let host = components.host ?? "localhost"
+        let port = components.port.map { UInt16($0) } ?? 443
+        let scheme = components.scheme ?? "https"
+        let path = components.path.isEmpty ? "/" : components.path
+
+        let authority: String
+        if let explicitPort = components.port {
+            authority = "\(host):\(explicitPort)"
+        } else {
+            authority = host
+        }
+
+        // Create QUIC endpoint and dial
+        let endpoint = QUICEndpoint(configuration: configuration.quic)
+        let address = SocketAddress(ipAddress: host, port: port)
+        let quicConnection = try await endpoint.dial(address: address)
+
+        // Delegate to the shared implementation
+        return try await connect(
+            scheme: scheme,
+            authority: authority,
+            path: path,
+            over: quicConnection,
+            configuration: configuration
+        )
+    }
+
+    // MARK: - Tier 2: Configurable (bring your own QUIC connection)
+
+    /// Establishes a WebTransport session over an existing QUIC connection.
+    ///
+    /// HTTP/3 initialization and Extended CONNECT are handled automatically.
+    /// Use this when you manage your own QUIC endpoint (e.g. for connection
+    /// pooling or custom TLS configuration).
+    ///
+    /// ## Usage
+    ///
+    /// ```swift
+    /// let quicConn = try await endpoint.dial(address: serverAddress)
+    ///
+    /// let session = try await WebTransportClient.connect(
+    ///     authority: "example.com:4433",
+    ///     path: "/wt",
+    ///     over: quicConn
+    /// )
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - authority: The authority (host:port) for the `:authority` pseudo-header
+    ///   - path: The path for the WebTransport endpoint (default: `"/"`)
+    ///   - quicConnection: An established QUIC connection
+    ///   - configuration: WebTransport options (default: sensible defaults with a dummy QUIC config — `.quic` is ignored since you provide the connection)
+    /// - Returns: An established `WebTransportSession`
+    /// - Throws: `WebTransportError` if HTTP/3 init or session establishment fails
+    public static func connect(
+        authority: String,
+        path: String = "/",
+        over quicConnection: any QUICConnectionProtocol,
+        configuration: WebTransportConfiguration? = nil
+    ) async throws -> WebTransportSession {
+        // Use provided config or defaults (QUIC config is unused in Tier 2)
+        let config = configuration ?? WebTransportConfiguration(quic: QUICConfiguration())
+        return try await connect(
+            scheme: "https",
+            authority: authority,
+            path: path,
+            over: quicConnection,
+            configuration: config
+        )
+    }
+
+    // MARK: - Internal shared implementation
+
+    /// Shared implementation for Tier 1 and Tier 2 connect.
+    ///
+    /// Goes directly to `HTTP3Connection` — no intermediate `WebTransportClient`
+    /// actor is created. The call chain is:
+    ///
+    /// 1. `HTTP3Connection.initialize()` — opens control + QPACK streams, sends SETTINGS
+    /// 2. `HTTP3Connection.waitForReady()` — waits for peer SETTINGS
+    /// 3. `HTTP3Connection.sendExtendedConnect()` — sends CONNECT, reads response
+    /// 4. `HTTP3Connection.createClientWebTransportSession()` — creates session
+    private static func connect(
+        scheme: String,
+        authority: String,
+        path: String,
+        over quicConnection: any QUICConnectionProtocol,
+        configuration: WebTransportConfiguration
+    ) async throws -> WebTransportSession {
+        // Build HTTP/3 settings with WebTransport requirements
+        var settings = configuration.http3Settings
+        settings.enableConnectProtocol = true
+        settings.enableH3Datagram = true
+        settings.webtransportMaxSessions = configuration.maxSessions
+
+        // Create and initialize the HTTP/3 connection directly
+        let h3 = HTTP3Connection(
+            quicConnection: quicConnection,
+            role: .client,
+            settings: settings
+        )
+
+        do {
+            try await h3.initialize()
+        } catch {
+            throw WebTransportError.http3Error(
+                "Failed to initialize HTTP/3 connection",
+                underlying: error
+            )
+        }
+
+        // Wait for SETTINGS exchange
+        do {
+            try await h3.waitForReady(timeout: configuration.connectionReadyTimeout)
+        } catch {
+            // Some implementations send SETTINGS lazily — proceed anyway
+            logger.warning("waitForReady timed out, proceeding anyway: \(error)")
+        }
+
+        // Verify peer supports WebTransport
+        let peerSettings = await h3.peerSettings
+        if let peer = peerSettings {
+            if !peer.enableConnectProtocol {
+                throw WebTransportError.peerDoesNotSupportWebTransport(
+                    "Peer has not enabled SETTINGS_ENABLE_CONNECT_PROTOCOL"
+                )
+            }
+            if !peer.enableH3Datagram {
+                logger.warning("Peer has not enabled SETTINGS_H3_DATAGRAM — datagrams may not work")
+            }
+            if let maxSessions = peer.webtransportMaxSessions, maxSessions == 0 {
+                throw WebTransportError.maxSessionsExceeded(limit: 0)
+            }
+        }
+
+        // Build and send Extended CONNECT
+        let request = HTTP3Request.webTransportConnect(
+            scheme: scheme,
+            authority: authority,
+            path: path,
+            headers: configuration.headers
+        )
+
+        let (response, connectStream): (HTTP3ResponseHead, any QUICStreamProtocol)
+        do {
+            (response, connectStream) = try await h3.sendExtendedConnect(request)
+        } catch {
+            throw WebTransportError.http3Error(
+                "Extended CONNECT failed",
+                underlying: error
+            )
+        }
+
+        guard response.isSuccess else {
+            throw WebTransportError.sessionRejected(
+                status: response.status,
+                reason: response.statusText
+            )
+        }
+
+        // Create the session directly on the HTTP/3 connection
+        do {
+            return try await h3.createClientWebTransportSession(
+                connectStream: connectStream,
+                response: response
+            )
+        } catch {
+            throw WebTransportError.internalError(
+                "Failed to create WebTransport session",
+                underlying: error
+            )
+        }
     }
 }

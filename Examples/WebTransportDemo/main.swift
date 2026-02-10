@@ -77,14 +77,14 @@
 // =============================================================================
 
 import Foundation
+import HTTP3
 import Logging
+import NIOUDPTransport
+import QPACK
 import QUIC
 import QUICCore
 import QUICCrypto
 import QUICTransport
-import NIOUDPTransport
-import HTTP3
-import QPACK
 
 // MARK: - Configuration
 
@@ -116,9 +116,9 @@ struct DemoArguments {
     let logLevel: Logger.Level
 
     // TLS options
-    let certPath: String?   // Server: PEM certificate path
-    let keyPath: String?    // Server: PEM private key path
-    let caCertPath: String? // Client: PEM CA certificate path
+    let certPath: String?  // Server: PEM certificate path
+    let keyPath: String?  // Server: PEM private key path
+    let caCertPath: String?  // Client: PEM CA certificate path
 
     // Demo options
     let skipDatagrams: Bool
@@ -381,10 +381,14 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     } else {
         log("Server", "  TLS:           Development (self-signed, real TLS 1.3 encryption)")
         if certPath != nil && keyPath == nil {
-            log("Server", "  Warning: --cert provided without --key, falling back to development mode")
+            log(
+                "Server",
+                "  Warning: --cert provided without --key, falling back to development mode")
         }
         if certPath == nil && keyPath != nil {
-            log("Server", "  Warning: --key provided without --cert, falling back to development mode")
+            log(
+                "Server",
+                "  Warning: --key provided without --cert, falling back to development mode")
         }
     }
     log("Server", "")
@@ -401,9 +405,11 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     //   - WebTransportSession creation and lifecycle
     //
     let server = WebTransportServer(
-        configuration: WebTransportServer.Configuration(
-            maxSessionsPerConnection: 4,
-            maxConnections: 0,  // unlimited
+        configuration: WebTransportConfiguration(
+            quic: quicConfig,
+            maxSessions: 4
+        ),
+        serverOptions: WebTransportServer.ServerOptions(
             allowedPaths: [echoPath]
         )
     )
@@ -411,22 +417,22 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     // Optionally serve regular HTTP/3 requests alongside WebTransport
     await server.onRequest { context in
         let body = """
-        <!DOCTYPE html>
-        <html>
-        <head><title>WebTransport Echo Server</title></head>
-        <body>
-            <h1>WebTransport Echo Server</h1>
-            <p>This server accepts WebTransport sessions at path <code>\(echoPath)</code>.</p>
-            <p>Use the Quiver WebTransport client or a browser with WebTransport support.</p>
-            <h2>Endpoints</h2>
-            <ul>
-                <li><strong>Bidi stream echo</strong>: Open a bidirectional stream, send data, receive echo</li>
-                <li><strong>Uni stream echo</strong>: Open a unidirectional stream, send data; server responds on a new uni stream</li>
-                <li><strong>Datagram echo</strong>: Send a datagram, receive echo datagram</li>
-            </ul>
-        </body>
-        </html>
-        """
+            <!DOCTYPE html>
+            <html>
+            <head><title>WebTransport Echo Server</title></head>
+            <body>
+                <h1>WebTransport Echo Server</h1>
+                <p>This server accepts WebTransport sessions at path <code>\(echoPath)</code>.</p>
+                <p>Use the Quiver WebTransport client or a browser with WebTransport support.</p>
+                <h2>Endpoints</h2>
+                <ul>
+                    <li><strong>Bidi stream echo</strong>: Open a bidirectional stream, send data, receive echo</li>
+                    <li><strong>Uni stream echo</strong>: Open a unidirectional stream, send data; server responds on a new uni stream</li>
+                    <li><strong>Datagram echo</strong>: Send a datagram, receive echo datagram</li>
+                </ul>
+            </body>
+            </html>
+            """
         try await context.respond(
             status: 200,
             headers: [("content-type", "text/html; charset=utf-8")],
@@ -469,7 +475,9 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     log("Server", "Press Ctrl+C to stop")
     log("Server", "")
     log("Server", "Waiting for WebTransport sessions...")
-    log("Server", "  (Connect with: swift run WebTransportDemo client --host \(host) --port \(port))")
+    log(
+        "Server",
+        "  (Connect with: swift run WebTransportDemo client --host \(host) --port \(port))")
     log("Server", "")
 
     // Step 4: Start listening
@@ -485,8 +493,7 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     do {
         try await server.listen(
             host: host,
-            port: port,
-            quicConfiguration: quicConfig
+            port: port
         )
     } catch {
         log("Server", "Server error: \(error)")
@@ -575,7 +582,10 @@ func handleServerSession(_ session: WebTransportSession, sessionNum: UInt64) asy
                 datagramCount += 1
 
                 if let text = String(data: datagram, encoding: .utf8) {
-                    log(tag, "Datagram #\(datagramCount) received: \"\(text)\" (\(datagram.count) bytes)")
+                    log(
+                        tag,
+                        "Datagram #\(datagramCount) received: \"\(text)\" (\(datagram.count) bytes)"
+                    )
                 } else {
                     log(tag, "Datagram #\(datagramCount) received: \(datagram.count) bytes")
                 }
@@ -636,7 +646,9 @@ func handleBidiEcho(
 
         // Close our write side to signal we're done
         try await stream.closeWrite()
-        log(tag, "Bidi #\(streamNum): closed (total: \(messageCount) messages, \(totalBytes) bytes)")
+        log(
+            tag, "Bidi #\(streamNum): closed (total: \(messageCount) messages, \(totalBytes) bytes)"
+        )
     } catch {
         log(tag, "Bidi #\(streamNum): error: \(error)")
     }
@@ -928,7 +940,9 @@ func testBidiStreamEcho(session: WebTransportSession) async throws {
 
         let echo = try await stream.read()
         if let echoText = String(data: echo, encoding: .utf8) {
-            log("Client", "[\(num)/\(messages.count)] Received: \"\(echoText)\" (\(echo.count) bytes)")
+            log(
+                "Client",
+                "[\(num)/\(messages.count)] Received: \"\(echoText)\" (\(echo.count) bytes)")
         } else {
             log("Client", "[\(num)/\(messages.count)] Received: \(echo.count) bytes")
         }
@@ -937,7 +951,10 @@ func testBidiStreamEcho(session: WebTransportSession) async throws {
         if echo == data {
             log("Client", "[\(num)/\(messages.count)] ✓ Match")
         } else {
-            log("Client", "[\(num)/\(messages.count)] ✗ Mismatch! Expected \(data.count) bytes, got \(echo.count)")
+            log(
+                "Client",
+                "[\(num)/\(messages.count)] ✗ Mismatch! Expected \(data.count) bytes, got \(echo.count)"
+            )
         }
     }
 
@@ -1079,7 +1096,9 @@ func testDatagramEcho(session: WebTransportSession) async throws {
         let data = Data(message.utf8)
         let num = index + 1
 
-        log("Client", "[\(num)/\(messages.count)] Sending datagram: \"\(message)\" (\(data.count) bytes)")
+        log(
+            "Client",
+            "[\(num)/\(messages.count)] Sending datagram: \"\(message)\" (\(data.count) bytes)")
         do {
             try await session.sendDatagram(data)
         } catch {
@@ -1123,7 +1142,9 @@ func testDatagramEcho(session: WebTransportSession) async throws {
     if received > 0 {
         log("Client", "✓ At least some datagrams were echoed (\(received)/\(sent))")
     } else {
-        log("Client", "⚠ No datagrams were echoed (datagrams are unreliable, or H3_DATAGRAM not negotiated)")
+        log(
+            "Client",
+            "⚠ No datagrams were echoed (datagrams are unreliable, or H3_DATAGRAM not negotiated)")
     }
 }
 
@@ -1149,131 +1170,132 @@ enum DemoError: Error, CustomStringConvertible {
 // MARK: - Help
 
 func printHelp() {
-    print("""
+    print(
+        """
 
-    WebTransport Echo Demo
-    ======================
+        WebTransport Echo Demo
+        ======================
 
-    A demo that showcases WebTransport over HTTP/3 + QUIC with three
-    echo mechanisms: bidirectional streams, unidirectional streams,
-    and datagrams.
+        A demo that showcases WebTransport over HTTP/3 + QUIC with three
+        echo mechanisms: bidirectional streams, unidirectional streams,
+        and datagrams.
 
-    USAGE:
-        swift run WebTransportDemo <mode> [options]
+        USAGE:
+            swift run WebTransportDemo <mode> [options]
 
-    MODES:
-        server      Start the WebTransport echo server
-        client      Connect to the server and run echo tests
-        help        Show this help message
+        MODES:
+            server      Start the WebTransport echo server
+            client      Connect to the server and run echo tests
+            help        Show this help message
 
-    OPTIONS:
-        --host <address>        Host address (default: \(defaultHost))
-        --port, -p <port>       Port number (default: \(defaultPort))
-        --log-level, -l <level> Log verbosity (default: info)
-                                Levels: trace, debug, info, notice, warning, error, critical
+        OPTIONS:
+            --host <address>        Host address (default: \(defaultHost))
+            --port, -p <port>       Port number (default: \(defaultPort))
+            --log-level, -l <level> Log verbosity (default: info)
+                                    Levels: trace, debug, info, notice, warning, error, critical
 
-    SERVER OPTIONS:
-        --cert <path>           Path to PEM certificate file
-        --key <path>            Path to PEM private key file
+        SERVER OPTIONS:
+            --cert <path>           Path to PEM certificate file
+            --key <path>            Path to PEM private key file
 
-        When both --cert and --key are provided, the server runs in
-        production mode with the specified certificate. Otherwise, it
-        generates a self-signed P-256 key pair for development.
+            When both --cert and --key are provided, the server runs in
+            production mode with the specified certificate. Otherwise, it
+            generates a self-signed P-256 key pair for development.
 
-    CLIENT OPTIONS:
-        --ca-cert <path>        Path to PEM CA certificate file
-        --skip-datagrams        Skip the datagram echo test
+        CLIENT OPTIONS:
+            --ca-cert <path>        Path to PEM CA certificate file
+            --skip-datagrams        Skip the datagram echo test
 
-        When --ca-cert is provided, the client verifies the server's
-        certificate against the trusted CA (production mode). Otherwise,
-        it accepts self-signed certificates (development mode).
+            When --ca-cert is provided, the client verifies the server's
+            certificate against the trusted CA (production mode). Otherwise,
+            it accepts self-signed certificates (development mode).
 
-    EXAMPLES:
-        # Development mode (self-signed, real TLS encryption)
-        swift run WebTransportDemo server
-        swift run WebTransportDemo client
+        EXAMPLES:
+            # Development mode (self-signed, real TLS encryption)
+            swift run WebTransportDemo server
+            swift run WebTransportDemo client
 
-        # Production mode (with real certificates)
-        swift run WebTransportDemo server --cert server.pem --key server-key.pem
-        swift run WebTransportDemo client --ca-cert ca.pem
+            # Production mode (with real certificates)
+            swift run WebTransportDemo server --cert server.pem --key server-key.pem
+            swift run WebTransportDemo client --ca-cert ca.pem
 
-        # Custom host/port
-        swift run WebTransportDemo server --host 0.0.0.0 --port 5555
-        swift run WebTransportDemo client --host 192.168.1.10 --port 5555
+            # Custom host/port
+            swift run WebTransportDemo server --host 0.0.0.0 --port 5555
+            swift run WebTransportDemo client --host 192.168.1.10 --port 5555
 
-        # Verbose logging
-        swift run WebTransportDemo server --log-level debug
-        swift run WebTransportDemo client --log-level trace
+            # Verbose logging
+            swift run WebTransportDemo server --log-level debug
+            swift run WebTransportDemo client --log-level trace
 
-        # Skip datagram test (if not supported)
-        swift run WebTransportDemo client --skip-datagrams
+            # Skip datagram test (if not supported)
+            swift run WebTransportDemo client --skip-datagrams
 
-    ECHO MECHANISMS:
+        ECHO MECHANISMS:
 
-        1. Bidirectional Stream Echo
-           Client opens a bidi stream, sends messages, reads echoes.
-           Both sides can read and write on the same stream.
+            1. Bidirectional Stream Echo
+               Client opens a bidi stream, sends messages, reads echoes.
+               Both sides can read and write on the same stream.
 
-           Client                          Server
-             |── open bidi stream ──────────►|
-             |── "Hello, WebTransport!" ────►|
-             |◄── "Hello, WebTransport!" ────|
-             |── closeWrite (FIN) ──────────►|
-             |◄── closeWrite (FIN) ──────────|
+               Client                          Server
+                 |── open bidi stream ──────────►|
+                 |── "Hello, WebTransport!" ────►|
+                 |◄── "Hello, WebTransport!" ────|
+                 |── closeWrite (FIN) ──────────►|
+                 |◄── closeWrite (FIN) ──────────|
 
-        2. Unidirectional Stream Echo
-           Client opens a uni stream (client→server), sends data, closes it.
-           Server reads all data, then opens a new uni stream (server→client)
-           and writes the echo.
+            2. Unidirectional Stream Echo
+               Client opens a uni stream (client→server), sends data, closes it.
+               Server reads all data, then opens a new uni stream (server→client)
+               and writes the echo.
 
-           Client                          Server
-             |── open uni stream ───────────►|
-             |── "Hello, uni!" ─────────────►|
-             |── closeWrite (FIN) ──────────►|
-             |                               |── reads all data
-             |◄──────── open uni stream ─────|
-             |◄──────── "Hello, uni!" ───────|
-             |◄──────── closeWrite (FIN) ────|
+               Client                          Server
+                 |── open uni stream ───────────►|
+                 |── "Hello, uni!" ─────────────►|
+                 |── closeWrite (FIN) ──────────►|
+                 |                               |── reads all data
+                 |◄──────── open uni stream ─────|
+                 |◄──────── "Hello, uni!" ───────|
+                 |◄──────── closeWrite (FIN) ────|
 
-        3. Datagram Echo
-           Client sends QUIC datagrams, server echoes them back.
-           Datagrams are unreliable and unordered — some may be lost.
+            3. Datagram Echo
+               Client sends QUIC datagrams, server echoes them back.
+               Datagrams are unreliable and unordered — some may be lost.
 
-           Client                          Server
-             |── datagram "ping" ───────────►|
-             |◄── datagram "ping" ───────────|
-             |── datagram "pong" ───────────►|
-             |◄── datagram "pong" ───────────|
+               Client                          Server
+                 |── datagram "ping" ───────────►|
+                 |◄── datagram "ping" ───────────|
+                 |── datagram "pong" ───────────►|
+                 |◄── datagram "pong" ───────────|
 
-    WEBTRANSPORT ARCHITECTURE:
+        WEBTRANSPORT ARCHITECTURE:
 
-        ┌──────────────────────────────────────────────────────┐
-        │  WebTransport Session                                │
-        │  (Established via Extended CONNECT on HTTP/3)        │
-        │                                                      │
-        │  ┌──────────────────┐  ┌──────────────────┐         │
-        │  │ Bidi Streams     │  │ Uni Streams       │         │
-        │  │ (both directions)│  │ (one direction)   │         │
-        │  └──────────────────┘  └──────────────────┘         │
-        │  ┌──────────────────┐                                │
-        │  │ Datagrams        │                                │
-        │  │ (unreliable)     │                                │
-        │  └──────────────────┘                                │
-        ├──────────────────────────────────────────────────────┤
-        │  HTTP/3 (RFC 9114)                                   │
-        │  • SETTINGS with WebTransport extensions             │
-        │  • Extended CONNECT (RFC 9220)                       │
-        │  • H3_DATAGRAM, ENABLE_CONNECT_PROTOCOL              │
-        ├──────────────────────────────────────────────────────┤
-        │  QUIC (RFC 9000)                                     │
-        │  • Multiplexed streams, flow control                 │
-        │  • TLS 1.3 encryption                                │
-        │  • Connection migration, 0-RTT                       │
-        ├──────────────────────────────────────────────────────┤
-        │  UDP Transport (swift-nio-udp)                       │
-        └──────────────────────────────────────────────────────┘
+            ┌──────────────────────────────────────────────────────┐
+            │  WebTransport Session                                │
+            │  (Established via Extended CONNECT on HTTP/3)        │
+            │                                                      │
+            │  ┌──────────────────┐  ┌──────────────────┐         │
+            │  │ Bidi Streams     │  │ Uni Streams       │         │
+            │  │ (both directions)│  │ (one direction)   │         │
+            │  └──────────────────┘  └──────────────────┘         │
+            │  ┌──────────────────┐                                │
+            │  │ Datagrams        │                                │
+            │  │ (unreliable)     │                                │
+            │  └──────────────────┘                                │
+            ├──────────────────────────────────────────────────────┤
+            │  HTTP/3 (RFC 9114)                                   │
+            │  • SETTINGS with WebTransport extensions             │
+            │  • Extended CONNECT (RFC 9220)                       │
+            │  • H3_DATAGRAM, ENABLE_CONNECT_PROTOCOL              │
+            ├──────────────────────────────────────────────────────┤
+            │  QUIC (RFC 9000)                                     │
+            │  • Multiplexed streams, flow control                 │
+            │  • TLS 1.3 encryption                                │
+            │  • Connection migration, 0-RTT                       │
+            ├──────────────────────────────────────────────────────┤
+            │  UDP Transport (swift-nio-udp)                       │
+            └──────────────────────────────────────────────────────┘
 
-    """)
+        """)
 }
 
 // MARK: - Entry Point
