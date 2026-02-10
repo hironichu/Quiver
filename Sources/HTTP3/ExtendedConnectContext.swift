@@ -52,7 +52,7 @@ public struct ExtendedConnectContext: Sendable {
     public let connection: HTTP3Connection
 
     /// Internal closure to send headers on the stream
-    internal let _sendResponse: @Sendable (HTTP3Response) async throws -> Void
+    internal let _sendResponse: @Sendable (consuming HTTP3ResponseHead) async throws -> Void
 
     /// Creates an Extended CONNECT context.
     ///
@@ -67,7 +67,7 @@ public struct ExtendedConnectContext: Sendable {
         streamID: UInt64,
         stream: any QUICStreamProtocol,
         connection: HTTP3Connection,
-        sendResponse: @escaping @Sendable (HTTP3Response) async throws -> Void
+        sendResponse: @escaping @Sendable (HTTP3ResponseHead) async throws -> Void
     ) {
         self.request = request
         self.streamID = streamID
@@ -84,13 +84,12 @@ public struct ExtendedConnectContext: Sendable {
     /// - Parameter headers: Additional response headers (default: empty)
     /// - Throws: If sending the response fails
     public func accept(headers: [(String, String)] = []) async throws {
-        let response = HTTP3Response(
+        let response = HTTP3ResponseHead(
             status: 200,
             headers: headers
         )
         try await _sendResponse(response)
     }
-
     /// Rejects the Extended CONNECT request with an error status.
     ///
     /// After rejection, the CONNECT stream is closed.
@@ -102,16 +101,13 @@ public struct ExtendedConnectContext: Sendable {
     /// - Throws: If sending the response fails
     public func reject(
         status: Int,
-        headers: [(String, String)] = [],
-        body: Data = Data()
+        headers: [(String, String)] = []
     ) async throws {
-        let response = HTTP3Response(
+        let response = HTTP3ResponseHead(
             status: status,
-            headers: headers,
-            body: body
+            headers: headers
         )
         try await _sendResponse(response)
-        // Close the stream after rejection
         try await stream.closeWrite()
     }
 }

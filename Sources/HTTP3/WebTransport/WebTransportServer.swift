@@ -292,7 +292,7 @@ public actor WebTransportServer {
                 try await context.reject(
                     status: 501,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Only WebTransport is supported".utf8)
+                    // body: Data("Only WebTransport is supported".utf8)
                 )
                 return
             }
@@ -303,7 +303,7 @@ public actor WebTransportServer {
                     try await context.reject(
                         status: 404,
                         headers: [("content-type", "text/plain")],
-                        body: Data("WebTransport path not found".utf8)
+                        // body: Data("WebTransport path not found".utf8)
                     )
                     return
                 }
@@ -324,7 +324,7 @@ public actor WebTransportServer {
                 try await context.reject(
                     status: 429,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Too many WebTransport sessions".utf8)
+                    // body: Data("Too many WebTransport sessions".utf8)
                 )
                 return
             }
@@ -445,7 +445,7 @@ public actor WebTransportServer {
                     try? await context.reject(
                         status: 429,
                         headers: [("content-type", "text/plain")],
-                        body: Data("Too many WebTransport sessions".utf8)
+                        // body: Data("Too many WebTransport sessions".utf8)
                     )
                     continue
                 }

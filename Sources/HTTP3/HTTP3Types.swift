@@ -532,18 +532,15 @@ extension HTTP3Request: CustomStringConvertible {
 ///     body: Data("Hello, World!".utf8)
 /// )
 /// ```
-public struct HTTP3Response: Sendable {
+public struct HTTP3Response:  ~Copyable, Sendable {
     /// The HTTP status code (e.g., 200, 404, 500)
     public var status: Int
 
     /// Response header fields as (name, value) pairs.
     /// Names should be lowercase per HTTP/3 convention.
     public var headers: [(String, String)]
-
-    /// Internal stream backing the response body.
-    /// Copyable + Sendable — no ~Copyable containment issue.
-    internal var _bodyStream: AsyncStream<Data>
-
+    /// Body stored directly. ~Copyable propagates to HTTP3Response.
+    private let _body: HTTP3Body
     /// Optional pre-buffered data for server send paths that need
     /// synchronous access (e.g. `sendResponseHeadersOnly`).
     internal var _bufferedData: Data?
@@ -560,8 +557,10 @@ public struct HTTP3Response: Sendable {
     /// Each access creates a new `HTTP3Body` wrapping the underlying
     /// `AsyncStream<Data>`. The stream is destructive — consume it
     /// exactly once via `.data()`, `.text()`, `.json()`, or `.stream()`.
-    public var body: HTTP3Body {
-        HTTP3Body(stream: _bodyStream)
+    /// Consuming accessor -- takes ownership of self.
+    /// Read status/headers BEFORE calling this.
+    public consuming func body() -> HTTP3Body {
+        return _body
     }
 
     /// Creates an HTTP/3 response backed by a live `AsyncStream<Data>`.
@@ -581,8 +580,8 @@ public struct HTTP3Response: Sendable {
     ) {
         self.status = status
         self.headers = headers
-        self._bodyStream = bodyStream
         self._bufferedData = nil
+        self._body = HTTP3Body(stream: bodyStream)
         self.trailers = trailers
     }
 
@@ -605,15 +604,7 @@ public struct HTTP3Response: Sendable {
         self.status = status
         self.headers = headers
         self._bufferedData = body
-        if body.isEmpty {
-            self._bodyStream = AsyncStream<Data> { $0.finish() }
-        } else {
-            let captured = body
-            self._bodyStream = AsyncStream<Data> { continuation in
-                continuation.yield(captured)
-                continuation.finish()
-            }
-        }
+        self._body = HTTP3Body(data: body)
         self.trailers = trailers
     }
 
@@ -759,7 +750,7 @@ public struct HTTP3Response: Sendable {
 
 // MARK: - CustomStringConvertible
 
-extension HTTP3Response: CustomStringConvertible {
+extension HTTP3Response {
     public var description: String {
         if let data = _bufferedData {
             return "\(status) \(statusText) (\(data.count) bytes)"
@@ -768,6 +759,64 @@ extension HTTP3Response: CustomStringConvertible {
     }
 }
 
+// MARK: - HTTP/3 Response Head (headers-only, no body)
+
+/// Lightweight, Copyable response carrying only status + headers.
+///
+/// Used exclusively on the Extended CONNECT handshake path where the
+/// response is always headers-only (no DATA frames, no body).
+/// Being `Copyable` and `Sendable`, it can live inside tuples —
+/// unlike `HTTP3Response` which is `~Copyable`.
+public struct HTTP3ResponseHead: Sendable {
+    public let status: Int
+    public let headers: [(String, String)]
+    public let trailers: [(String, String)]?
+
+    public init(
+        status: Int,
+        headers: [(String, String)] = [],
+        trailers: [(String, String)]? = nil
+    ) {
+        self.status = status
+        self.headers = headers
+        self.trailers = trailers
+    }
+
+    public var statusText: String {
+        // Delegate to a temporary HTTP3Response for the lookup
+        HTTP3Response(status: status).statusText
+    }
+
+    public var isSuccess: Bool { (200..<300).contains(status) }
+
+    public func toHeaderList() -> [(name: String, value: String)] {
+        var result: [(name: String, value: String)] = []
+        result.reserveCapacity(1 + headers.count)
+        result.append((":status", String(status)))
+        for header in headers { result.append(header) }
+        return result
+    }
+
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3ResponseHead {
+        var status: Int?
+        var regularHeaders: [(String, String)] = []
+        for (name, value) in headers {
+            switch name {
+            case ":status":
+                guard status == nil else { throw HTTP3TypeError.duplicatePseudoHeader(":status") }
+                guard let code = Int(value), (100...599).contains(code) else {
+                    throw HTTP3TypeError.invalidPseudoHeaderValue(name: ":status", value: value)
+                }
+                status = code
+            default:
+                if name.hasPrefix(":") { throw HTTP3TypeError.unknownPseudoHeader(name) }
+                regularHeaders.append((name, value))
+            }
+        }
+        guard let s = status else { throw HTTP3TypeError.missingPseudoHeader(":status") }
+        return HTTP3ResponseHead(status: s, headers: regularHeaders)
+    }
+}
 // MARK: - HTTP/3 Request Context
 
 /// Context for handling an incoming HTTP/3 request (server-side).

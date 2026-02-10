@@ -1222,7 +1222,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
 }
 
 /// Pretty-prints an HTTP/3 response
-func printResponse(_ response: HTTP3Response, label: String) async throws {
+func printResponse(_ response: consuming HTTP3Response, label: String) async throws {
     log("Client", "  Status: \(response.status) \(response.statusText)")
 
     // Print a few interesting headers
@@ -1231,7 +1231,7 @@ func printResponse(_ response: HTTP3Response, label: String) async throws {
     }
 
     // Print body (truncated if too long)
-    let bodyData = try await response.body.data()
+    let bodyData = try await response.body().data()
     if !bodyData.isEmpty {
         let bodyStr = String(data: bodyData, encoding: .utf8) ?? "<binary \(bodyData.count) bytes>"
         let truncated = bodyStr.count > 300 ? String(bodyStr.prefix(300)) + "... (\(bodyStr.count) chars total)" : bodyStr

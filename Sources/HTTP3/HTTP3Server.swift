@@ -521,7 +521,7 @@ public actor HTTP3Server {
                         try? await context.reject(
                             status: 500,
                             headers: [("content-type", "text/plain")],
-                            body: Data("Internal Server Error".utf8)
+                            // body: Data("Internal Server Error".utf8)
                         )
                     }
                 }
@@ -531,7 +531,7 @@ public actor HTTP3Server {
                     try? await context.reject(
                         status: 501,
                         headers: [("content-type", "text/plain")],
-                        body: Data("Extended CONNECT not supported".utf8)
+                        // body: Data("Extended CONNECT not supported".utf8)
                     )
                 }
             }
@@ -723,7 +723,7 @@ public actor HTTP3Server {
                 try await context.reject(
                     status: 501,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Only WebTransport is supported via Extended CONNECT".utf8)
+                    // body: Data("Only WebTransport is supported via Extended CONNECT".utf8)
                 )
                 return
             }
@@ -734,7 +734,7 @@ public actor HTTP3Server {
                     try await context.reject(
                         status: 404,
                         headers: [("content-type", "text/plain")],
-                        body: Data("WebTransport path not found".utf8)
+                        // body: Data("WebTransport path not found".utf8)
                     )
                     return
                 }
@@ -755,7 +755,7 @@ public actor HTTP3Server {
                 try await context.reject(
                     status: 429,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Too many WebTransport sessions".utf8)
+                    // body: Data("Too many WebTransport sessions".utf8)
                 )
                 return
             }

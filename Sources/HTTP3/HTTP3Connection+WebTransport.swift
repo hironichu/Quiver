@@ -160,7 +160,7 @@ extension HTTP3Connection {
     /// - Throws: `WebTransportError` if the response is not 200 or setup fails
     public func createClientWebTransportSession(
         connectStream: any QUICStreamProtocol,
-        response: HTTP3Response
+        response: borrowing HTTP3ResponseHead
     ) async throws -> WebTransportSession {
         guard response.isSuccess else {
             throw WebTransportError.sessionRejected(

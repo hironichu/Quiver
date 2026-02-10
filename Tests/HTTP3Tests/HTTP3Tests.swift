@@ -2481,6 +2481,453 @@ final class HTTP3ExtendedConnectTests: XCTestCase {
     }
 }
 
+// MARK: - HTTP/3 Body Tests
+
+final class HTTP3BodyTests: XCTestCase {
+
+    // MARK: - data() consumer
+
+    func testDataConsumerReturnsSingleChunk() async throws {
+        let payload = Data("hello world".utf8)
+        let body = HTTP3Body(data: payload)
+        let result = try await body.data()
+        XCTAssertEqual(result, payload)
+    }
+
+    func testDataConsumerReturnsMultipleChunks() async throws {
+        let chunks = [Data("chunk1".utf8), Data("chunk2".utf8), Data("chunk3".utf8)]
+        let stream = AsyncStream<Data> { continuation in
+            for chunk in chunks { continuation.yield(chunk) }
+            continuation.finish()
+        }
+        let body = HTTP3Body(stream: stream)
+        let result = try await body.data()
+        let expected = Data("chunk1chunk2chunk3".utf8)
+        XCTAssertEqual(result, expected)
+    }
+
+    func testDataConsumerEmptyBody() async throws {
+        let body = HTTP3Body(data: Data())
+        let result = try await body.data()
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testDataConsumerEmptyStream() async throws {
+        let stream = AsyncStream<Data> { $0.finish() }
+        let body = HTTP3Body(stream: stream)
+        let result = try await body.data()
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testDataConsumerLargePayload() async throws {
+        let size = 1_000_000
+        let payload = Data(repeating: 0xAB, count: size)
+        let body = HTTP3Body(data: payload)
+        let result = try await body.data()
+        XCTAssertEqual(result.count, size)
+        XCTAssertEqual(result, payload)
+    }
+
+    // MARK: - text() consumer
+
+    func testTextConsumerReturnsString() async throws {
+        let body = HTTP3Body(data: Data("hello".utf8))
+        let result = try await body.text()
+        XCTAssertEqual(result, "hello")
+    }
+
+    func testTextConsumerEmptyBody() async throws {
+        let body = HTTP3Body(data: Data())
+        let result = try await body.text()
+        XCTAssertEqual(result, "")
+    }
+
+    func testTextConsumerMultiChunkUTF8() async throws {
+        let stream = AsyncStream<Data> { continuation in
+            continuation.yield(Data("hel".utf8))
+            continuation.yield(Data("lo ".utf8))
+            continuation.yield(Data("world".utf8))
+            continuation.finish()
+        }
+        let body = HTTP3Body(stream: stream)
+        let result = try await body.text()
+        XCTAssertEqual(result, "hello world")
+    }
+
+    func testTextConsumerThrowsInvalidUTF8() async {
+        let invalidUTF8 = Data([0xC3, 0x28]) // invalid UTF-8 sequence
+        let body = HTTP3Body(data: invalidUTF8)
+        do {
+            _ = try await body.text()
+            XCTFail("Expected HTTP3BodyError.invalidUTF8")
+        } catch let error as HTTP3BodyError {
+            if case .invalidUTF8 = error {
+                // expected
+            } else {
+                XCTFail("Expected .invalidUTF8, got \(error)")
+            }
+        } catch {
+            XCTFail("Expected HTTP3BodyError.invalidUTF8, got \(type(of: error))")
+        }
+    }
+
+    // MARK: - json() consumer
+
+    func testJSONConsumerDecodesStruct() async throws {
+        let json = #"{"name":"quiver","version":3}"#
+        let body = HTTP3Body(data: Data(json.utf8))
+        let result = try await body.json(TestJSONPayload.self)
+        XCTAssertEqual(result.name, "quiver")
+        XCTAssertEqual(result.version, 3)
+    }
+
+    func testJSONConsumerThrowsDecodingError() async {
+        let body = HTTP3Body(data: Data("not json".utf8))
+        do {
+            _ = try await body.json(TestJSONPayload.self)
+            XCTFail("Expected DecodingError")
+        } catch is DecodingError {
+            // expected
+        } catch {
+            XCTFail("Expected DecodingError, got \(type(of: error))")
+        }
+    }
+
+    func testJSONConsumerThrowsOnEmptyBody() async {
+        let body = HTTP3Body(data: Data())
+        do {
+            _ = try await body.json(TestJSONPayload.self)
+            XCTFail("Expected DecodingError")
+        } catch is DecodingError {
+            // expected
+        } catch {
+            XCTFail("Expected DecodingError, got \(type(of: error))")
+        }
+    }
+
+    func testJSONConsumerMultiChunk() async throws {
+        let stream = AsyncStream<Data> { continuation in
+            continuation.yield(Data(#"{"name""#.utf8))
+            continuation.yield(Data(#":"quiver","#.utf8))
+            continuation.yield(Data(#""version":3}"#.utf8))
+            continuation.finish()
+        }
+        let body = HTTP3Body(stream: stream)
+        let result = try await body.json(TestJSONPayload.self)
+        XCTAssertEqual(result.name, "quiver")
+        XCTAssertEqual(result.version, 3)
+    }
+
+    // MARK: - stream() consumer
+
+    func testStreamConsumerYieldsAllChunks() async throws {
+        let chunks = [Data("a".utf8), Data("b".utf8), Data("c".utf8)]
+        let stream = AsyncStream<Data> { continuation in
+            for chunk in chunks { continuation.yield(chunk) }
+            continuation.finish()
+        }
+        let body = HTTP3Body(stream: stream)
+        let rawStream = body.stream()
+        var collected: [Data] = []
+        for await chunk in rawStream {
+            collected.append(chunk)
+        }
+        XCTAssertEqual(collected.count, 3)
+        XCTAssertEqual(collected[0], Data("a".utf8))
+        XCTAssertEqual(collected[1], Data("b".utf8))
+        XCTAssertEqual(collected[2], Data("c".utf8))
+    }
+
+    func testStreamConsumerEmptyBody() async {
+        let body = HTTP3Body(data: Data())
+        let rawStream = body.stream()
+        var count = 0
+        for await _ in rawStream { count += 1 }
+        XCTAssertEqual(count, 0)
+    }
+
+    // MARK: - bodyTooLarge
+
+    func testDataThrowsBodyTooLarge() async {
+        let body = HTTP3Body(data: Data(repeating: 0xFF, count: 100))
+        do {
+            _ = try await body.data(maxBytes: 50)
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge")
+        } catch let error as HTTP3BodyError {
+            if case .bodyTooLarge(let limit) = error {
+                XCTAssertEqual(limit, 50)
+            } else {
+                XCTFail("Expected .bodyTooLarge, got \(error)")
+            }
+        } catch {
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge, got \(type(of: error))")
+        }
+    }
+
+    func testTextThrowsBodyTooLarge() async {
+        let body = HTTP3Body(data: Data(repeating: 0x41, count: 200))
+        do {
+            _ = try await body.text(maxBytes: 100)
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge")
+        } catch let error as HTTP3BodyError {
+            if case .bodyTooLarge(let limit) = error {
+                XCTAssertEqual(limit, 100)
+            } else {
+                XCTFail("Expected .bodyTooLarge, got \(error)")
+            }
+        } catch {
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge, got \(type(of: error))")
+        }
+    }
+
+    func testJSONThrowsBodyTooLarge() async {
+        let bigJSON = Data(String(repeating: " ", count: 200).utf8)
+        let body = HTTP3Body(data: bigJSON)
+        do {
+            _ = try await body.json(TestJSONPayload.self, maxBytes: 10)
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge")
+        } catch let error as HTTP3BodyError {
+            if case .bodyTooLarge(let limit) = error {
+                XCTAssertEqual(limit, 10)
+            } else {
+                XCTFail("Expected .bodyTooLarge, got \(error)")
+            }
+        } catch {
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge, got \(type(of: error))")
+        }
+    }
+
+    func testDataAtExactLimitDoesNotThrow() async throws {
+        let body = HTTP3Body(data: Data(repeating: 0x41, count: 50))
+        let result = try await body.data(maxBytes: 50)
+        XCTAssertEqual(result.count, 50)
+    }
+
+    func testDataOneOverLimitThrows() async {
+        let body = HTTP3Body(data: Data(repeating: 0x41, count: 51))
+        do {
+            _ = try await body.data(maxBytes: 50)
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge")
+        } catch let error as HTTP3BodyError {
+            if case .bodyTooLarge = error {
+                // expected
+            } else {
+                XCTFail("Expected .bodyTooLarge, got \(error)")
+            }
+        } catch {
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge, got \(type(of: error))")
+        }
+    }
+
+    func testBodyTooLargeMultiChunk() async {
+        let stream = AsyncStream<Data> { continuation in
+            continuation.yield(Data(repeating: 0x41, count: 30))
+            continuation.yield(Data(repeating: 0x42, count: 30))
+            continuation.finish()
+        }
+        let body = HTTP3Body(stream: stream)
+        do {
+            _ = try await body.data(maxBytes: 50)
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge")
+        } catch let error as HTTP3BodyError {
+            if case .bodyTooLarge(let limit) = error {
+                XCTAssertEqual(limit, 50)
+            } else {
+                XCTFail("Expected .bodyTooLarge, got \(error)")
+            }
+        } catch {
+            XCTFail("Expected HTTP3BodyError.bodyTooLarge, got \(type(of: error))")
+        }
+    }
+
+    // MARK: - Error descriptions
+
+    func testBodyTooLargeDescription() {
+        let error = HTTP3BodyError.bodyTooLarge(limit: 1024)
+        XCTAssertEqual(error.description, "HTTP3Body exceeded maximum allowed size of 1024 bytes.")
+    }
+
+    func testInvalidUTF8Description() {
+        let error = HTTP3BodyError.invalidUTF8
+        XCTAssertEqual(error.description, "HTTP3Body data is not valid UTF-8.")
+    }
+
+    // MARK: - Init paths
+
+    func testInitWithDataSingleChunk() async throws {
+        let payload = Data("test".utf8)
+        let body = HTTP3Body(data: payload)
+        let result = try await body.data()
+        XCTAssertEqual(result, payload)
+    }
+
+    func testInitWithEmptyDataProducesEmptyStream() async throws {
+        let body = HTTP3Body(data: Data())
+        let stream = body.stream()
+        var count = 0
+        for await _ in stream { count += 1 }
+        XCTAssertEqual(count, 0)
+    }
+
+    func testInitWithStreamPassesThrough() async throws {
+        let expected = Data("passthrough".utf8)
+        let stream = AsyncStream<Data> { continuation in
+            continuation.yield(expected)
+            continuation.finish()
+        }
+        let body = HTTP3Body(stream: stream)
+        let result = try await body.data()
+        XCTAssertEqual(result, expected)
+    }
+
+    // MARK: - HTTP3Response body access
+
+    func testResponseBodyDataConsumer() async throws {
+        let payload = Data("response body".utf8)
+        let response = HTTP3Response(status: 200, body: payload)
+        let result = try await response.body.data()
+        XCTAssertEqual(result, payload)
+    }
+
+    func testResponseBodyTextConsumer() async throws {
+        let response = HTTP3Response(status: 200, body: Data("hello text".utf8))
+        let result = try await response.body.text()
+        XCTAssertEqual(result, "hello text")
+    }
+
+    func testResponseBodyJSONConsumer() async throws {
+        let json = #"{"name":"resp","version":1}"#
+        let response = HTTP3Response(status: 200, body: Data(json.utf8))
+        let result = try await response.body.json(TestJSONPayload.self)
+        XCTAssertEqual(result.name, "resp")
+        XCTAssertEqual(result.version, 1)
+    }
+
+    func testResponseEmptyBody() async throws {
+        let response = HTTP3Response(status: 204)
+        let result = try await response.body.data()
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testResponseBodyStreamConsumer() async throws {
+        let payload = Data("streamed".utf8)
+        let response = HTTP3Response(status: 200, body: payload)
+        let stream = response.body.stream()
+        var collected = Data()
+        for await chunk in stream {
+            collected.append(chunk)
+        }
+        XCTAssertEqual(collected, payload)
+    }
+
+    // MARK: - Double consumption via computed property
+    //
+    // On a single HTTP3Body instance, the compiler prevents double consumption
+    // at compile time (~Copyable + consuming func). These tests exercise the
+    // computed-property path on HTTP3Response where each `.body` access creates
+    // a NEW HTTP3Body wrapping the same underlying AsyncStream<Data>.
+    // The stream is already drained after the first consumer finishes,
+    // so the second consumer observes an empty/exhausted stream.
+
+    func testDoubleDataConsumptionReturnEmptyOnSecondAccess() async throws {
+        let response = HTTP3Response(status: 200, body: Data("payload".utf8))
+        let first = try await response.body.data()
+        XCTAssertEqual(first, Data("payload".utf8))
+        // Stream drained — second access yields empty Data
+        let second = try await response.body.data()
+        XCTAssertTrue(second.isEmpty)
+    }
+
+    func testDoubleTextConsumptionReturnEmptyOnSecondAccess() async throws {
+        let response = HTTP3Response(status: 200, body: Data("hello".utf8))
+        let first = try await response.body.text()
+        XCTAssertEqual(first, "hello")
+        // Stream drained — second access yields empty string
+        let second = try await response.body.text()
+        XCTAssertEqual(second, "")
+    }
+
+    func testDataThenTextSecondAccessReturnsEmpty() async throws {
+        let response = HTTP3Response(status: 200, body: Data("content".utf8))
+        let data = try await response.body.data()
+        XCTAssertEqual(data, Data("content".utf8))
+        // Stream drained — text() on exhausted stream yields ""
+        let text = try await response.body.text()
+        XCTAssertEqual(text, "")
+    }
+
+    func testDataThenStreamSecondAccessYieldsNothing() async throws {
+        let response = HTTP3Response(status: 200, body: Data("bytes".utf8))
+        let data = try await response.body.data()
+        XCTAssertEqual(data, Data("bytes".utf8))
+        // Stream drained — stream() on exhausted stream yields zero chunks
+        let stream = response.body.stream()
+        var count = 0
+        for await _ in stream { count += 1 }
+        XCTAssertEqual(count, 0)
+    }
+
+    func testDoubleJSONConsumptionThrowsDecodingErrorOnSecondAccess() async throws {
+        let json = #"{"name":"test","version":1}"#
+        let response = HTTP3Response(status: 200, body: Data(json.utf8))
+        let first = try await response.body.json(TestJSONPayload.self)
+        XCTAssertEqual(first.name, "test")
+        // Stream drained — json() on exhausted stream gets empty Data,
+        // JSONDecoder fails with DecodingError
+        do {
+            _ = try await response.body.json(TestJSONPayload.self)
+            XCTFail("Expected DecodingError on second json() access")
+        } catch is DecodingError {
+            // expected — empty data is not valid JSON
+        } catch {
+            XCTFail("Expected DecodingError, got \(type(of: error))")
+        }
+    }
+
+    func testJSONThenDataSecondAccessReturnsEmpty() async throws {
+        let json = #"{"name":"q","version":2}"#
+        let response = HTTP3Response(status: 200, body: Data(json.utf8))
+        let decoded = try await response.body.json(TestJSONPayload.self)
+        XCTAssertEqual(decoded.name, "q")
+        // Stream drained
+        let data = try await response.body.data()
+        XCTAssertTrue(data.isEmpty)
+    }
+
+    func testTextThenJSONSecondAccessThrowsDecodingError() async throws {
+        let json = #"{"name":"x","version":9}"#
+        let response = HTTP3Response(status: 200, body: Data(json.utf8))
+        let text = try await response.body.text()
+        XCTAssertEqual(text, json)
+        // Stream drained — json() on empty data throws DecodingError
+        do {
+            _ = try await response.body.json(TestJSONPayload.self)
+            XCTFail("Expected DecodingError on second access")
+        } catch is DecodingError {
+            // expected
+        } catch {
+            XCTFail("Expected DecodingError, got \(type(of: error))")
+        }
+    }
+
+    func testStreamThenDataSecondAccessReturnsEmpty() async throws {
+        let response = HTTP3Response(status: 200, body: Data("streamed".utf8))
+        let stream = response.body.stream()
+        var collected = Data()
+        for await chunk in stream { collected.append(chunk) }
+        XCTAssertEqual(collected, Data("streamed".utf8))
+        // Stream drained
+        let data = try await response.body.data()
+        XCTAssertTrue(data.isEmpty)
+    }
+}
+
+/// Decodable helper for JSON consumer tests.
+private struct TestJSONPayload: Decodable, Equatable {
+    let name: String
+    let version: Int
+}
+
 // MARK: - Test Helpers
 
 /// Actor for tracking mutable state across Sendable closures in tests.

@@ -531,7 +531,7 @@ extension HTTP3Connection {
             return
         }
 
-        let sendResponseClosure: @Sendable (HTTP3Response) async throws -> Void = { [weak self] resp in
+        let sendResponseClosure: @Sendable (consuming HTTP3ResponseHead) async throws -> Void = { [weak self] resp in
             guard let self = self else { return }
             await self.sendResponseHeadersOnly(resp, on: stream)
         }
@@ -691,24 +691,21 @@ extension HTTP3Connection {
     ///
     /// Accepts `HTTP3Response` for compatibility with `ExtendedConnectContext`.
     /// Extracts buffered body data directly from the response.
-    func sendResponseHeadersOnly(_ response: HTTP3Response, on stream: any QUICStreamProtocol) async {
+    func sendResponseHeadersOnly(_ response: HTTP3ResponseHead, on stream: any QUICStreamProtocol) async {
         do {
-            // Encode response headers using QPACK
             let headerList = response.toHeaderList()
             let encodedHeaders = qpackEncoder.encode(headerList)
-
-            // Send HEADERS frame
             let headersFrame = HTTP3Frame.headers(encodedHeaders)
             let headersData = HTTP3FrameCodec.encode(headersFrame)
             try await stream.write(headersData)
 
-            // Send DATA frame if there's a body
-            let bodyData = response.bufferedBodyData
-            if !bodyData.isEmpty {
-                let dataFrame = HTTP3Frame.data(bodyData)
-                let dataData = HTTP3FrameCodec.encode(dataFrame)
-                try await stream.write(dataData)
-            }
+            //TODO Cleanup later
+            // let bodyData = response.bufferedBodyData
+            // if !bodyData.isEmpty {
+            //     let dataFrame = HTTP3Frame.data(bodyData)
+            //     let dataData = HTTP3FrameCodec.encode(dataFrame)
+            //     try await stream.write(dataData)
+            // }
 
             // NOTE: Do NOT close the write side. The stream stays open
             // for the Extended CONNECT session (e.g., WebTransport).

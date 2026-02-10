@@ -178,7 +178,7 @@ extension HTTP3Connection {
     ///     // stream is open — use for WebTransport session
     /// }
     /// ```
-    public func sendExtendedConnect(_ request: HTTP3Request) async throws -> (response: HTTP3Response, stream: any QUICStreamProtocol) {
+     public func sendExtendedConnect(_ request: HTTP3Request) async throws -> (response: HTTP3ResponseHead, stream: any QUICStreamProtocol) {
         guard request.isExtendedConnect else {
             throw HTTP3Error(
                 code: .internalError,
@@ -244,7 +244,7 @@ extension HTTP3Connection {
     ///
     /// Any data beyond the HEADERS frame is left for the caller to read
     /// (e.g. capsules on the CONNECT stream).
-    func readExtendedConnectResponse(from stream: any QUICStreamProtocol) async throws -> HTTP3Response {
+    func readExtendedConnectResponse(from stream: any QUICStreamProtocol) async throws -> HTTP3ResponseHead {
         // NOTE: Extended CONNECT responses use buffered Data body (not streaming)
         // because the stream stays open for the session lifetime.
         var buffer = Data()
@@ -277,7 +277,7 @@ extension HTTP3Connection {
                 switch frame {
                 case .headers(let headerBlock):
                     let headers = try qpackDecoder.decode(headerBlock)
-                    let response = try HTTP3Response.fromHeaderList(headers)
+                    let response = try HTTP3ResponseHead.fromHeaderList(headers)
                     return response
 
                 case .unknown:
@@ -367,7 +367,7 @@ extension HTTP3Connection {
             throw HTTP3Error.messageError("No HEADERS frame received in response")
         }
 
-        var response = try HTTP3Response.fromHeaderList(headers)
+        let baseResponse = try HTTP3Response.fromHeaderList(headers)
 
         // Phase 2: Create body stream and feed it from a background task
         let (bodyStream, bodyContinuation) = AsyncStream<Data>.makeStream(
@@ -427,10 +427,12 @@ extension HTTP3Connection {
             }
         }
 
-        // Attach the body stream directly to the response
-        response._bodyStream = bodyStream
-
-        return response
+        return HTTP3Response(
+            status: baseResponse.status,
+            headers: baseResponse.headers,
+            bodyStream: bodyStream,
+            trailers: baseResponse.trailers
+        )
     }
 }
 
