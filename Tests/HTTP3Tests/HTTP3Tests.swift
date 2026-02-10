@@ -976,7 +976,7 @@ final class HTTP3TypesTests: XCTestCase {
 
         XCTAssertEqual(response.status, 200)
         XCTAssertEqual(response.headers.count, 1)
-        XCTAssertEqual(response.body, Data("OK".utf8))
+        XCTAssertEqual(response.bufferedBodyData, Data("OK".utf8))
     }
 
     func testResponseStatusText() {
@@ -1035,7 +1035,7 @@ final class HTTP3TypesTests: XCTestCase {
         let response = try HTTP3Response.fromHeaderList(headers)
         XCTAssertEqual(response.status, 404)
         XCTAssertEqual(response.headers.count, 1)
-        XCTAssertTrue(response.body.isEmpty)
+        XCTAssertTrue(response.bufferedBodyData.isEmpty)
     }
 
     func testResponseFromHeaderListMissingStatus() {
@@ -1069,6 +1069,9 @@ final class HTTP3TypesTests: XCTestCase {
     func testResponseDescription() {
         let response = HTTP3Response(status: 200, body: Data("Hello".utf8))
         XCTAssertEqual(response.description, "200 OK (5 bytes)")
+
+        let streamResponse = HTTP3Response(status: 404, body: HTTP3Body(stream: AsyncStream<Data> { $0.finish() }))
+        XCTAssertEqual(streamResponse.description, "404 Not Found (stream)")
     }
 
     // MARK: - Request/Response Header Round-Trip
@@ -1385,21 +1388,21 @@ final class HTTP3TrailerTests: XCTestCase {
         XCTAssertEqual(response.trailers?[1].0, "grpc-message")
     }
 
-    func testResponseTrailersInEquality() {
+    func testResponseTrailersStatusAndHeadersComparable() {
         let a = HTTP3Response(status: 200, trailers: [("x-checksum", "sha256")])
         let b = HTTP3Response(status: 200, trailers: [("x-checksum", "sha256")])
         let c = HTTP3Response(status: 200, trailers: [("x-checksum", "md5")])
         let d = HTTP3Response(status: 200)
 
-        XCTAssertEqual(a, b)
-        XCTAssertNotEqual(a, c)
-        XCTAssertNotEqual(a, d)
-    }
+        // HTTP3Response is no longer Equatable/Hashable (body is HTTP3Body reference type).
+        // Verify status and trailers are independently accessible and correct.
+        XCTAssertEqual(a.status, b.status)
+        XCTAssertEqual(a.trailers?.count, b.trailers?.count)
+        XCTAssertEqual(a.trailers?[0].0, b.trailers?[0].0)
+        XCTAssertEqual(a.trailers?[0].1, b.trailers?[0].1)
 
-    func testResponseTrailersInHashable() {
-        let a = HTTP3Response(status: 200, trailers: [("grpc-status", "0")])
-        let b = HTTP3Response(status: 200, trailers: [("grpc-status", "0")])
-        XCTAssertEqual(a.hashValue, b.hashValue)
+        XCTAssertNotEqual(a.trailers?[0].1, c.trailers?[0].1)
+        XCTAssertNil(d.trailers)
     }
 
     // MARK: - Trailer Validation
@@ -1617,7 +1620,7 @@ final class HTTP3TrailerTests: XCTestCase {
         // Simulate on-the-wire frame sequence
         let encodedHeaders = encoder.encode(response.toHeaderList())
         let headersFrame = HTTP3FrameCodec.encode(.headers(encodedHeaders))
-        let dataFrame = HTTP3FrameCodec.encode(.data(response.body))
+        let dataFrame = HTTP3FrameCodec.encode(.data(response.bufferedBodyData))
         let encodedTrailers = encoder.encode(response.trailers!)
         let trailersFrame = HTTP3FrameCodec.encode(.headers(encodedTrailers))
 
@@ -1642,7 +1645,7 @@ final class HTTP3TrailerTests: XCTestCase {
             XCTFail("Expected DATA")
             return
         }
-        XCTAssertEqual(body, response.body)
+        XCTAssertEqual(body, response.bufferedBodyData)
 
         // Verify trailers
         guard case .headers(let block2) = frames[2] else {
@@ -1701,10 +1704,8 @@ final class HTTP3TrailerTests: XCTestCase {
     func testNilTrailersDifferentFromEmptyTrailers() {
         let a = HTTP3Response(status: 200, trailers: nil)
         let b = HTTP3Response(status: 200, trailers: [])
-        // nil vs empty array — implementation treats them as equal
-        // (both have count == 0 / nil)
-        // This tests the Hashable/Equatable implementation handles both
-        // The key invariant: neither should produce a trailing HEADERS frame on the wire
+        // nil vs empty array are distinct values.
+        // The key invariant: neither should produce a trailing HEADERS frame on the wire.
         XCTAssertNil(a.trailers)
         XCTAssertNotNil(b.trailers)
     }

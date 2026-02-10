@@ -379,7 +379,7 @@ func makeClientConfiguration(caCertPath: String?) throws -> QUICConfiguration {
 ///
 /// // Register a simple request handler
 /// server.onRequest { context in
-///     try await context.respond(HTTP3Response(status: 200, body: Data("OK".utf8)))
+///     try await context.respond(status: 200, Data("OK".utf8))
 /// }
 ///
 /// // Or use a router for path-based routing
@@ -544,14 +544,12 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
 ///
 /// // Register routes by HTTP method
 /// router.get("/path") { context in
-///     try await context.respond(HTTP3Response(status: 200))
+///     try await context.respond(status: 200)
 /// }
 ///
-/// router.post("/path") { context in
-///     // Access the request body
-///     let body = context.request.body ?? Data()
+///     let body = try await context.body.data()
 ///     // ...
-///     try await context.respond(HTTP3Response(status: 201))
+///     try await context.respond(status: 201)
 /// }
 ///
 /// // Route matching any method
@@ -561,7 +559,7 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
 ///
 /// // Custom 404 handler
 /// router.setNotFound { context in
-///     try await context.respond(HTTP3Response(status: 404, body: Data("Oops!".utf8)))
+///     try await context.respond(status: 404, Data("Oops!".utf8))
 /// }
 ///
 /// // Use the router with HTTP3Server
@@ -642,15 +640,15 @@ func buildRouter() -> HTTP3Router {
         </html>
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [
                 ("content-type", "text/html; charset=utf-8"),
                 ("server", "quiver-http3-demo"),
                 ("alt-svc", "h3=\":443\"; ma=86400"),
             ],
-            body: Data(html.utf8)
-        ))
+            Data(html.utf8)
+        )
     }
 
     // =========================================================================
@@ -671,14 +669,14 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [
                 ("content-type", "application/json"),
                 ("cache-control", "no-cache"),
             ],
-            body: Data(json.utf8)
-        ))
+            Data(json.utf8)
+        )
     }
 
     // =========================================================================
@@ -712,11 +710,11 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [("content-type", "application/json")],
-            body: Data(json.utf8)
-        ))
+            Data(json.utf8)
+        )
     }
 
     // =========================================================================
@@ -733,27 +731,28 @@ func buildRouter() -> HTTP3Router {
     //   2. DATA frame(s) (contains the body, may be split across frames)
     //   3. Stream FIN (signals end of request)
     //
-    // The HTTP3Connection reads and assembles these into an HTTP3Request
-    // with the body available as `request.body: Data?`.
+    // The HTTP3Connection fires the handler as soon as HEADERS are parsed.
+    // The body is available via `context.body` — use .data(), .text(),
+    // .json(), or .stream() to consume it.
     //
     router.post("/echo") { context in
         log("Handler", "\(context.request.method) \(context.request.path) [stream:\(context.streamID)]")
 
-        let body = context.request.body ?? Data()
+        let body = try await context.body.data()
         let contentType = context.request.headers.first(where: { $0.0.lowercased() == "content-type" })?.1
             ?? "application/octet-stream"
 
         log("Handler", "  Echoing \(body.count) bytes (content-type: \(contentType))")
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [
                 ("content-type", contentType),
                 ("x-echo", "true"),
                 ("x-echo-size", "\(body.count)"),
             ],
-            body: body
-        ))
+            body
+        )
     }
 
     // =========================================================================
@@ -766,7 +765,7 @@ func buildRouter() -> HTTP3Router {
     router.post("/api/json") { context in
         log("Handler", "\(context.request.method) \(context.request.path) [stream:\(context.streamID)]")
 
-        let body = context.request.body ?? Data()
+        let body = try await context.body.data()
 
         // Validate content-type
         let contentType = context.request.headers.first(where: { $0.0.lowercased() == "content-type" })?.1 ?? ""
@@ -779,11 +778,11 @@ func buildRouter() -> HTTP3Router {
                 "hint": "Send your request with -H 'Content-Type: application/json'"
             }
             """
-            try await context.respond(HTTP3Response(
+            try await context.respond(
                 status: 415,
                 headers: [("content-type", "application/json")],
-                body: Data(errorJson.utf8)
-            ))
+                Data(errorJson.utf8)
+            )
             return
         }
 
@@ -799,14 +798,14 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [
                 ("content-type", "application/json"),
                 ("x-stream-id", "\(context.streamID)"),
             ],
-            body: Data(responseJson.utf8)
-        ))
+            Data(responseJson.utf8)
+        )
     }
 
     // =========================================================================
@@ -855,11 +854,11 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [("content-type", "application/json")],
-            body: Data(json.utf8)
-        ))
+            Data(json.utf8)
+        )
     }
 
     // =========================================================================
@@ -906,11 +905,11 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [("content-type", "application/json")],
-            body: Data(json.utf8)
-        ))
+            Data(json.utf8)
+        )
     }
 
     // =========================================================================
@@ -932,11 +931,11 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [("content-type", "application/json")],
-            body: Data(json.utf8)
-        ))
+            Data(json.utf8)
+        )
     }
 
     // =========================================================================
@@ -966,11 +965,11 @@ func buildRouter() -> HTTP3Router {
         }
         """
 
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 404,
             headers: [("content-type", "application/json")],
-            body: Data(json.utf8)
-        ))
+            Data(json.utf8)
+        )
     }
 
     return router
@@ -1117,7 +1116,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         path: "/"
     )
     let resp1 = try await h3Connection.sendRequest(req1)
-    printResponse(resp1, label: "1")
+    try await printResponse(resp1, label: "1")
 
     try await Task.sleep(for: .milliseconds(200))
 
@@ -1130,7 +1129,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         path: "/health"
     )
     let resp2 = try await h3Connection.sendRequest(req2)
-    printResponse(resp2, label: "2")
+    try await printResponse(resp2, label: "2")
 
     try await Task.sleep(for: .milliseconds(200))
 
@@ -1146,7 +1145,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         body: Data(echoBody.utf8)
     )
     let resp3 = try await h3Connection.sendRequest(req3)
-    printResponse(resp3, label: "3")
+    try await printResponse(resp3, label: "3")
 
     try await Task.sleep(for: .milliseconds(200))
 
@@ -1164,7 +1163,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         body: Data(jsonBody.utf8)
     )
     let resp4 = try await h3Connection.sendRequest(req4)
-    printResponse(resp4, label: "4")
+    try await printResponse(resp4, label: "4")
 
     try await Task.sleep(for: .milliseconds(200))
 
@@ -1182,7 +1181,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         ]
     )
     let resp5 = try await h3Connection.sendRequest(req5)
-    printResponse(resp5, label: "5")
+    try await printResponse(resp5, label: "5")
 
     try await Task.sleep(for: .milliseconds(200))
 
@@ -1195,7 +1194,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         path: "/stream-info"
     )
     let resp6 = try await h3Connection.sendRequest(req6)
-    printResponse(resp6, label: "6")
+    try await printResponse(resp6, label: "6")
 
     try await Task.sleep(for: .milliseconds(200))
 
@@ -1208,7 +1207,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
         path: "/nonexistent"
     )
     let resp7 = try await h3Connection.sendRequest(req7)
-    printResponse(resp7, label: "7")
+    try await printResponse(resp7, label: "7")
 
     // =========================================================================
     // Cleanup
@@ -1223,7 +1222,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?) async throws {
 }
 
 /// Pretty-prints an HTTP/3 response
-func printResponse(_ response: HTTP3Response, label: String) {
+func printResponse(_ response: HTTP3Response, label: String) async throws {
     log("Client", "  Status: \(response.status) \(response.statusText)")
 
     // Print a few interesting headers
@@ -1232,8 +1231,9 @@ func printResponse(_ response: HTTP3Response, label: String) {
     }
 
     // Print body (truncated if too long)
-    if !response.body.isEmpty {
-        let bodyStr = String(data: response.body, encoding: .utf8) ?? "<binary \(response.body.count) bytes>"
+    let bodyData = try await response.body.data()
+    if !bodyData.isEmpty {
+        let bodyStr = String(data: bodyData, encoding: .utf8) ?? "<binary \(bodyData.count) bytes>"
         let truncated = bodyStr.count > 300 ? String(bodyStr.prefix(300)) + "... (\(bodyStr.count) chars total)" : bodyStr
         log("Client", "  Body: \(truncated)")
     }

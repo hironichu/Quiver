@@ -31,6 +31,17 @@ public protocol QUICSocket: Sendable {
     ///   - address: The destination address
     func send(_ data: Data, to address: SocketAddress) async throws
 
+    /// Sends multiple QUIC packets in a single batch (reduced syscall overhead).
+    ///
+    /// On Linux, NIO coalesces the writes into a single `sendmmsg()` syscall.
+    /// Implementations that do not support batching should fall back to
+    /// sequential `send()` calls.
+    ///
+    /// - Parameters:
+    ///   - packets: The packet data array
+    ///   - address: The shared destination address for all packets
+    func sendBatch(_ packets: [Data], to address: SocketAddress) async throws
+
     /// Receives incoming packets
     var incomingPackets: AsyncStream<IncomingPacket> { get }
 
@@ -197,6 +208,17 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
     /// Sends packet data to the specified address
     public func send(_ data: Data, to address: SocketAddress) async throws {
         try await transport.send(data, to: address)
+    }
+
+    /// Sends multiple packets in a single batch via `sendmmsg()`.
+    ///
+    /// Converts `QUICCore.SocketAddress` to `NIOCore.SocketAddress` once,
+    /// then delegates to `NIOUDPTransport.sendBatch()` which does
+    /// N `channel.write()` + 1 `channel.flush()`.
+    public func sendBatch(_ packets: [Data], to address: SocketAddress) async throws {
+        guard !packets.isEmpty else { return }
+        let datagrams = packets.map { ($0, address) }
+        try await transport.sendBatch(datagrams)
     }
 
     // MARK: - ECN Mapping

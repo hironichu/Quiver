@@ -199,6 +199,7 @@ extension QUICEndpoint {
                 // `signalNeedsSend()` (which may have been coalesced away
                 // by `bufferingNewest(1)`).
                 var rounds = 0
+                let nioAddress = try connection.remoteAddress.toNIOAddress()
                 repeat {
                     let packets = try connection.generateOutboundPackets()
                     if !packets.isEmpty {
@@ -206,11 +207,11 @@ extension QUICEndpoint {
                         logger.trace("Sending \(packets.count) packets, round \(rounds) (total \(packets.map(\.count).reduce(0, +)) bytes)")
                     }
 
-                    // Send each packet
-                    for packet in packets {
-                        let nioAddress = try connection.remoteAddress.toNIOAddress()
-                        try await socket.send(packet, to: nioAddress)
-                        logger.trace("Sent packet: \(packet.count) bytes")
+                    // Batch-send all packets in a single syscall (sendmmsg on Linux).
+                    // NIO coalesces N write() + 1 flush() into one kernel transition.
+                    if !packets.isEmpty {
+                        try await socket.sendBatch(packets, to: nioAddress)
+                        logger.trace("Batch-sent \(packets.count) packets")
                     }
 
                     // If no packets were produced this round we're done
@@ -244,10 +245,8 @@ extension QUICEndpoint {
                 let finalPackets = try connection.generateOutboundPackets()
                 if !finalPackets.isEmpty {
                     logger.debug("outboundSendLoop flushing \(finalPackets.count) final packets for SCID=\(connection.sourceConnectionID)")
-                    for packet in finalPackets {
-                        let nioAddress = try connection.remoteAddress.toNIOAddress()
-                        try await socket.send(packet, to: nioAddress)
-                    }
+                    let finalNioAddress = try connection.remoteAddress.toNIOAddress()
+                    try await socket.sendBatch(finalPackets, to: finalNioAddress)
                 }
             } catch {
                 // Best-effort — if we can't send the final packets, just log and proceed.

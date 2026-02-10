@@ -532,7 +532,7 @@ extension HTTP3Request: CustomStringConvertible {
 ///     body: Data("Hello, World!".utf8)
 /// )
 /// ```
-public struct HTTP3Response: Sendable, Hashable {
+public struct HTTP3Response: Sendable {
     /// The HTTP status code (e.g., 200, 404, 500)
     public var status: Int
 
@@ -540,8 +540,13 @@ public struct HTTP3Response: Sendable, Hashable {
     /// Names should be lowercase per HTTP/3 convention.
     public var headers: [(String, String)]
 
-    /// The response body data
-    public var body: Data
+    /// Internal stream backing the response body.
+    /// Copyable + Sendable — no ~Copyable containment issue.
+    internal var _bodyStream: AsyncStream<Data>
+
+    /// Optional pre-buffered data for server send paths that need
+    /// synchronous access (e.g. `sendResponseHeadersOnly`).
+    internal var _bufferedData: Data?
 
     /// Optional trailing header fields (trailers).
     ///
@@ -550,7 +555,41 @@ public struct HTTP3Response: Sendable, Hashable {
     /// pseudo-header fields (names starting with `:`).
     public var trailers: [(String, String)]?
 
-    /// Creates an HTTP/3 response.
+    /// The response body as a move-only `HTTP3Body`.
+    ///
+    /// Each access creates a new `HTTP3Body` wrapping the underlying
+    /// `AsyncStream<Data>`. The stream is destructive — consume it
+    /// exactly once via `.data()`, `.text()`, `.json()`, or `.stream()`.
+    public var body: HTTP3Body {
+        HTTP3Body(stream: _bodyStream)
+    }
+
+    /// Creates an HTTP/3 response backed by a live `AsyncStream<Data>`.
+    ///
+    /// Used internally when reading DATA frames from a QUIC stream.
+    ///
+    /// - Parameters:
+    ///   - status: The HTTP status code
+    ///   - headers: Response header fields (default: empty)
+    ///   - bodyStream: The async stream of body data chunks
+    ///   - trailers: Optional trailing header fields (default: nil)
+    internal init(
+        status: Int,
+        headers: [(String, String)] = [],
+        bodyStream: AsyncStream<Data>,
+        trailers: [(String, String)]? = nil
+    ) {
+        self.status = status
+        self.headers = headers
+        self._bodyStream = bodyStream
+        self._bufferedData = nil
+        self.trailers = trailers
+    }
+
+    /// Creates an HTTP/3 response with pre-buffered `Data` body.
+    ///
+    /// The data is also wrapped into an `AsyncStream<Data>` so that
+    /// `body.data()` / `.text()` / `.json()` work uniformly.
     ///
     /// - Parameters:
     ///   - status: The HTTP status code
@@ -565,7 +604,16 @@ public struct HTTP3Response: Sendable, Hashable {
     ) {
         self.status = status
         self.headers = headers
-        self.body = body
+        self._bufferedData = body
+        if body.isEmpty {
+            self._bodyStream = AsyncStream<Data> { $0.finish() }
+        } else {
+            let captured = body
+            self._bodyStream = AsyncStream<Data> { continuation in
+                continuation.yield(captured)
+                continuation.finish()
+            }
+        }
         self.trailers = trailers
     }
 
@@ -636,6 +684,15 @@ public struct HTTP3Response: Sendable, Hashable {
         (100..<200).contains(status)
     }
 
+    /// The pre-buffered body data, if available.
+    ///
+    /// Used internally by server send paths and Extended CONNECT to
+    /// extract Data without consuming the body stream.
+    /// Returns empty `Data()` if not backed by buffered data.
+    internal var bufferedBodyData: Data {
+        _bufferedData ?? Data()
+    }
+
     // MARK: - Pseudo-Header Conversion
 
     /// Converts the response to a full header list including pseudo-headers.
@@ -698,43 +755,16 @@ public struct HTTP3Response: Sendable, Hashable {
             headers: regularHeaders
         )
     }
-
-    // MARK: - Hashable
-
-    public static func == (lhs: HTTP3Response, rhs: HTTP3Response) -> Bool {
-        lhs.status == rhs.status &&
-        lhs.body == rhs.body &&
-        lhs.headers.count == rhs.headers.count &&
-        zip(lhs.headers, rhs.headers).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 } &&
-        lhs.trailers?.count == rhs.trailers?.count &&
-        (lhs.trailers == nil && rhs.trailers == nil ||
-         lhs.trailers != nil && rhs.trailers != nil &&
-         zip(lhs.trailers!, rhs.trailers!).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 })
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(status)
-        hasher.combine(body)
-        hasher.combine(headers.count)
-        for (name, value) in headers {
-            hasher.combine(name)
-            hasher.combine(value)
-        }
-        if let trailers = trailers {
-            hasher.combine(trailers.count)
-            for (name, value) in trailers {
-                hasher.combine(name)
-                hasher.combine(value)
-            }
-        }
-    }
 }
 
 // MARK: - CustomStringConvertible
 
 extension HTTP3Response: CustomStringConvertible {
     public var description: String {
-        "\(status) \(statusText) (\(body.count) bytes)"
+        if let data = _bufferedData {
+            return "\(status) \(statusText) (\(data.count) bytes)"
+        }
+        return "\(status) \(statusText) (stream)"
     }
 }
 
@@ -758,42 +788,179 @@ extension HTTP3Response: CustomStringConvertible {
 ///     try await context.respond(response)
 /// }
 /// ```
+// MARK: - Streaming Body Support
+
+/// Writes response body data in chunks over an HTTP/3 stream.
+///
+/// Each call to ``write(_:)`` encodes a DATA frame and sends it on the
+/// underlying QUIC stream. This keeps memory flat regardless of total
+/// response size.
+///
+/// ```swift
+/// try await context.respond(status: 200, headers: [("content-type", "application/octet-stream")]) { writer in
+///     while let chunk = fileHandle.readData(ofLength: 65536) {
+///         if chunk.isEmpty { break }
+///         try await writer.write(chunk)
+///     }
+/// }
+/// ```
+public struct HTTP3BodyWriter: Sendable {
+    /// Internal closure that encodes a DATA frame and writes it to the QUIC stream.
+    internal let _write: @Sendable (Data) async throws -> Void
+
+    /// Writes a chunk of body data as an HTTP/3 DATA frame.
+    ///
+    /// - Parameter data: The chunk to send. Empty data is a no-op.
+    /// - Throws: If the underlying QUIC stream write fails.
+    public func write(_ data: Data) async throws {
+        guard !data.isEmpty else { return }
+        try await _write(data)
+    }
+}
+
+// MARK: - Request Context
+
 public struct HTTP3RequestContext: Sendable {
-    /// The received HTTP/3 request
+    /// The received HTTP/3 request (headers only; body NOT pre-read).
+    ///
+    /// `request.body` is always `nil`. Use `body.data()`, `body.text()`,
+    /// `body.json()`, or `body.stream()` to consume the request body.
     public let request: HTTP3Request
 
-    /// The QUIC stream ID this request arrived on
+    /// The QUIC stream ID this request arrived on.
     public let streamID: UInt64
 
-    /// Closure to send a response back on the same stream.
-    /// This is set internally by the HTTP/3 connection layer.
-    internal let _respond: @Sendable (HTTP3Response) async throws -> Void
+    /// Internal stream backing the request body.
+    /// Copyable + Sendable — allows HTTP3RequestContext to flow through AsyncStream.
+    internal let _bodyStream: AsyncStream<Data>
 
-    /// Creates a request context.
+    /// The request body as a move-only `HTTP3Body`.
+    ///
+    /// Always present (empty body = zero-yield stream that finishes immediately).
+    /// Consume with exactly one of:
+    ///
+    /// ```swift
+    /// let data = try await context.body.data()            // full body as Data
+    /// let text = try await context.body.text()            // full body as String
+    /// let obj  = try await context.body.json(MyType.self) // JSON decode
+    /// for await chunk in context.body.stream() {          // raw iteration
+    ///     process(chunk)
+    /// }
+    /// ```
+    ///
+    /// The underlying stream is destructive — consume it exactly once.
+    public var body: HTTP3Body {
+        HTTP3Body(stream: _bodyStream)
+    }
+
+    /// Closure to send a buffered response (status + headers + Data body + FIN).
+    internal let _respond: @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
+
+    /// Closure to send a streaming response (HEADERS, then chunked DATA via writer, then FIN).
+    internal let _respondStreaming: @Sendable (
+        Int, [(String, String)], [(String, String)]?, @Sendable (HTTP3BodyWriter) async throws -> Void
+    ) async throws -> Void
+
+    /// Creates a request context with body stream and response closures.
     ///
     /// - Parameters:
-    ///   - request: The received request
+    ///   - request: The received request (headers only)
     ///   - streamID: The QUIC stream ID
-    ///   - respond: Closure to send back a response
+    ///   - bodyStream: The request body as `AsyncStream<Data>`
+    ///   - respond: Closure to send a buffered response
+    ///   - respondStreaming: Closure to send a streaming response
     public init(
         request: HTTP3Request,
         streamID: UInt64,
-        respond: @escaping @Sendable (HTTP3Response) async throws -> Void
+        bodyStream: AsyncStream<Data>,
+        respond: @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void,
+        respondStreaming: @escaping @Sendable (
+            Int, [(String, String)], [(String, String)]?, @Sendable (HTTP3BodyWriter) async throws -> Void
+        ) async throws -> Void
     ) {
         self.request = request
         self.streamID = streamID
+        self._bodyStream = bodyStream
         self._respond = respond
+        self._respondStreaming = respondStreaming
     }
 
-    /// Sends a response back to the client on the same stream.
+    /// Convenience initializer with empty body and no streaming support.
     ///
-    /// This sends a HEADERS frame (with the response status and headers)
-    /// followed by a DATA frame (with the body) and closes the stream.
+    /// The body stream finishes immediately (empty body). The streaming
+    /// respond closure throws an error if called.
+    public init(
+        request: HTTP3Request,
+        streamID: UInt64,
+        respond: @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
+    ) {
+        self.request = request
+        self.streamID = streamID
+        self._bodyStream = AsyncStream<Data> { $0.finish() }
+        self._respond = respond
+        self._respondStreaming = { _, _, _, _ in
+            throw HTTP3Error(
+                code: .internalError,
+                reason: "Streaming respond not available (context created without streaming support)"
+            )
+        }
+    }
+
+    // MARK: - Response Sending
+
+    /// Sends a buffered response with a `Data` body.
     ///
-    /// - Parameter response: The HTTP/3 response to send
+    /// Sends HEADERS frame + DATA frame (if body non-empty) + FIN.
+    ///
+    /// ```swift
+    /// try await context.respond(status: 200, headers: [("content-type", "text/plain")], Data("OK".utf8))
+    /// try await context.respond(status: 204)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - status: HTTP status code
+    ///   - headers: Response headers (default: empty)
+    ///   - body: Response body data (default: empty)
+    ///   - trailers: Optional trailing headers (default: nil)
     /// - Throws: If sending the response fails
-    public func respond(_ response: HTTP3Response) async throws {
-        try await _respond(response)
+    public func respond(
+        status: Int,
+        headers: [(String, String)] = [],
+        _ body: Data = Data(),
+        trailers: [(String, String)]? = nil
+    ) async throws {
+        try await _respond(status, headers, body, trailers)
+    }
+
+    /// Sends a streaming response via a writer closure.
+    ///
+    /// Sends the HEADERS frame immediately, then invokes the writer
+    /// closure. Each `writer.write()` call sends a DATA frame. When
+    /// the closure returns, FIN is sent.
+    ///
+    /// Memory usage is flat regardless of total response size.
+    ///
+    /// ```swift
+    /// try await context.respond(status: 200, headers: [("content-type", "application/octet-stream")]) { writer in
+    ///     for chunk in fileChunks {
+    ///         try await writer.write(chunk)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - status: HTTP status code
+    ///   - headers: Response headers (default: empty)
+    ///   - trailers: Optional trailing headers sent after body (default: nil)
+    ///   - writer: Closure that writes body chunks via ``HTTP3BodyWriter``
+    /// - Throws: If sending headers, body chunks, or FIN fails
+    public func respond(
+        status: Int,
+        headers: [(String, String)] = [],
+        trailers: [(String, String)]? = nil,
+        _ writer: @escaping @Sendable (HTTP3BodyWriter) async throws -> Void
+    ) async throws {
+        try await _respondStreaming(status, headers, trailers, writer)
     }
 }
 

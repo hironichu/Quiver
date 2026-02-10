@@ -427,11 +427,11 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
         </body>
         </html>
         """
-        try await context.respond(HTTP3Response(
+        try await context.respond(
             status: 200,
             headers: [("content-type", "text/html; charset=utf-8")],
-            body: Data(body.utf8)
-        ))
+            Data(body.utf8)
+        )
     }
 
     // Step 3: Start the session handler in a background task

@@ -18,7 +18,7 @@
 ///
 /// // Optionally handle regular HTTP/3 requests alongside WebTransport
 /// server.onRequest { context in
-///     try await context.respond(HTTP3Response(status: 200, body: Data("OK".utf8)))
+///     try await context.respond(status: 200, Data("OK".utf8))
 /// }
 ///
 /// // Accept WebTransport sessions
@@ -273,11 +273,11 @@ public actor WebTransportServer {
                 try await handler(context)
             } else {
                 // Default: return 404 for non-WebTransport requests
-                try await context.respond(HTTP3Response(
+                try await context.respond(
                     status: 404,
                     headers: [("content-type", "text/plain")],
-                    body: Data("Not Found".utf8)
-                ))
+                    Data("Not Found".utf8)
+                )
             }
         }
 
@@ -489,10 +489,10 @@ public actor WebTransportServer {
                     do {
                         try await capturedHandler(context)
                     } catch {
-                        try? await context.respond(HTTP3Response(
+                        try? await context.respond(
                             status: 500,
-                            body: Data("Internal Server Error".utf8)
-                        ))
+                            Data("Internal Server Error".utf8)
+                        )
                     }
                 }
             }
