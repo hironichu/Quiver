@@ -318,7 +318,8 @@ package final class PacketProcessor: Sendable {
     package func encryptShortHeaderPacket(
         frames: [Frame],
         header: ShortHeader,
-        packetNumber: UInt64
+        packetNumber: UInt64,
+        maxPacketSize overrideMaxSize: Int? = nil
     ) throws -> Data {
         guard let ctx = contexts.withLock({ $0[.application] }),
               let sealer = ctx.sealer else {
@@ -330,7 +331,7 @@ package final class PacketProcessor: Sendable {
             header: header,
             packetNumber: packetNumber,
             sealer: sealer,
-            maxPacketSize: maxDatagramSize
+            maxPacketSize: overrideMaxSize ?? maxDatagramSize
         )
     }
 

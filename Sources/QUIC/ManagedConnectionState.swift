@@ -101,6 +101,14 @@ struct ManagedConnectionState: Sendable {
     /// Pending PATH_RESPONSE frames to send
     var pendingPathResponses: [Data] = []
 
+    /// Pre-built PMTUD probe packets awaiting transmission.
+    ///
+    /// These are fully encrypted packets built by `sendPMTUProbe()` with
+    /// padding to the probe target size.  They bypass the normal frame
+    /// queue because their size exceeds `maxDatagramSize`.
+    /// `generateOutboundPackets()` drains this queue first.
+    var probePacketQueue: [Data] = []
+
     // MARK: - Send Signal State
 
     /// Continuation for send signal stream

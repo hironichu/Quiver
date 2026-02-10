@@ -43,6 +43,9 @@ extension QUICEndpoint {
             throw QUICEndpointError.serverCannotConnect
         }
 
+        // Validate configuration consistency before creating the socket
+        try configuration.validate()
+
         // Create socket with a random local port, using configured buffer sizes
         let socketConfig = configuration.socketConfiguration
         let udpConfig = UDPConfiguration(
@@ -50,9 +53,19 @@ extension QUICEndpoint {
             reuseAddress: false,
             receiveBufferSize: socketConfig.receiveBufferSize ?? 65536,
             sendBufferSize: socketConfig.sendBufferSize ?? 65536,
-            maxDatagramSize: socketConfig.maxDatagramSize
+            maxDatagramSize: socketConfig.maxDatagramSize,
+            enableECN: socketConfig.enableECN
         )
-        let socket = NIOQUICSocket(configuration: udpConfig)
+
+        // Determine address family from the target address for platform options
+        let addrFamily: PlatformSocketOptions.AddressFamily =
+            address.ipAddress.contains(":") ? .ipv6 : .ipv4
+        let platformOpts = PlatformSocketOptions.forQUIC(
+            addressFamily: addrFamily,
+            enableECN: socketConfig.enableECN,
+            enableDF: socketConfig.enableDF
+        )
+        let socket = NIOQUICSocket(configuration: udpConfig, platformOptions: platformOpts)
         try await socket.start()
 
         // Set socket directly before running to avoid race condition
@@ -147,6 +160,18 @@ extension QUICEndpoint {
             remoteAddress: address,
             maxDatagramSize: configuration.maxUDPPayloadSize
         )
+
+        // Enable ECN if the socket was created with ECN support
+        if let nioSocket = self.socket as? NIOQUICSocket,
+           nioSocket.platformOptions?.ecnEnabled == true {
+            connection.enableECN()
+        }
+
+        // Enable DPLPMTUD if the socket has the DF bit set
+        if let nioSocket = self.socket as? NIOQUICSocket,
+           nioSocket.platformOptions?.dfEnabled == true {
+            connection.enablePMTUD()
+        }
 
         // Set callback for NEW_CONNECTION_ID frames
         connection.setNewConnectionIDCallback { [weak router, weak connection] cid in

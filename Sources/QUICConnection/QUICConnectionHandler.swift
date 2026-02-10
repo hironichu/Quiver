@@ -15,7 +15,9 @@ import QUICStream
 // MARK: - Connection Handler Errors
 
 /// Errors that can occur during connection handling
-package enum QUICConnectionHandlerError: Error, Sendable {
+import QUICTransport
+
+enum QUICConnectionHandlerError: Error, Sendable {
     /// Missing required secret for key derivation
     case missingSecret(String)
     /// Invalid encryption level
@@ -45,7 +47,7 @@ package final class QUICConnectionHandler: Sendable {
     /// Sourced from `QUICConfiguration.maxUDPPayloadSize` at connection
     /// creation time.  Used to cap stream-frame generation, CRYPTO frame
     /// chunking, and congestion-controller initialisation.
-    let maxDatagramSize: Int
+    package let maxDatagramSize: Int
 
     /// Connection state
     let connectionState: Mutex<ConnectionState>
@@ -93,6 +95,25 @@ package final class QUICConnectionHandler: Sendable {
 
     /// Stateless reset manager
     let statelessResetManager: StatelessResetManager
+
+    /// ECN manager for tracking congestion signals (RFC 9000 §13.4).
+    ///
+    /// Manages ECN validation state, outgoing codepoint selection, and
+    /// incoming ECN count bookkeeping.  Connected to the socket layer
+    /// via `IncomingPacket.ecnCodepoint` on the receive path and
+    /// `PlatformSocketOptions` on the send path.
+    package let ecnManager: ECNManager
+
+    /// DPLPMTUD manager (RFC 8899 / RFC 9000 §14.3).
+    ///
+    /// Discovers the path MTU via padded PATH_CHALLENGE probes.
+    /// Requires the DF bit to be set on the socket
+    /// (`PlatformSocketConstants.isDFSupported`).
+    ///
+    /// PATH_RESPONSE frames are first checked against the PMTUD probe
+    /// (via ``pmtuDiscovery/isProbeResponse(_:)``) before being
+    /// dispatched to the migration ``pathValidationManager``.
+    package let pmtuDiscovery: PMTUDiscoveryManager
 
     // MARK: - Initialization
 
@@ -152,6 +173,17 @@ package final class QUICConnectionHandler: Sendable {
             activeConnectionIDLimit: UInt64(transportParameters.activeConnectionIDLimit)
         )
         self.statelessResetManager = StatelessResetManager()
+
+        // ECN manager — starts disabled; call enableECN() after the
+        // socket confirms ECN support (PlatformSocketOptions.ecnEnabled).
+        self.ecnManager = ECNManager()
+
+        // DPLPMTUD — starts disabled; call pmtuDiscovery.enable() after
+        // confirming the socket has the DF bit set.
+        self.pmtuDiscovery = PMTUDiscoveryManager(configuration: PMTUConfiguration(
+            basePLPMTU: maxDatagramSize,
+            maxPLPMTU: max(maxDatagramSize, 1452)
+        ))
     }
 
     // MARK: - TLS Provider
@@ -248,10 +280,24 @@ package final class QUICConnectionHandler: Sendable {
 
         // Check if ACKs need to be sent
         for level in [EncryptionLevel.initial, .handshake, .application] {
+            // Fetch local ECN counts for this packet number space.
+            // ECNCountState (QUICTransport) -> ECNCounts (QUICCore wire format).
+            let ecnCounts: ECNCounts?
+            if let localECN = ecnManager.countsForACK(level: level) {
+                ecnCounts = ECNCounts(
+                    ect0Count: localECN.ect0Count,
+                    ect1Count: localECN.ect1Count,
+                    ecnCECount: localECN.ceCount
+                )
+            } else {
+                ecnCounts = nil
+            }
+
             if let ackFrame = pnSpaceManager.generateAckFrame(
                 for: level,
                 now: now,
-                ackDelayExponent: ackDelayExponent
+                ackDelayExponent: ackDelayExponent,
+                ecnCounts: ecnCounts
             ) {
                 queueFrame(.ack(ackFrame), level: level)
             }

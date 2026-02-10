@@ -307,13 +307,15 @@ package final class PacketNumberSpaceManager: Sendable {
     ///   - level: The encryption level
     ///   - now: Current time
     ///   - ackDelayExponent: The ACK delay exponent
+    ///   - ecnCounts: ECN counts to include in the ACK frame (from `ECNManager.countsForACK`)
     /// - Returns: An ACK frame, or nil if not needed
     package func generateAckFrame(
         for level: EncryptionLevel,
         now: ContinuousClock.Instant,
-        ackDelayExponent: UInt64
+        ackDelayExponent: UInt64,
+        ecnCounts: ECNCounts? = nil
     ) -> AckFrame? {
-        ackManagers[level]?.generateAckFrame(now: now, ackDelayExponent: ackDelayExponent)
+        ackManagers[level]?.generateAckFrame(now: now, ackDelayExponent: ackDelayExponent, ecnCounts: ecnCounts)
     }
 
     // MARK: - Persistent Congestion Detection

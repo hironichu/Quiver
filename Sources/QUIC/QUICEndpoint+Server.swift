@@ -90,15 +90,28 @@ extension QUICEndpoint {
         port: UInt16,
         configuration: QUICConfiguration
     ) async throws -> (endpoint: QUICEndpoint, runTask: Task<Void, Error>) {
+        // Validate configuration consistency before creating the socket
+        try configuration.validate()
+
         let socketConfig = configuration.socketConfiguration
         let udpConfig = UDPConfiguration(
             bindAddress: .specific(host: host, port: Int(port)),
             reuseAddress: false,
             receiveBufferSize: socketConfig.receiveBufferSize ?? 65536,
             sendBufferSize: socketConfig.sendBufferSize ?? 65536,
-            maxDatagramSize: socketConfig.maxDatagramSize
+            maxDatagramSize: socketConfig.maxDatagramSize,
+            enableECN: socketConfig.enableECN
         )
-        let socket = NIOQUICSocket(configuration: udpConfig)
+
+        // Determine address family from the bind host for platform options
+        let addrFamily: PlatformSocketOptions.AddressFamily =
+            host.contains(":") ? .ipv6 : .ipv4
+        let platformOpts = PlatformSocketOptions.forQUIC(
+            addressFamily: addrFamily,
+            enableECN: socketConfig.enableECN,
+            enableDF: socketConfig.enableDF
+        )
+        let socket = NIOQUICSocket(configuration: udpConfig, platformOptions: platformOpts)
         return try await serve(socket: socket, configuration: configuration)
     }
 
@@ -141,6 +154,18 @@ extension QUICEndpoint {
             remoteAddress: info.remoteAddress,
             maxDatagramSize: configuration.maxUDPPayloadSize
         )
+
+        // Enable ECN if the socket was created with ECN support
+        if let nioSocket = self.socket as? NIOQUICSocket,
+           nioSocket.platformOptions?.ecnEnabled == true {
+            connection.enableECN()
+        }
+
+        // Enable DPLPMTUD if the socket has the DF bit set
+        if let nioSocket = self.socket as? NIOQUICSocket,
+           nioSocket.platformOptions?.dfEnabled == true {
+            connection.enablePMTUD()
+        }
 
         // Register with both our SCID and the client's DCID
         router.register(connection, for: [

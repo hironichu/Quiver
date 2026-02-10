@@ -21,6 +21,11 @@ This directory contains runnable demo binaries that showcase the **QUIC** and **
   - [Running the WebTransport Client](#running-the-webtransport-client)
   - [Echo Mechanisms](#echo-mechanisms)
   - [WebTransport API Reference](#webtransport-api-reference)
+- [QUICNetworkDemo — ECN / PMTUD / Platform Socket Demo](#quicnetworkdemo--ecn--pmtud--platform-socket-demo)
+  - [Platform Info Mode](#platform-info-mode)
+  - [Running the Server](#running-the-network-demo-server)
+  - [Running the Client](#running-the-network-demo-client)
+  - [Network Config API Reference](#network-config-api-reference)
 - [Architecture Overview](#architecture-overview)
 - [Security & TLS Configuration](#security--tls-configuration)
 - [Troubleshooting](#troubleshooting)
@@ -971,6 +976,176 @@ await stream.reset(applicationErrorCode: 0)  // Send RESET_STREAM
 
 ---
 
+## QUICNetworkDemo — ECN / PMTUD / Platform Socket Demo
+
+This demo exercises the network-configuration adaptation features added to
+quiver: platform socket option generation, ECN (Explicit Congestion
+Notification) wiring and validation, DPLPMTUD (RFC 8899) state inspection,
+and interface MTU querying.
+
+It runs in three modes: `info` (no network I/O), `server`, and `client`.
+
+### Platform Info Mode
+
+Prints platform socket constants, generated socket option descriptors,
+ECN/TOS helpers, interface MTU queries, and default PMTUD configuration
+without opening any network connections.
+
+```bash
+swift run QUICNetworkDemo info
+```
+
+Output includes:
+
+- `PlatformSocketConstants` — DF/ECN/GRO/GSO/MTU-query support flags
+- IPv4 and IPv6 `PlatformSocketOptions.forQUIC(...)` descriptor lists
+- `ecnFromTOS()` / `tosWithECN()` helper results
+- Loopback and default-interface MTU via `queryInterfaceMTU()` / `queryDefaultInterfaceMTU()`
+- `PMTUConfiguration` defaults (basePLPMTU, maxPLPMTU, granularity, probes, timers)
+
+### Running the Network Demo Server
+
+```bash
+# Default: ECN + DF enabled, bind 127.0.0.1:4434
+swift run QUICNetworkDemo server
+
+# Disable ECN
+swift run QUICNetworkDemo server --no-ecn
+
+# Disable DF (disables PMTUD)
+swift run QUICNetworkDemo server --no-df
+
+# Custom bind address
+swift run QUICNetworkDemo server --host 0.0.0.0 --port 5555
+
+# Verbose logging
+swift run QUICNetworkDemo server --log-level trace
+```
+
+The server:
+
+1. Validates `QUICConfiguration` (socket ceiling >= QUIC payload >= 1200).
+2. Logs the `PlatformSocketOptions` that will be applied to the UDP socket.
+3. Accepts connections and echoes stream data back.
+4. Prints ECN/PMTUD diagnostics after every 5 echoed messages and on
+   connection close.
+
+### Running the Network Demo Client
+
+```bash
+# Default: connects to 127.0.0.1:4434
+swift run QUICNetworkDemo client
+
+# Disable ECN on client side
+swift run QUICNetworkDemo client --no-ecn
+```
+
+The client runs a six-phase test sequence:
+
+| Phase | Description |
+|-------|-------------|
+| 1 | Post-handshake diagnostics — ECN enabled/validation state, PMTUD state/PLPMTU |
+| 2 | ECN validation — 20 ping-pong rounds with 50 ms delays; logs ECN validation progression (`testing` -> `capable`) |
+| 3 | Post-ECN-validation diagnostics |
+| 4 | PMTUD state inspection — current state, PLPMTU, history count, probe generation attempt |
+| 5 | Larger payload echo — 100 / 500 / 1000 byte payloads to verify data integrity |
+| 6 | Final summary — ECN validated flag, PMTUD state, confirmed PLPMTU |
+
+### Network Config API Reference
+
+#### SocketConfiguration
+
+```swift
+// Sources/QUIC/QUICConfiguration.swift
+public struct SocketConfiguration: Sendable {
+    var receiveBufferSize: Int?    // SO_RCVBUF (default: 65536)
+    var sendBufferSize: Int?       // SO_SNDBUF (default: 65536)
+    var maxDatagramSize: Int       // OS/NIO ceiling (default: 65507)
+    var enableECN: Bool            // IP_RECVTOS / IPV6_RECVTCLASS (default: true)
+    var enableDF: Bool             // IP_DONTFRAG / IP_MTU_DISCOVER (default: true)
+}
+```
+
+#### PlatformSocketConstants
+
+```swift
+// Sources/QUICTransport/PlatformSocket.swift
+enum PlatformSocketConstants {
+    static let isDFSupported: Bool
+    static let isECNSupported: Bool
+    static let isGROSupported: Bool
+    static let isGSOSupported: Bool
+    static let isMTUQuerySupported: Bool
+}
+```
+
+#### PlatformSocketOptions
+
+```swift
+// Sources/QUICTransport/PlatformSocket.swift
+struct PlatformSocketOptions: Sendable {
+    let options: [SocketOptionDescriptor]
+    let dfEnabled: Bool
+    let ecnEnabled: Bool
+
+    static func forQUIC(
+        addressFamily: AddressFamily,
+        enableECN: Bool = true,
+        enableDF: Bool = true,
+        ecnValue: UInt8 = 0x02
+    ) -> PlatformSocketOptions
+}
+
+func queryInterfaceMTU(_ interfaceName: String) -> Int?
+func queryDefaultInterfaceMTU() -> Int?
+func ecnFromTOS(_ tosByte: UInt8) -> UInt8
+func tosWithECN(dscp: UInt8 = 0, ecn: UInt8) -> UInt8
+```
+
+#### ECN on ManagedConnection
+
+```swift
+// Sources/QUIC/ManagedConnection.swift
+extension ManagedConnection {
+    func enableECN()
+    func disableECN()
+    var isECNEnabled: Bool
+    var ecnValidationState: ECNValidationState   // .unknown | .testing | .capable | .failed
+    var isECNValidated: Bool
+}
+```
+
+#### DPLPMTUD on ManagedConnection
+
+```swift
+// Sources/QUIC/ManagedConnection.swift
+extension ManagedConnection {
+    func enablePMTUD()
+    func disablePMTUD()
+    var pmtuState: PMTUState       // .disabled | .base | .searching | .searchComplete | .error
+    var currentPathMTU: Int
+    var pmtuDiagnostics: String
+    var pmtuHistoryCount: Int
+    func generatePMTUProbe() -> PMTUDiscoveryManager.ProbeRequest?
+    func resetPMTUDForPathChange()
+}
+```
+
+#### QUICConfiguration.validate()
+
+```swift
+// Sources/QUIC/QUICConfiguration.swift
+extension QUICConfiguration {
+    func validate() throws
+    // Checks:
+    //   maxUDPPayloadSize >= 1200
+    //   socketConfiguration.maxDatagramSize >= maxUDPPayloadSize
+    //   connectionIDLength in 0...20
+}
+```
+
+---
+
 ## Architecture Overview
 
 ```
@@ -1239,8 +1414,10 @@ Examples/
 │   └── main.swift               ← QUIC echo server + client demo
 ├── HTTP3Demo/
 │   └── main.swift               ← HTTP/3 server + client demo
-└── WebTransportDemo/
-    └── main.swift               ← WebTransport echo server + client demo
+├── WebTransportDemo/
+│   └── main.swift               ← WebTransport echo server + client demo
+└── QUICNetworkDemo/
+    └── main.swift               ← ECN / PMTUD / platform socket demo
 ```
 
 ---
@@ -1256,3 +1433,5 @@ Examples/
 - [RFC 9220 — Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html) (Extended CONNECT)
 - [RFC 9297 — HTTP Datagrams and the Capsule Protocol](https://www.rfc-editor.org/rfc/rfc9297.html)
 - [draft-ietf-webtrans-http3 — WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
+- [RFC 3168 — Explicit Congestion Notification](https://www.rfc-editor.org/rfc/rfc3168.html)
+- [RFC 8899 — DPLPMTUD](https://www.rfc-editor.org/rfc/rfc8899.html)

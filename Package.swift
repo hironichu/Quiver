@@ -49,10 +49,15 @@ let package = Package(
             name: "WebTransportDemo",
             targets: ["WebTransportDemo"]
         ),
+        // Example: QUIC Network Configuration Demo (ECN / PMTUD)
+        .executable(
+            name: "QUICNetworkDemo",
+            targets: ["QUICNetworkDemo"]
+        ),
     ],
     dependencies: [
-        // UDP transport
-        .package(url: "https://github.com/hironichu/swift-nio-udp", branch: "main"),
+        // NIO (used by NIOUDPTransport and other targets)
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
 
         // Cryptography
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.2.0"),
@@ -92,6 +97,17 @@ let package = Package(
             exclude: ["TLS/TLS_SECURITY.md"]
         ),
 
+        // MARK: - UDP Transport (inlined from swift-nio-udp)
+
+        .target(
+            name: "NIOUDPTransport",
+            dependencies: [
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ],
+            path: "Sources/NIOUDPTransport"
+        ),
+
         // MARK: - Connection Management
 
         .target(
@@ -101,6 +117,7 @@ let package = Package(
                 "QUICCrypto",
                 "QUICStream",
                 "QUICRecovery",
+                "QUICTransport",
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/QUICConnection"
@@ -133,7 +150,7 @@ let package = Package(
             name: "QUICTransport",
             dependencies: [
                 "QUICCore",
-                .product(name: "NIOUDPTransport", package: "swift-nio-udp"),
+                "NIOUDPTransport",
             ],
             path: "Sources/QUICTransport"
         ),
@@ -262,7 +279,7 @@ let package = Package(
                 "QUICCore",
                 "QUICCrypto",
                 "QUICTransport",
-                .product(name: "NIOUDPTransport", package: "swift-nio-udp"),
+                "NIOUDPTransport",
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICEchoServer"
@@ -277,7 +294,7 @@ let package = Package(
                 "QUICTransport",
                 "HTTP3",
                 "QPACK",
-                .product(name: "NIOUDPTransport", package: "swift-nio-udp"),
+                "NIOUDPTransport",
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/HTTP3Demo"
@@ -292,10 +309,24 @@ let package = Package(
                 "QUICTransport",
                 "HTTP3",
                 "QPACK",
-                .product(name: "NIOUDPTransport", package: "swift-nio-udp"),
+                "NIOUDPTransport",
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/WebTransportDemo"
+        ),
+
+        .executableTarget(
+            name: "QUICNetworkDemo",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "QUICConnection",
+                "QUICTransport",
+                "NIOUDPTransport",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/QUICNetworkDemo"
         ),
     ]
 )

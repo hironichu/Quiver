@@ -49,6 +49,14 @@ package struct FrameProcessingResult: Sendable {
     /// Path that was successfully validated (if any)
     package var pathValidated: NetworkPath? = nil
 
+    /// Newly discovered path MTU from DPLPMTUD probe acknowledgment.
+    ///
+    /// Set when a PATH_RESPONSE matches an active PMTUD probe
+    /// (via ``PMTUDiscoveryManager/probeAcknowledged(challengeData:)``).
+    /// The caller should update `maxDatagramSize` on the connection
+    /// and reconfigure the congestion controller with this value.
+    package var discoveredPLPMTU: Int? = nil
+
     /// New connection IDs issued by peer
     package var newConnectionIDs: [NewConnectionIDFrame] = []
 

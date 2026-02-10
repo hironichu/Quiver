@@ -12,6 +12,7 @@ import QUICCore
 import QUICRecovery
 import QUICCrypto
 import QUICStream
+import QUICTransport
 
 // MARK: - Frame Processing
 
@@ -125,9 +126,19 @@ extension QUICConnectionHandler {
                 result.pathChallengeData.append(data)
 
             case .pathResponse(let data):
-                // Handle response using PathValidationManager
-                if let validatedPath = pathValidationManager.handleResponse(data) {
-                    result.pathValidated = validatedPath
+                // Check DPLPMTUD probes first — a PATH_RESPONSE may be
+                // acknowledging a PMTUD probe rather than a migration
+                // PATH_CHALLENGE.  If it matches, record the new MTU
+                // and skip the migration path validation manager.
+                if pmtuDiscovery.isProbeResponse(data) {
+                    if let newMTU = pmtuDiscovery.probeAcknowledged(challengeData: data) {
+                        result.discoveredPLPMTU = newMTU
+                    }
+                } else {
+                    // Handle response using PathValidationManager
+                    if let validatedPath = pathValidationManager.handleResponse(data) {
+                        result.pathValidated = validatedPath
+                    }
                 }
                 result.pathResponseData.append(data)
 
@@ -178,6 +189,25 @@ extension QUICConnectionHandler {
             level: level,
             receiveTime: now
         )
+
+        // ECN feedback processing (RFC 9000 §13.4.2.1)
+        //
+        // When the peer includes ECN counts in its ACK frame, feed them
+        // into the ECNManager for validation and congestion detection.
+        // ECNCounts (QUICCore wire format) -> ECNCountState (QUICTransport bookkeeping).
+        if let wireECN = ackFrame.ecnCounts {
+            let peerCounts = ECNCountState(
+                ect0: wireECN.ect0Count,
+                ect1: wireECN.ect1Count,
+                ce: wireECN.ecnCECount
+            )
+            let newCEMarks = ecnManager.processACKFeedback(peerCounts, level: level)
+            if newCEMarks > 0 {
+                // CE marks indicate congestion on the path — signal the
+                // congestion controller the same way a packet loss would.
+                congestionController.onECNCongestionEvent(now: now)
+            }
+        }
 
         // Congestion Control: process acknowledged packets
         if !result.ackedPackets.isEmpty {

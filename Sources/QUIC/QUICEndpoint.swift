@@ -2,6 +2,13 @@
 ///
 /// Main entry point for QUIC connections.
 /// Provides both client and server APIs.
+///
+/// ## ECN Integration
+///
+/// `processIncomingPacket` accepts an optional `ECNCodepoint` from the
+/// socket layer and forwards it to `ManagedConnection.processDatagram`
+/// so that ECN counts are tracked per encryption level for ACK frames
+/// (RFC 9000 §13.4).
 
 import Foundation
 import Synchronization
@@ -227,8 +234,14 @@ public actor QUICEndpoint {
     /// - Parameters:
     ///   - data: The packet data
     ///   - remoteAddress: Where the packet came from
+    ///   - ecnCodepoint: ECN codepoint from the IP header (via `IncomingPacket`).
+    ///     Defaults to `.notECT` when the transport does not provide ECN metadata.
     /// - Returns: Outbound packets to send
-    public func processIncomingPacket(_ data: Data, from remoteAddress: SocketAddress) async throws -> [Data] {
+    public func processIncomingPacket(
+        _ data: Data,
+        from remoteAddress: SocketAddress,
+        ecnCodepoint: ECNCodepoint = .notECT
+    ) async throws -> [Data] {
         // Check for Version Negotiation packet first (version == 0 in long header)
         // RFC 9000 Section 6: Version Negotiation packets are special and must be
         // handled before normal routing
@@ -242,7 +255,7 @@ public actor QUICEndpoint {
         case .routed(let connection):
             // Process packet through the connection
             timerManager.recordActivity(for: connection)
-            let responses = try await connection.processDatagram(data)
+            let responses = try await connection.processDatagram(data, ecnCodepoint: ecnCodepoint)
 
             // Send responses
             for response in responses {
@@ -267,7 +280,7 @@ public actor QUICEndpoint {
             }
 
             let connection = try await handleNewConnection(info: info)
-            let responses = try await connection.processDatagram(data)
+            let responses = try await connection.processDatagram(data, ecnCodepoint: ecnCodepoint)
 
             // Send responses
             for response in responses {

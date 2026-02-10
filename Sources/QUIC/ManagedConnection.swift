@@ -1,4 +1,12 @@
-/// Managed Connection
+/// QUIC Managed Connection
+///
+/// ## ECN Integration
+///
+/// `processDatagram` and `processIncomingPacket` accept an optional
+/// `ECNCodepoint` from the socket layer (`IncomingPacket.ecnCodepoint`).
+/// After each packet is decrypted and its encryption level is known,
+/// the codepoint is fed into `handler.ecnManager.recordIncoming(_:level:)`
+/// for ACK-frame ECN count reporting (RFC 9000 §13.4).
 ///
 /// High-level connection wrapper that orchestrates handshake, packet processing,
 /// and stream management. Implements QUICConnectionProtocol for public API.
@@ -382,10 +390,161 @@ public final class ManagedConnection: Sendable {
         )
     }
 
+    // MARK: - ECN Control
+
+    /// Enables ECN marking on outgoing packets and starts ECN validation.
+    ///
+    /// Call this after confirming the socket was created with ECN support
+    /// (i.e. `PlatformSocketOptions.ecnEnabled == true`).
+    public func enableECN() {
+        handler.ecnManager.enableECN()
+    }
+
+    /// Disables ECN marking on outgoing packets.
+    public func disableECN() {
+        handler.ecnManager.disableECN()
+    }
+
+    /// Whether ECN is currently enabled on this connection.
+    public var isECNEnabled: Bool {
+        handler.ecnManager.isEnabled
+    }
+
+    /// Current ECN validation state for this connection's path.
+    public var ecnValidationState: ECNValidationState {
+        handler.ecnManager.validationState
+    }
+
+    /// Whether ECN validation has succeeded on this path.
+    public var isECNValidated: Bool {
+        handler.ecnManager.isValidated
+    }
+
+    // MARK: - DPLPMTUD Control
+
+    /// Enables DPLPMTUD probing on this connection.
+    ///
+    /// Call this after confirming the socket has the DF bit set
+    /// (i.e. `PlatformSocketOptions.dfEnabled == true`).
+    /// Without DF, routers may silently fragment and probes always
+    /// "succeed", yielding an incorrect path MTU.
+    public func enablePMTUD() {
+        handler.pmtuDiscovery.enable()
+    }
+
+    /// Disables DPLPMTUD and reverts to the base MTU.
+    public func disablePMTUD() {
+        handler.pmtuDiscovery.disable()
+    }
+
+    /// The currently confirmed path MTU from DPLPMTUD.
+    ///
+    /// In `disabled` or `error` states this returns `basePLPMTU`
+    /// (i.e. `ProtocolLimits.minimumMaximumDatagramSize`).
+    public var currentPathMTU: Int {
+        handler.pmtuDiscovery.currentPLPMTU
+    }
+
+    /// Current DPLPMTUD state machine phase.
+    public var pmtuState: PMTUState {
+        handler.pmtuDiscovery.state
+    }
+
+    /// Resets DPLPMTUD state after a path change (connection migration).
+    ///
+    /// Reverts the confirmed MTU to base and restarts the search
+    /// on the next timer tick.
+    public func resetPMTUDForPathChange() {
+        handler.pmtuDiscovery.resetForPathChange()
+    }
+
+    /// Diagnostic summary of the DPLPMTUD state for logging.
+    public var pmtuDiagnostics: String {
+        handler.pmtuDiscovery.diagnosticSummary
+    }
+
+    /// The number of confirmed MTU entries in the PMTUD history.
+    public var pmtuHistoryCount: Int {
+        handler.pmtuDiscovery.mtuHistory.count
+    }
+
+    /// Attempts to generate a DPLPMTUD probe.
+    ///
+    /// Returns `nil` when the state machine is not in a probing phase
+    /// (e.g. `disabled`, `searchComplete`, or an active probe is already
+    /// in flight).
+    public func generatePMTUProbe() -> PMTUDiscoveryManager.ProbeRequest? {
+        handler.pmtuDiscovery.generateProbe()
+    }
+
+    /// Generates a DPLPMTUD probe, builds a padded packet, enqueues it
+    /// for transmission, and signals the outbound send loop.
+    ///
+    /// The probe packet contains a PATH_CHALLENGE frame plus PADDING
+    /// frames to reach the target probe size.  It bypasses the normal
+    /// frame queue because its size intentionally exceeds
+    /// `maxDatagramSize`.
+    ///
+    /// - Returns: The probe request metadata, or `nil` if no probe is
+    ///   needed (PMTUD disabled, search complete, or probe already in
+    ///   flight).
+    @discardableResult
+    public func sendPMTUProbe() throws -> PMTUDiscoveryManager.ProbeRequest? {
+        guard let probe = generatePMTUProbe() else { return nil }
+
+        // Build the probe packet directly (not via the frame queue,
+        // because probe.packetSize > maxDatagramSize).
+        let dcid = state.withLock { $0.destinationConnectionID }
+        let pn = handler.getNextPacketNumber(for: .application)
+        let header = ShortHeader(
+            destinationConnectionID: dcid,
+            packetNumberLength: 4,
+            spinBit: false,
+            keyPhase: false
+        )
+
+        // Compute per-packet overhead so we can size the PADDING frame.
+        //   1           first byte
+        // + dcid.count  DCID
+        // + pnLength    packet number (before encryption)
+        // + 16          AEAD tag  (PacketConstants.aeadTagSize)
+        // + 9           PATH_CHALLENGE (1 type + 8 data)
+        let overhead = 1 + dcid.bytes.count + header.packetNumberLength
+                     + PacketConstants.aeadTagSize + 9
+        let paddingCount = max(0, probe.packetSize - overhead)
+
+        var frames: [Frame] = [probe.frame]
+        if paddingCount > 0 {
+            frames.append(.padding(count: paddingCount))
+        }
+
+        let encrypted = try packetProcessor.encryptShortHeaderPacket(
+            frames: frames,
+            header: header,
+            packetNumber: pn,
+            maxPacketSize: probe.packetSize
+        )
+
+        Self.logger.info(
+            "DPLPMTUD: sending probe packet (\(encrypted.count) bytes, target=\(probe.packetSize), challenge=\(probe.challengeData.count) bytes)"
+        )
+
+        // Enqueue and signal the outbound send loop.
+        state.withLock { $0.probePacketQueue.append(encrypted) }
+        signalNeedsSend()
+
+        return probe
+    }
+
+    // MARK: - Packet Processing
+
     /// Processes an incoming packet
-    /// - Parameter data: The encrypted packet data
+    /// - Parameters:
+    ///   - data: The encrypted packet data
+    ///   - ecnCodepoint: ECN codepoint from the IP header (via `IncomingPacket`).
+    ///     Defaults to `.notECT` when the transport does not provide ECN metadata.
     /// - Returns: Outbound packets to send in response
-    public func processIncomingPacket(_ data: Data) async throws -> [Data] {
+    public func processIncomingPacket(_ data: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws -> [Data] {
         // Record received bytes for anti-amplification limit
         amplificationLimiter.recordBytesReceived(UInt64(data.count))
 
@@ -422,6 +581,9 @@ public final class ManagedConnection: Sendable {
             amplificationLimiter.validateAddress()
         }
 
+        // Record ECN codepoint for this packet's encryption level
+        handler.ecnManager.recordIncoming(ecnCodepoint, level: parsed.encryptionLevel)
+
         // Record received packet
         handler.recordReceivedPacket(
             packetNumber: parsed.packetNumber,
@@ -445,7 +607,12 @@ public final class ManagedConnection: Sendable {
     }
 
     /// Processes a coalesced datagram (multiple packets)
-    /// - Parameter datagram: The UDP datagram
+    /// - Parameters:
+    ///   - datagram: The UDP datagram
+    ///   - ecnCodepoint: ECN codepoint from the IP header (via `IncomingPacket`).
+    ///     Applied to every coalesced packet within the datagram (a single UDP
+    ///     datagram has exactly one IP header, so all coalesced QUIC packets
+    ///     share the same ECN marking). Defaults to `.notECT`.
     /// - Returns: Outbound packets to send in response
     ///
     /// RFC 9000 Section 12.2: A single UDP datagram may contain multiple
@@ -461,7 +628,7 @@ public final class ManagedConnection: Sendable {
     /// This caused the Handshake packet to be silently dropped (no keys yet),
     /// losing the first 110 bytes of Handshake-level CRYPTO data and stalling
     /// the TLS handshake.
-    public func processDatagram(_ datagram: Data) async throws -> [Data] {
+    public func processDatagram(_ datagram: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws -> [Data] {
         // Record received bytes for anti-amplification limit
         amplificationLimiter.recordBytesReceived(UInt64(datagram.count))
 
@@ -538,6 +705,11 @@ public final class ManagedConnection: Sendable {
             if parsed.encryptionLevel == .handshake {
                 amplificationLimiter.validateAddress()
             }
+
+            // Record ECN codepoint for this packet's encryption level.
+            // All coalesced packets in a single UDP datagram share the
+            // same IP header, so the ECN codepoint applies uniformly.
+            handler.ecnManager.recordIncoming(ecnCodepoint, level: parsed.encryptionLevel)
 
             // Record received packet
             handler.recordReceivedPacket(
@@ -715,8 +887,15 @@ public final class ManagedConnection: Sendable {
     /// Generates outbound packets ready to send
     /// - Returns: Array of encrypted packet data
     public func generateOutboundPackets() throws -> [Data] {
+        // Drain pre-built PMTUD probe packets first — these were
+        // constructed by sendPMTUProbe() and already encrypted.
+        var result: [Data] = state.withLock { s in
+            let probes = s.probePacketQueue
+            s.probePacketQueue.removeAll()
+            return probes
+        }
+
         let outboundPackets = handler.getOutboundPackets()
-        var result: [Data] = []
 
         // Consolidate all frames by encryption level into a single packet
         // per level.  Previously each frame was wrapped in its own
@@ -1078,6 +1257,18 @@ public final class ManagedConnection: Sendable {
             onNewConnectionID.withLock { callback in
                 callback?(frame.connectionID)
             }
+        }
+
+        // Handle DPLPMTUD probe acknowledgment — a PATH_RESPONSE matched
+        // an active PMTUD probe and confirmed a new path MTU.
+        if let newMTU = result.discoveredPLPMTU {
+            Self.logger.info("DPLPMTUD: path MTU confirmed at \(newMTU) bytes (was \(handler.maxDatagramSize))")
+            // NOTE: maxDatagramSize on the handler is currently a `let`.
+            // Full runtime MTU update (congestion window recalculation,
+            // pacing adjustment) requires making it mutable and notifying
+            // the congestion controller.  For now the discovered value is
+            // recorded in the PMTUD manager's history and logged; callers
+            // can query handler.pmtuDiscovery.currentPLPMTU.
         }
 
         return outboundPackets
