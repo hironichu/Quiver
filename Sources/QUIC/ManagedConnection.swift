@@ -58,6 +58,11 @@ public final class ManagedConnection: Sendable {
     /// Internal state
     let state: Mutex<ManagedConnectionState>
 
+    /// Serializes concurrent calls to `generateOutboundPackets()` (RC1 fix).
+    /// Both `outboundSendLoop` and `packetReceiveLoop` may call it concurrently;
+    /// this lock ensures only one executes at a time.
+    private let packetGenerationLock = Mutex(())
+
     /// State for stream read continuations
     struct StreamContinuationsState: Sendable {
         var continuations: [UInt64: CheckedContinuation<Data, any Error>] = [:]
@@ -887,6 +892,15 @@ public final class ManagedConnection: Sendable {
     /// Generates outbound packets ready to send
     /// - Returns: Array of encrypted packet data
     public func generateOutboundPackets() throws -> [Data] {
+        // Phase 1: Serialize so outboundSendLoop + packetReceiveLoop
+        // cannot interleave frame queue operations (RC1).
+        try packetGenerationLock.withLock { _ in
+            try _generateOutboundPacketsLocked()
+        }
+    }
+
+    /// The actual packet generation logic, called under `packetGenerationLock`.
+    private func _generateOutboundPacketsLocked() throws -> [Data] {
         // Drain pre-built PMTUD probe packets first — these were
         // constructed by sendPMTUProbe() and already encrypted.
         var result: [Data] = state.withLock { s in
@@ -897,71 +911,93 @@ public final class ManagedConnection: Sendable {
 
         let outboundPackets = handler.getOutboundPackets()
 
-        // Consolidate all frames by encryption level into a single packet
-        // per level.  Previously each frame was wrapped in its own
-        // OutboundPacket, leading to many tiny packets (one per CRYPTO
-        // frame, one per ACK, etc.).  Consolidating reduces packet count,
-        // saves packet numbers, and ensures the peer receives all handshake
-        // CRYPTO data in a single packet that can be processed atomically.
+        // Consolidate all frames by encryption level.
         var framesByLevel: [EncryptionLevel: [Frame]] = [:]
 
         for packet in outboundPackets {
             // Skip levels whose keys have already been discarded.
-            // This can happen due to a race between the outboundSendLoop
-            // (which calls generateOutboundPackets via signalNeedsSend)
-            // and the inline processTLSOutputs path that discards
-            // Initial/Handshake keys after handshake completion.
             guard packetProcessor.hasKeys(for: packet.level) else {
                 continue
             }
-
             framesByLevel[packet.level, default: []].append(contentsOf: packet.frames)
         }
 
-        // Build one packet per encryption level (ordering: Initial, Handshake, Application)
-
-        if let initialFrames = framesByLevel[.initial], !initialFrames.isEmpty {
-            let pn = handler.getNextPacketNumber(for: .initial)
-            let header = buildPacketHeader(for: .initial, packetNumber: pn)
-            if case .long(let longHeader) = header {
-                let encrypted = try packetProcessor.encryptLongHeaderPacket(
-                    frames: initialFrames,
-                    header: longHeader,
-                    packetNumber: pn,
-                    padToMinimum: true
-                )
-                result.append(encrypted)
-            }
+        // Phase 3: For each level, pack frames into MTU-sized packets
+        // instead of cramming all frames into a single packet (RC2/RC4).
+        for level in [EncryptionLevel.initial, .handshake, .application] {
+            guard let frames = framesByLevel[level], !frames.isEmpty else { continue }
+            let packets = try buildMTUPackets(frames: frames, level: level)
+            result.append(contentsOf: packets)
         }
 
-        if let handshakeFrames = framesByLevel[.handshake], !handshakeFrames.isEmpty {
-            let pn = handler.getNextPacketNumber(for: .handshake)
-            let header = buildPacketHeader(for: .handshake, packetNumber: pn)
-            if case .long(let longHeader) = header {
-                let encrypted = try packetProcessor.encryptLongHeaderPacket(
-                    frames: handshakeFrames,
-                    header: longHeader,
-                    packetNumber: pn,
-                    padToMinimum: false
-                )
-                result.append(encrypted)
-            }
-        }
+        return result
+    }
 
-        if let appFrames = framesByLevel[.application], !appFrames.isEmpty {
-            let pn = handler.getNextPacketNumber(for: .application)
-            let header = buildPacketHeader(for: .application, packetNumber: pn)
-            if case .short(let shortHeader) = header {
-                let encrypted = try packetProcessor.encryptShortHeaderPacket(
-                    frames: appFrames,
-                    header: shortHeader,
-                    packetNumber: pn
-                )
-                result.append(encrypted)
+    // MARK: - MTU-Aware Packet Builder (Phase 3)
+
+    /// Splits `frames` into one or more packets that each fit within `maxDatagramSize`.
+    ///
+    /// Delegates pure batching logic to ``MTUFramePacker.pack(frames:maxPayload:)``
+    /// and encrypts each batch via ``encryptAndFlush(_:level:)``.
+    ///
+    /// If a single frame exceeds the MTU payload budget it is emitted alone so that
+    /// other frames are not lost when the encoder throws `packetTooLarge` (RC4 fix).
+    private func buildMTUPackets(frames: [Frame], level: EncryptionLevel) throws -> [Data] {
+        let (scid, dcid) = state.withLock { s in
+            (s.sourceConnectionID, s.destinationConnectionID)
+        }
+        let maxPayload = MTUFramePacker.maxPayload(
+            for: level,
+            maxDatagramSize: packetProcessor.maxDatagramSize,
+            dcidLength: dcid.length,
+            scidLength: scid.length
+        )
+
+        let batches = MTUFramePacker.pack(frames: frames, maxPayload: maxPayload)
+        var result: [Data] = []
+
+        for batch in batches {
+            if batch.isOversized {
+                // Oversized single frame -- attempt encryption but don't
+                // propagate the error so subsequent batches survive.
+                do {
+                    result.append(try encryptAndFlush(batch.frames, level: level))
+                } catch {
+                    Self.logger.warning("Oversized frame (\(batch.totalSize) > \(maxPayload)) at \(level): \(error)")
+                }
+            } else {
+                result.append(try encryptAndFlush(batch.frames, level: level))
             }
         }
 
         return result
+    }
+
+    /// Encrypts a batch of frames into a single packet at the given level.
+    private func encryptAndFlush(_ frames: [Frame], level: EncryptionLevel) throws -> Data {
+        let pn = handler.getNextPacketNumber(for: level)
+        let header = buildPacketHeader(for: level, packetNumber: pn)
+
+        let encrypted: Data
+        switch (level, header) {
+        case (.initial, .long(let lh)):
+            encrypted = try packetProcessor.encryptLongHeaderPacket(
+                frames: frames, header: lh, packetNumber: pn, padToMinimum: true
+            )
+        case (.handshake, .long(let lh)):
+            encrypted = try packetProcessor.encryptLongHeaderPacket(
+                frames: frames, header: lh, packetNumber: pn, padToMinimum: false
+            )
+        case (.application, .short(let sh)):
+            encrypted = try packetProcessor.encryptShortHeaderPacket(
+                frames: frames, header: sh, packetNumber: pn
+            )
+        default:
+            throw PacketCodecError.invalidPacketFormat("Header type mismatch for level \(level)")
+        }
+
+        Self.logger.trace("Emitting \(level) packet: \(encrypted.count) bytes (\(frames.count) frames)")
+        return encrypted
     }
 
     /// Called when a timer expires
@@ -1365,5 +1401,3 @@ public final class ManagedConnection: Sendable {
         return try? TransportParameterCodec.decode(data)
     }
 }
-
-

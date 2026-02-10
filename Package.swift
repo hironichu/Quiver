@@ -54,6 +54,16 @@ let package = Package(
             name: "QUICNetworkDemo",
             targets: ["QUICNetworkDemo"]
         ),
+        // Benchmark: High-throughput server (QUIC + HTTP/3 + WebTransport)
+        .executable(
+            name: "BenchmarkServer",
+            targets: ["BenchmarkServer"]
+        ),
+        // Benchmark: High-throughput client (QUIC + HTTP/3 + WebTransport)
+        .executable(
+            name: "BenchmarkClient",
+            targets: ["BenchmarkClient"]
+        ),
     ],
     dependencies: [
         // NIO (used by NIOUDPTransport and other targets)
@@ -328,6 +338,36 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICNetworkDemo"
+        ),
+
+        .executableTarget(
+            name: "BenchmarkServer",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "QUICTransport",
+                "HTTP3",
+                "QPACK",
+                "NIOUDPTransport",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/BenchmarkServer"
+        ),
+
+        .executableTarget(
+            name: "BenchmarkClient",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "QUICTransport",
+                "HTTP3",
+                "QPACK",
+                "NIOUDPTransport",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/BenchmarkClient"
         ),
     ]
 )

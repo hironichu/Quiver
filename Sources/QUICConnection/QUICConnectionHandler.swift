@@ -276,12 +276,24 @@ package final class QUICConnectionHandler: Sendable {
     package func getOutboundPackets() -> [OutboundPacket] {
         let now = ContinuousClock.Instant.now
         let ackDelayExponent = localTransportParams.ackDelayExponent
-        var packets: [OutboundPacket] = []
 
-        // Check if ACKs need to be sent
+        // Phase 2 (RC1/RC3 fix): Atomic frame collection.
+        // Single lock acquisition on outboundQueue to drain externally-queued
+        // frames (HANDSHAKE_DONE, PATH_RESPONSE, CONNECTION_CLOSE, DATAGRAM,
+        // CRYPTO, etc.).  All other frame generation happens into local arrays
+        // without touching the queue, eliminating the multi-lock interleaving
+        // race between outboundSendLoop and packetReceiveLoop.
+
+        // Step 1: Atomic drain of externally-queued frames.
+        let snapshot: [OutboundPacket] = outboundQueue.withLock { queue in
+            let result = queue
+            queue.removeAll()
+            return result
+        }
+
+        // Step 2: Generate ACK frames locally (no queue touch).
+        var ackPackets: [OutboundPacket] = []
         for level in [EncryptionLevel.initial, .handshake, .application] {
-            // Fetch local ECN counts for this packet number space.
-            // ECNCountState (QUICTransport) -> ECNCounts (QUICCore wire format).
             let ecnCounts: ECNCounts?
             if let localECN = ecnManager.countsForACK(level: level) {
                 ecnCounts = ECNCounts(
@@ -299,37 +311,55 @@ package final class QUICConnectionHandler: Sendable {
                 ackDelayExponent: ackDelayExponent,
                 ecnCounts: ecnCounts
             ) {
-                queueFrame(.ack(ackFrame), level: level)
+                ackPackets.append(OutboundPacket(frames: [.ack(ackFrame)], level: level))
             }
         }
 
-        // Generate stream frames (only at application level)
+        // Step 3 & 4: Generate flow-control frames locally, compute budget
+        // including ACK + flow-control + external frame sizes (RC3 fix).
+        var flowPackets: [OutboundPacket] = []
+        var streamPackets: [OutboundPacket] = []
+
         if handshakeComplete.withLock({ $0 }) {
-            let streamFrames = streamManager.generateStreamFrames(maxBytes: maxDatagramSize)
+            // Generate flow control frames first so they are included in budget.
+            let flowFrames = streamManager.generateFlowControlFrames()
+            for flowFrame in flowFrames {
+                flowPackets.append(OutboundPacket(frames: [flowFrame], level: .application))
+            }
+
+            // Compute budget: subtract overhead + all application-level control frames.
+            let dcidLen = connectionState.withLock { $0.currentDestinationCID.bytes.count }
+            let packetOverhead = 1 + dcidLen + 4 + PacketConstants.aeadTagSize
+
+            let controlFrameBytes = ackPackets
+                .filter { $0.level == .application }
+                .flatMap { $0.frames }
+                .reduce(0) { $0 + FrameSize.frame($1) }
+                + flowPackets
+                .flatMap { $0.frames }
+                .reduce(0) { $0 + FrameSize.frame($1) }
+
+            let externalFrameBytes = snapshot
+                .filter { $0.level == .application }
+                .flatMap { $0.frames }
+                .reduce(0) { $0 + FrameSize.frame($1) }
+
+            let streamBudget = max(0, maxDatagramSize - packetOverhead - controlFrameBytes - externalFrameBytes)
+
+            // Step 5: Generate stream frames locally.
+            let streamFrames = streamManager.generateStreamFrames(maxBytes: streamBudget)
             if !streamFrames.isEmpty {
                 Self.logger.trace("Generated \(streamFrames.count) stream frames")
             }
             for streamFrame in streamFrames {
-                queueFrame(.stream(streamFrame), level: .application)
-            }
-
-            // Generate flow control frames
-            let flowFrames = streamManager.generateFlowControlFrames()
-            for flowFrame in flowFrames {
-                queueFrame(flowFrame, level: .application)
+                streamPackets.append(OutboundPacket(frames: [.stream(streamFrame)], level: .application))
             }
         } else {
             Self.logger.trace("Handshake not complete, skipping stream frame generation")
         }
 
-        // Get queued packets
-        packets = outboundQueue.withLock { queue in
-            let result = queue
-            queue.removeAll()
-            return result
-        }
-
-        return packets
+        // Step 6: Return combined: snapshot + ACKs + flow-control + stream frames.
+        return snapshot + ackPackets + flowPackets + streamPackets
     }
 
     /// Queues a frame to be sent
@@ -339,8 +369,15 @@ package final class QUICConnectionHandler: Sendable {
     }
 
     /// Queues CRYPTO frames to be sent
+    ///
+    /// Phase 4: Subtract worst-case long-header overhead so each CRYPTO frame
+    /// fits within a single MTU-sized packet when placed alone.
     package func queueCryptoData(_ data: Data, level: EncryptionLevel) {
-        let frames = cryptoStreamManager.createFrames(for: data, at: level, maxFrameSize: maxDatagramSize)
+        // Worst-case long header overhead:
+        //   1 (flags) + 4 (version) + 1+20 (DCID) + 1+20 (SCID) + 1 (token len) + 2 (length) + 4 (PN) + 16 (AEAD) = 70
+        let longHeaderOverhead = 1 + 4 + 1 + 20 + 1 + 20 + 1 + 2 + 4 + PacketConstants.aeadTagSize
+        let maxCryptoPayload = max(64, maxDatagramSize - longHeaderOverhead)
+        let frames = cryptoStreamManager.createFrames(for: data, at: level, maxFrameSize: maxCryptoPayload)
         Self.logger.debug("Queueing \(frames.count) CRYPTO frames (\(data.count) bytes) at \(level)")
         for frame in frames {
             queueFrame(.crypto(frame), level: level)
