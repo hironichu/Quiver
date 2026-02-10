@@ -71,7 +71,8 @@ public enum PlatformSocketConstants {
     #if os(Linux)
     public static let ipv6DFOption: CInt = CInt(IPV6_DONTFRAG)
     #elseif canImport(Darwin)
-    public static let ipv6DFOption: CInt = CInt(IPV6_DONTFRAG)
+    // IPV6_DONTFRAG is defined as 62 in <netinet6/in6.h> but not exported by Swift's Darwin module.
+    public static let ipv6DFOption: CInt = CInt(62)
     #else
     public static let ipv6DFOption: CInt = 0
     #endif
@@ -186,7 +187,9 @@ public enum PlatformSocketConstants {
         #if os(Linux)
         return UInt(Glibc.SIOCGIFMTU)
         #elseif canImport(Darwin)
-        return UInt(Darwin.SIOCGIFMTU)
+        // SIOCGIFMTU = _IOWR('i', 51, struct ifreq) = 0xC0206933 on Darwin (64-bit).
+        // The macro is not importable through Swift's Darwin module.
+        return UInt(0xC020_6933)
         #else
         return 0
         #endif
@@ -395,7 +398,7 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
     #if os(Linux)
     let rc = ioctl(fd, UInt(Glibc.SIOCGIFMTU), &ifr)
     #else
-    let rc = ioctl(fd, UInt(Darwin.SIOCGIFMTU), &ifr)
+    let rc = ioctl(fd, PlatformSocketConstants.siocgifmtu, &ifr)
     #endif
 
     guard rc == 0 else { return nil }
