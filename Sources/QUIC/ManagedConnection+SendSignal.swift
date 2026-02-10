@@ -19,8 +19,9 @@ extension ManagedConnection {
     ///
     /// The outbound send loop uses this after generating a batch of packets
     /// to decide whether another `generateOutboundPackets()` round is needed
-    /// (the single call is capped at 1200 bytes of stream frames, so large
-    /// or multi-stream writes may require several rounds).
+    /// (the single call is capped at the configured `maxDatagramSize` bytes
+    /// of stream frames, so large or multi-stream writes may require
+    /// several rounds).
     internal var hasPendingStreamData: Bool {
         handler.hasPendingStreamData
     }

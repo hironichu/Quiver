@@ -52,8 +52,11 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
 
     /// Creates a new NewReno congestion controller
     ///
-    /// - Parameter maxDatagramSize: Maximum datagram size in bytes (default: 1200)
-    package init(maxDatagramSize: Int = LossDetectionConstants.maxDatagramSize) {
+    /// - Parameter maxDatagramSize: Maximum datagram size in bytes.
+    ///   Defaults to `LossDetectionConstants.defaultMaxDatagramSize` (1200).
+    ///   At runtime, prefer passing the configured value from
+    ///   `QUICConfiguration.maxUDPPayloadSize`.
+    package init(maxDatagramSize: Int = LossDetectionConstants.defaultMaxDatagramSize) {
         let minimumWindow = 2 * maxDatagramSize
         // RFC 9002 Section 7.2: Initial window calculation
         let initialWindow = min(

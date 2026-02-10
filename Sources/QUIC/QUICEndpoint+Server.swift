@@ -90,12 +90,13 @@ extension QUICEndpoint {
         port: UInt16,
         configuration: QUICConfiguration
     ) async throws -> (endpoint: QUICEndpoint, runTask: Task<Void, Error>) {
+        let socketConfig = configuration.socketConfiguration
         let udpConfig = UDPConfiguration(
             bindAddress: .specific(host: host, port: Int(port)),
             reuseAddress: false,
-            receiveBufferSize: 65536,
-            sendBufferSize: 65536,
-            maxDatagramSize: 65507
+            receiveBufferSize: socketConfig.receiveBufferSize ?? 65536,
+            sendBufferSize: socketConfig.sendBufferSize ?? 65536,
+            maxDatagramSize: socketConfig.maxDatagramSize
         )
         let socket = NIOQUICSocket(configuration: udpConfig)
         return try await serve(socket: socket, configuration: configuration)
@@ -137,7 +138,8 @@ extension QUICEndpoint {
             tlsProvider: tlsProvider,
             congestionControllerFactory: configuration.congestionControllerFactory,
             localAddress: _localAddress,
-            remoteAddress: info.remoteAddress
+            remoteAddress: info.remoteAddress,
+            maxDatagramSize: configuration.maxUDPPayloadSize
         )
 
         // Register with both our SCID and the client's DCID

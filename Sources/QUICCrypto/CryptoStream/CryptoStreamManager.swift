@@ -102,12 +102,13 @@ package final class CryptoStreamManager: Sendable {
     /// - Parameters:
     ///   - data: Data to send
     ///   - level: Encryption level
-    ///   - maxFrameSize: Maximum frame payload size
+    ///   - maxFrameSize: Maximum frame payload size.  Callers must supply
+    ///     the configured path MTU (`QUICConfiguration.maxUDPPayloadSize`).
     /// - Returns: Array of CryptoFrames to send
     package func createFrames(
         for data: Data,
         at level: EncryptionLevel,
-        maxFrameSize: Int = 1200
+        maxFrameSize: Int
     ) -> [CryptoFrame] {
         // Store the sent data for potential Retry handling
         sentDataBuffers.withLock { buffers in

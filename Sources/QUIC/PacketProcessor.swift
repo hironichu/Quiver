@@ -38,6 +38,14 @@ package final class PacketProcessor: Sendable {
     /// Largest packet numbers received per level (for PN decoding)
     private let largestReceivedPN: Mutex<[EncryptionLevel: UInt64]>
 
+    /// Configured maximum datagram size (path MTU).
+    ///
+    /// Sourced from `QUICConfiguration.maxUDPPayloadSize` at connection
+    /// creation time.  Used for packet encryption size checks and
+    /// coalesced-packet building.  Never hard-codes 1200 — the value
+    /// is whatever the caller supplies.
+    let maxDatagramSize: Int
+
     /// Current DCID length (lock-free read)
     @inline(__always)
     package var dcidLengthValue: Int {
@@ -50,13 +58,23 @@ package final class PacketProcessor: Sendable {
     private static let maxDCIDLength = 20
 
     /// Creates a new packet processor
-    /// - Parameter dcidLength: Expected DCID length for short headers (0-20)
-    package init(dcidLength: Int = 8) {
+    /// - Parameters:
+    ///   - dcidLength: Expected DCID length for short headers (0-20)
+    ///   - maxDatagramSize: Configured path MTU from
+    ///     `QUICConfiguration.maxUDPPayloadSize`.  Defaults to
+    ///     `ProtocolLimits.minimumMaximumDatagramSize` (1200) so that
+    ///     call-sites that genuinely have no configuration (e.g. unit
+    ///     tests) still produce RFC-compliant packets.
+    package init(
+        dcidLength: Int = 8,
+        maxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
+    ) {
         // Clamp to valid range (RFC 9000 Section 17.2: 0-20 bytes)
         let validLength = max(0, min(dcidLength, Self.maxDCIDLength))
         self.contexts = Mutex([:])
         self._dcidLength = Atomic(validLength)
         self.largestReceivedPN = Mutex([:])
+        self.maxDatagramSize = maxDatagramSize
     }
 
     // MARK: - Crypto Context Management
@@ -258,12 +276,13 @@ package final class PacketProcessor: Sendable {
 
     // MARK: - Packet Encryption
 
-    /// Encrypts a Long Header packet
+    /// Encrypts a Long Header packet using the configured ``maxDatagramSize``.
     /// - Parameters:
     ///   - frames: Frames to include
     ///   - header: The long header template
     ///   - packetNumber: The packet number
-    ///   - padToMinimum: If true and this is an Initial packet, pad to 1200 bytes
+    ///   - padToMinimum: If true and this is an Initial packet, pad to
+    ///     `ProtocolLimits.minimumInitialPacketSize` bytes
     /// - Returns: The encrypted packet data
     /// - Throws: PacketCodecError if encryption fails
     package func encryptLongHeaderPacket(
@@ -284,11 +303,12 @@ package final class PacketProcessor: Sendable {
             header: header,
             packetNumber: packetNumber,
             sealer: sealer,
+            maxPacketSize: maxDatagramSize,
             padToMinimum: padToMinimum
         )
     }
 
-    /// Encrypts a Short Header packet
+    /// Encrypts a Short Header packet using the configured ``maxDatagramSize``.
     /// - Parameters:
     ///   - frames: Frames to include
     ///   - header: The short header template
@@ -309,23 +329,29 @@ package final class PacketProcessor: Sendable {
             frames: frames,
             header: header,
             packetNumber: packetNumber,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: maxDatagramSize
         )
     }
 
     // MARK: - Coalesced Packet Building
 
-    /// Builds a coalesced packet from multiple packets
+    /// Builds a coalesced packet from multiple packets.
+    ///
+    /// Uses the processor's ``maxDatagramSize`` unless the caller
+    /// provides an explicit override.
+    ///
     /// - Parameters:
     ///   - packets: Array of (frames, header, packetNumber) tuples
-    ///   - maxSize: Maximum datagram size (default: 1200)
+    ///   - maxSize: Maximum datagram size.  Defaults to the configured
+    ///     ``maxDatagramSize``.
     /// - Returns: The coalesced datagram
     /// - Throws: Error if encryption fails
     package func buildCoalescedPacket(
         packets: [(frames: [Frame], header: PacketHeader, packetNumber: UInt64)],
-        maxSize: Int = 1200
+        maxSize: Int? = nil
     ) throws -> Data {
-        var builder = CoalescedPacketBuilder(maxDatagramSize: maxSize)
+        var builder = CoalescedPacketBuilder(maxDatagramSize: maxSize ?? maxDatagramSize)
 
         // Sort by packet type order (Initial -> Handshake -> 0-RTT -> 1-RTT)
         let sorted = packets.sorted { lhs, rhs in

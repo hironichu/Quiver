@@ -186,13 +186,14 @@ extension QUICEndpoint {
 
             do {
                 // Generate and send packets in a loop.
-                // `generateStreamFrames(maxBytes: 1200)` caps each round at
-                // ~1200 bytes of stream frames, so when multiple streams have
-                // data queued (or a single stream has a large write) a single
-                // round may not drain everything.  Re-check after each send
-                // and keep going until no pending stream data remains.  This
-                // avoids relying on another `signalNeedsSend()` (which may
-                // have been coalesced away by `bufferingNewest(1)`).
+                // `generateStreamFrames(maxBytes:)` caps each round at the
+                // configured maxDatagramSize bytes of stream frames, so when
+                // multiple streams have data queued (or a single stream has
+                // a large write) a single round may not drain everything.
+                // Re-check after each send and keep going until no pending
+                // stream data remains.  This avoids relying on another
+                // `signalNeedsSend()` (which may have been coalesced away
+                // by `bufferingNewest(1)`).
                 var rounds = 0
                 repeat {
                     let packets = try connection.generateOutboundPackets()

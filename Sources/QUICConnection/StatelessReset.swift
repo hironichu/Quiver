@@ -73,9 +73,12 @@ public struct StatelessResetPacket: Sendable {
     /// Minimum packet size (RFC 9000 says at least 21 bytes)
     public static let minimumSize = 21
 
-    /// Maximum packet size (to avoid looking like an attack)
-    /// Typically 1200 bytes or less
-    public static let maximumSize = 1200
+    /// Maximum packet size (to avoid looking like an attack).
+    ///
+    /// Defaults to `ProtocolLimits.minimumMaximumDatagramSize` (1200).
+    /// Stateless resets should not exceed the path MTU; this constant
+    /// provides a safe upper bound for the common case.
+    public static let maximumSize = ProtocolLimits.minimumMaximumDatagramSize
 
     /// Creates a stateless reset packet
     /// - Parameters:

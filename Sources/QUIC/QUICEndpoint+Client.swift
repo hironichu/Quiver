@@ -43,8 +43,16 @@ extension QUICEndpoint {
             throw QUICEndpointError.serverCannotConnect
         }
 
-        // Create socket with a random local port
-        let socket = NIOQUICSocket(configuration: .unicast(port: 0))
+        // Create socket with a random local port, using configured buffer sizes
+        let socketConfig = configuration.socketConfiguration
+        let udpConfig = UDPConfiguration(
+            bindAddress: .specific(host: "0.0.0.0", port: 0),
+            reuseAddress: false,
+            receiveBufferSize: socketConfig.receiveBufferSize ?? 65536,
+            sendBufferSize: socketConfig.sendBufferSize ?? 65536,
+            maxDatagramSize: socketConfig.maxDatagramSize
+        )
+        let socket = NIOQUICSocket(configuration: udpConfig)
         try await socket.start()
 
         // Set socket directly before running to avoid race condition
@@ -136,7 +144,8 @@ extension QUICEndpoint {
             tlsProvider: tlsProvider,
             congestionControllerFactory: configuration.congestionControllerFactory,
             localAddress: _localAddress,
-            remoteAddress: address
+            remoteAddress: address,
+            maxDatagramSize: configuration.maxUDPPayloadSize
         )
 
         // Set callback for NEW_CONNECTION_ID frames
@@ -272,7 +281,8 @@ extension QUICEndpoint {
             tlsProvider: tlsProvider,
             congestionControllerFactory: configuration.congestionControllerFactory,
             localAddress: _localAddress,
-            remoteAddress: address
+            remoteAddress: address,
+            maxDatagramSize: configuration.maxUDPPayloadSize
         )
 
         // Register connection

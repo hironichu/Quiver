@@ -180,7 +180,9 @@ package protocol CongestionControllerFactory: Sendable {
     /// Called once per connection to create the congestion controller
     /// that will manage that connection's sending rate.
     ///
-    /// - Parameter maxDatagramSize: Maximum datagram size in bytes (typically 1200)
+    /// - Parameter maxDatagramSize: Maximum datagram size in bytes.
+    ///   Supplied by `QUICConfiguration.maxUDPPayloadSize` at connection
+    ///   creation time (defaults to `ProtocolLimits.minimumMaximumDatagramSize`).
     /// - Returns: A configured congestion controller
     func makeCongestionController(maxDatagramSize: Int) -> any CongestionController
 }

@@ -100,7 +100,8 @@ struct PacketEncoderTests {
             frames: frames,
             header: header,
             packetNumber: 0,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // Verify packet was created
@@ -141,7 +142,8 @@ struct PacketEncoderTests {
             frames: frames,
             header: header,
             packetNumber: 1,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         #expect(encoded.count > 0)
@@ -172,7 +174,8 @@ struct PacketEncoderTests {
             frames: frames,
             header: header,
             packetNumber: 100,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         #expect(encoded.count > 0)
@@ -209,7 +212,8 @@ struct PacketEncoderTests {
             frames: frames,
             header: header,
             packetNumber: 0,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         #expect(encoded.count > 0)
@@ -238,7 +242,8 @@ struct PacketEncoderTests {
             frames: frames,
             header: header,
             packetNumber: 0x12345678,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         #expect(encoded.count > 0)
@@ -419,6 +424,7 @@ struct PacketRoundtripTests {
             header: header,
             packetNumber: packetNumber,
             sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU,
             padToMinimum: false
         )
 
@@ -476,7 +482,8 @@ struct PacketRoundtripTests {
             frames: frames,
             header: header,
             packetNumber: 0,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // RFC 9000 Section 14.1: Initial packets MUST be at least 1200 bytes
@@ -514,7 +521,8 @@ struct PacketRoundtripTests {
             frames: originalFrames,
             header: header,
             packetNumber: packetNumber,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // Decode
@@ -566,7 +574,8 @@ struct PacketRoundtripTests {
             frames: originalFrames,
             header: header,
             packetNumber: packetNumber,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // Decode
@@ -635,7 +644,8 @@ struct HeaderProtectionTests {
                 frames: frames,
                 header: header,
                 packetNumber: packetNumber,
-                sealer: sealer
+                sealer: sealer,
+                maxPacketSize: PacketConstants.minimumMTU
             )
 
             // Decode - should succeed for all PN lengths
@@ -687,7 +697,8 @@ struct HeaderProtectionTests {
                 frames: frames,
                 header: header,
                 packetNumber: packetNumber,
-                sealer: sealer
+                sealer: sealer,
+                maxPacketSize: PacketConstants.minimumMTU
             )
 
             // Decode
@@ -730,7 +741,8 @@ struct HeaderProtectionTests {
             frames: frames,
             header: header,
             packetNumber: 42,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // Add trailing garbage (simulating coalesced packet scenario)
@@ -782,11 +794,12 @@ struct PacketCodecUtilityTests {
             frames: frames,
             header: header,
             packetNumber: 0,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // Verify the encoded packet size is within MTU
-        #expect(encoded.count <= PacketConstants.defaultMTU)
+        #expect(encoded.count <= PacketConstants.minimumMTU)
     }
 
     @Test("Short header packet has correct structure")
@@ -813,7 +826,8 @@ struct PacketCodecUtilityTests {
             frames: frames,
             header: header,
             packetNumber: 0,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // Minimum size: 1 (first byte) + 4 (DCID) + 2 (PN) + 6 (frames) + 16 (tag) = 29
@@ -848,7 +862,8 @@ struct PacketCodecUtilityTests {
             frames: frames,
             header: header,
             packetNumber: 0,
-            sealer: sealer
+            sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU
         )
 
         // First byte should be long header (form bit = 1, fixed bit = 1)
@@ -990,6 +1005,7 @@ struct ProtectedHeaderLengthTests {
             header: header,
             packetNumber: 0,
             sealer: sealer,
+            maxPacketSize: PacketConstants.minimumMTU,
             padToMinimum: false
         )
 

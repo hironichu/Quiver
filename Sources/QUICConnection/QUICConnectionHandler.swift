@@ -40,6 +40,13 @@ package final class QUICConnectionHandler: Sendable {
     static let logger = QuiverLogging.logger(label: "quic.connection.handler")
     // MARK: - Properties
 
+    /// Configured maximum datagram size (path MTU).
+    ///
+    /// Sourced from `QUICConfiguration.maxUDPPayloadSize` at connection
+    /// creation time.  Used to cap stream-frame generation, CRYPTO frame
+    /// chunking, and congestion-controller initialisation.
+    let maxDatagramSize: Int
+
     /// Connection state
     let connectionState: Mutex<ConnectionState>
 
@@ -96,14 +103,21 @@ package final class QUICConnectionHandler: Sendable {
     ///   - sourceConnectionID: Local connection ID
     ///   - destinationConnectionID: Peer's connection ID
     ///   - transportParameters: Local transport parameters
+    ///   - congestionControllerFactory: Factory for creating the congestion controller
+    ///   - maxDatagramSize: Configured path MTU from
+    ///     `QUICConfiguration.maxUDPPayloadSize`.  Defaults to
+    ///     `ProtocolLimits.minimumMaximumDatagramSize` for test convenience.
     package init(
         role: ConnectionRole,
         version: QUICVersion,
         sourceConnectionID: ConnectionID,
         destinationConnectionID: ConnectionID,
         transportParameters: TransportParameters,
-        congestionControllerFactory: any CongestionControllerFactory = NewRenoFactory()
+        congestionControllerFactory: any CongestionControllerFactory = NewRenoFactory(),
+        maxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
     ) {
+        self.maxDatagramSize = maxDatagramSize
+
         self.connectionState = Mutex(ConnectionState(
             role: role,
             version: version,
@@ -113,7 +127,7 @@ package final class QUICConnectionHandler: Sendable {
 
         self.pnSpaceManager = PacketNumberSpaceManager()
         self.congestionController = congestionControllerFactory.makeCongestionController(
-            maxDatagramSize: LossDetectionConstants.maxDatagramSize
+            maxDatagramSize: maxDatagramSize
         )
         self.cryptoStreamManager = CryptoStreamManager()
 
@@ -245,7 +259,7 @@ package final class QUICConnectionHandler: Sendable {
 
         // Generate stream frames (only at application level)
         if handshakeComplete.withLock({ $0 }) {
-            let streamFrames = streamManager.generateStreamFrames(maxBytes: 1200)
+            let streamFrames = streamManager.generateStreamFrames(maxBytes: maxDatagramSize)
             if !streamFrames.isEmpty {
                 Self.logger.trace("Generated \(streamFrames.count) stream frames")
             }
@@ -280,7 +294,7 @@ package final class QUICConnectionHandler: Sendable {
 
     /// Queues CRYPTO frames to be sent
     package func queueCryptoData(_ data: Data, level: EncryptionLevel) {
-        let frames = cryptoStreamManager.createFrames(for: data, at: level)
+        let frames = cryptoStreamManager.createFrames(for: data, at: level, maxFrameSize: maxDatagramSize)
         Self.logger.debug("Queueing \(frames.count) CRYPTO frames (\(data.count) bytes) at \(level)")
         for frame in frames {
             queueFrame(.crypto(frame), level: level)

@@ -77,6 +77,68 @@ public enum QUICSecurityError: Error, Sendable {
 /// ```
 public typealias TLSProviderFactory = @Sendable (_ isClient: Bool) -> any TLS13Provider
 
+// MARK: - Socket Configuration
+
+/// UDP socket-level tuning for a QUIC endpoint.
+///
+/// These values are applied when the endpoint creates its underlying
+/// `NIOQUICSocket`.  They do **not** affect the QUIC protocol itself
+/// but control OS-level buffer sizing and the maximum datagram the
+/// socket layer will accept.
+///
+/// ## Platform Notes
+///
+/// - **Linux**: `SO_RCVBUF` / `SO_SNDBUF` are capped by
+///   `net.core.rmem_max` / `net.core.wmem_max`.  If the requested
+///   value exceeds the kernel limit the actual buffer may be smaller.
+/// - **macOS / iOS**: The kernel may silently round buffer sizes.
+public struct SocketConfiguration: Sendable {
+    /// Receive buffer size in bytes (`SO_RCVBUF`).
+    ///
+    /// A larger buffer reduces the chance of packet drops under burst
+    /// load.  Set to `nil` to use the OS default.
+    ///
+    /// - Default: `65536`
+    public var receiveBufferSize: Int?
+
+    /// Send buffer size in bytes (`SO_SNDBUF`).
+    ///
+    /// - Default: `65536`
+    public var sendBufferSize: Int?
+
+    /// Maximum datagram size the socket layer will accept or send.
+    ///
+    /// This is an OS/NIO transport limit, not the QUIC-level path MTU.
+    /// It should be at least as large as `QUICConfiguration.maxUDPPayloadSize`
+    /// and typically set to the theoretical UDP maximum (`65507`).
+    ///
+    /// - Default: `65507`
+    public var maxDatagramSize: Int
+
+    /// Creates a default socket configuration.
+    public init() {
+        self.receiveBufferSize = 65536
+        self.sendBufferSize = 65536
+        self.maxDatagramSize = 65507
+    }
+
+    /// Creates a custom socket configuration.
+    ///
+    /// - Parameters:
+    ///   - receiveBufferSize: `SO_RCVBUF` value, or `nil` for OS default.
+    ///   - sendBufferSize: `SO_SNDBUF` value, or `nil` for OS default.
+    ///   - maxDatagramSize: Maximum datagram the socket will handle.
+    public init(
+        receiveBufferSize: Int?,
+        sendBufferSize: Int?,
+        maxDatagramSize: Int = 65507
+    ) {
+        self.receiveBufferSize = receiveBufferSize
+        self.sendBufferSize = sendBufferSize
+        self.maxDatagramSize = maxDatagramSize
+    }
+}
+
 // MARK: - QUIC Configuration
 
 /// Configuration for a QUIC endpoint
@@ -86,7 +148,21 @@ public struct QUICConfiguration: Sendable {
     /// Maximum idle timeout (default: 30 seconds)
     public var maxIdleTimeout: Duration
 
-    /// Maximum UDP payload size (default: 1200)
+    /// Maximum UDP payload size — the QUIC-level path MTU used for
+    /// packet construction, congestion-window calculations, stream-frame
+    /// sizing, and Initial-packet padding.
+    ///
+    /// RFC 9000 Section 14 mandates a minimum of 1200 bytes
+    /// (`ProtocolLimits.minimumMaximumDatagramSize`).  Larger values
+    /// (e.g. 1452 for typical Ethernet) can be used when the path is
+    /// known to support them, or after DPLPMTUD probing.
+    ///
+    /// This single value is the **source of truth** that flows into
+    /// `PacketProcessor`, `CongestionController`, `StreamManager`,
+    /// and `CoalescedPacketBuilder`.  Changing it here propagates
+    /// everywhere — no other file should hard-code a datagram size.
+    ///
+    /// - Default: `ProtocolLimits.minimumMaximumDatagramSize` (1200)
     public var maxUDPPayloadSize: Int
 
     // MARK: - Flow Control
@@ -202,16 +278,30 @@ public struct QUICConfiguration: Sendable {
     ///   this property should be promoted as well.
     package var congestionControllerFactory: any CongestionControllerFactory
 
+    // MARK: - Socket / Transport
+
+    /// UDP socket-level tuning (buffer sizes, max datagram).
+    ///
+    /// Applied when the endpoint creates its `NIOQUICSocket` via
+    /// `serve(host:port:)` or `dial(address:)`.  Has no effect when
+    /// a pre-built socket is supplied directly.
+    ///
+    /// - Default: ``SocketConfiguration()``
+    public var socketConfiguration: SocketConfiguration
+
     // MARK: - Initialization
 
     /// Creates a default configuration.
+    ///
+    /// All sizes derive from ``ProtocolLimits`` so that no bare `1200`
+    /// literals exist in the configuration layer.
     ///
     /// - Note: Use `TLSConfiguration` for all TLS settings, and prefer
     ///   `QUICConfiguration.production()` or `.development()` factory
     ///   methods for new code.
     public init() {
         self.maxIdleTimeout = .seconds(30)
-        self.maxUDPPayloadSize = 1200
+        self.maxUDPPayloadSize = ProtocolLimits.minimumMaximumDatagramSize
         self.initialMaxData = 10_000_000
         self.initialMaxStreamDataBidiLocal = 1_000_000
         self.initialMaxStreamDataBidiRemote = 1_000_000
@@ -228,6 +318,7 @@ public struct QUICConfiguration: Sendable {
         self.tlsProviderFactory = nil
         self.securityMode = nil
         self.congestionControllerFactory = NewRenoFactory()
+        self.socketConfiguration = SocketConfiguration()
     }
 
     // MARK: - Security Mode Factory Methods

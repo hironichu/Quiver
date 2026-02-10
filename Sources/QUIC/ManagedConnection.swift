@@ -133,7 +133,8 @@ public final class ManagedConnection: Sendable {
         transportParameters: TransportParameters,
         tlsProvider: any TLS13Provider,
         localAddress: SocketAddress? = nil,
-        remoteAddress: SocketAddress
+        remoteAddress: SocketAddress,
+        maxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
     ) {
         self.init(
             role: role,
@@ -145,7 +146,8 @@ public final class ManagedConnection: Sendable {
             tlsProvider: tlsProvider,
             congestionControllerFactory: NewRenoFactory(),
             localAddress: localAddress,
-            remoteAddress: remoteAddress
+            remoteAddress: remoteAddress,
+            maxDatagramSize: maxDatagramSize
         )
     }
 
@@ -166,6 +168,9 @@ public final class ManagedConnection: Sendable {
     ///   - congestionControllerFactory: Factory for creating the congestion controller
     ///   - localAddress: Local socket address (optional)
     ///   - remoteAddress: Remote socket address
+    ///   - maxDatagramSize: Configured path MTU from
+    ///     `QUICConfiguration.maxUDPPayloadSize`.  Plumbed into
+    ///     `QUICConnectionHandler` and `PacketProcessor`.
     package init(
         role: ConnectionRole,
         version: QUICVersion,
@@ -176,7 +181,8 @@ public final class ManagedConnection: Sendable {
         tlsProvider: any TLS13Provider,
         congestionControllerFactory: any CongestionControllerFactory,
         localAddress: SocketAddress? = nil,
-        remoteAddress: SocketAddress
+        remoteAddress: SocketAddress,
+        maxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
     ) {
         self.incomingDatagramState = Mutex(IncomingDatagramState())
         self.handler = QUICConnectionHandler(
@@ -185,9 +191,13 @@ public final class ManagedConnection: Sendable {
             sourceConnectionID: sourceConnectionID,
             destinationConnectionID: destinationConnectionID,
             transportParameters: transportParameters,
-            congestionControllerFactory: congestionControllerFactory
+            congestionControllerFactory: congestionControllerFactory,
+            maxDatagramSize: maxDatagramSize
         )
-        self.packetProcessor = PacketProcessor(dcidLength: sourceConnectionID.length)
+        self.packetProcessor = PacketProcessor(
+            dcidLength: sourceConnectionID.length,
+            maxDatagramSize: maxDatagramSize
+        )
         self.tlsProvider = tlsProvider
         self.amplificationLimiter = AntiAmplificationLimiter(isServer: role == .server)
         self.pathValidationManager = PathValidationManager()
@@ -694,7 +704,7 @@ public final class ManagedConnection: Sendable {
                 frames: frames,
                 header: header,
                 packetNumber: pn,
-                padToMinimum: true  // Initial packets must be padded to 1200 bytes
+                padToMinimum: true  // Initial packets must be padded to minimumInitialPacketSize (RFC 9000 Section 14.1)
             )
             initialPackets.append(encrypted)
         }

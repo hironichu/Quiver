@@ -98,16 +98,24 @@ public protocol PacketSealerProtocol: Sendable {
 ///
 /// These are extracted from the generic `PacketEncoder` / `PacketDecoder` types
 /// so they can be referenced without specifying a generic parameter
-/// (e.g. `PacketConstants.defaultMTU` instead of `PacketEncoder<…>.defaultMTU`).
+/// (e.g. `PacketConstants.minimumMTU` instead of `PacketEncoder<…>.minimumMTU`).
 package enum PacketConstants {
-    /// Default MTU for QUIC (minimum guaranteed)
-    package static let defaultMTU = 1200
+    /// Minimum MTU that all QUIC paths MUST support (RFC 9000 Section 14).
+    ///
+    /// This is an RFC constant — the absolute floor for packet sizing.
+    /// The **active** MTU used at runtime is supplied by configuration
+    /// (`QUICConfiguration.maxUDPPayloadSize`) and may be larger when
+    /// the path supports it (e.g. after DPLPMTUD).
+    package static let minimumMTU = ProtocolLimits.minimumMaximumDatagramSize
 
     /// AEAD tag size (16 bytes for AES-GCM)
     package static let aeadTagSize = 16
 
-    /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1)
-    package static let initialPacketMinSize = 1200
+    /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1).
+    ///
+    /// Initial packets MUST be padded to at least this size.
+    /// References the same RFC constant as ``minimumMTU``.
+    package static let initialPacketMinSize = ProtocolLimits.minimumInitialPacketSize
 }
 
 // MARK: - Packet Encoder
@@ -121,8 +129,11 @@ package enum PacketConstants {
 package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sendable {
     private let frameCodec: Codec
 
-    /// Default MTU for QUIC (minimum guaranteed)
-    package static var defaultMTU: Int { PacketConstants.defaultMTU }
+    /// Minimum MTU for QUIC (RFC 9000 Section 14).
+    ///
+    /// Forwarded from ``PacketConstants/minimumMTU``.  At runtime prefer
+    /// the configured `maxDatagramSize` value over this constant.
+    package static var minimumMTU: Int { PacketConstants.minimumMTU }
 
     /// AEAD tag size (16 bytes for AES-GCM)
     package static var aeadTagSize: Int { PacketConstants.aeadTagSize }
@@ -141,15 +152,18 @@ package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
     ///   - header: The long header (will be modified with packet number)
     ///   - packetNumber: The packet number to use
     ///   - sealer: The sealer for encryption
-    ///   - maxPacketSize: Maximum packet size (default: 1200)
-    ///   - padToMinimum: If true and this is an Initial packet, pad to 1200 bytes (default: true)
+    ///   - maxPacketSize: Maximum packet size.  Callers MUST supply the
+    ///     configured path MTU; there is no default so that hardcoded
+    ///     values do not silently creep in.
+    ///   - padToMinimum: If true and this is an Initial packet, pad to
+    ///     ``PacketConstants/initialPacketMinSize`` bytes (default: true)
     /// - Returns: The fully encoded and protected packet
     package func encodeLongHeaderPacket(
         frames: [Frame],
         header: LongHeader,
         packetNumber: UInt64,
         sealer: any PacketSealerProtocol,
-        maxPacketSize: Int = defaultMTU,
+        maxPacketSize: Int,
         padToMinimum: Bool = true
     ) throws -> Data {
         var header = header
@@ -231,14 +245,16 @@ package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
     ///   - header: The short header
     ///   - packetNumber: The packet number to use
     ///   - sealer: The sealer for encryption
-    ///   - maxPacketSize: Maximum packet size
+    ///   - maxPacketSize: Maximum packet size.  Callers MUST supply the
+    ///     configured path MTU; there is no default so that hardcoded
+    ///     values do not silently creep in.
     /// - Returns: The fully encoded and protected packet
     package func encodeShortHeaderPacket(
         frames: [Frame],
         header: ShortHeader,
         packetNumber: UInt64,
         sealer: any PacketSealerProtocol,
-        maxPacketSize: Int = defaultMTU
+        maxPacketSize: Int
     ) throws -> Data {
         var header = header
         header.packetNumber = packetNumber

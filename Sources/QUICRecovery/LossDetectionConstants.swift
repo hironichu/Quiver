@@ -1,8 +1,18 @@
 /// QUIC Loss Detection Constants (RFC 9002)
 ///
 /// Constants used for loss detection and probe timeout calculation.
+///
+/// ## Configurable vs Fixed
+///
+/// Most values here are RFC-mandated constants.  The datagram size
+/// constants (`defaultMaxDatagramSize`, `initialWindow`, `minimumWindow`)
+/// provide **defaults** that match the RFC 9000 minimum path MTU of 1200
+/// bytes.  At runtime the actual value is supplied by the configuration
+/// layer (`QUICConfiguration.maxUDPPayloadSize`) and plumbed through
+/// `CongestionControllerFactory.makeCongestionController(maxDatagramSize:)`.
 
 import Foundation
+import QUICCore
 
 /// RFC 9002 loss detection constants
 public enum LossDetectionConstants {
@@ -46,21 +56,43 @@ public enum LossDetectionConstants {
 
     // MARK: - Congestion Control Constants (RFC 9002 Section 7)
 
-    /// Default maximum datagram size (bytes)
-    /// RFC 9002 Section 7.2: Used to calculate initial window
-    public static let maxDatagramSize: Int = 1200
+    /// Default maximum datagram size (bytes).
+    ///
+    /// RFC 9002 Section 7.2: Used to calculate initial window.
+    /// This is the RFC 9000 minimum (1200 bytes) and serves as the
+    /// **fallback** when no explicit value is provided.  Prefer passing
+    /// the configured value from `QUICConfiguration.maxUDPPayloadSize`.
+    public static let defaultMaxDatagramSize: Int = ProtocolLimits.minimumMaximumDatagramSize
 
-    /// Initial congestion window
+    /// Initial congestion window for a given datagram size.
+    ///
     /// RFC 9002 Section 7.2: "The initial congestion window is the minimum of
     /// 10 * max_datagram_size and max(14720, 2 * max_datagram_size)"
-    public static var initialWindow: Int {
+    ///
+    /// - Parameter maxDatagramSize: Path MTU / max datagram size in bytes.
+    /// - Returns: Initial congestion window in bytes.
+    public static func initialWindow(maxDatagramSize: Int) -> Int {
         min(10 * maxDatagramSize, max(14720, 2 * maxDatagramSize))
     }
 
-    /// Minimum congestion window (in bytes)
+    /// Convenience overload using ``defaultMaxDatagramSize``.
+    public static var initialWindow: Int {
+        initialWindow(maxDatagramSize: defaultMaxDatagramSize)
+    }
+
+    /// Minimum congestion window for a given datagram size.
+    ///
     /// RFC 9002 Section 7.2: "2 * max_datagram_size"
-    public static var minimumWindow: Int {
+    ///
+    /// - Parameter maxDatagramSize: Path MTU / max datagram size in bytes.
+    /// - Returns: Minimum congestion window in bytes.
+    public static func minimumWindow(maxDatagramSize: Int) -> Int {
         2 * maxDatagramSize
+    }
+
+    /// Convenience overload using ``defaultMaxDatagramSize``.
+    public static var minimumWindow: Int {
+        minimumWindow(maxDatagramSize: defaultMaxDatagramSize)
     }
 
     /// Loss reduction factor
