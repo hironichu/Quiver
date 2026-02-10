@@ -163,6 +163,7 @@ quiver/
 │       ├── Frame/                     # HTTP/3 frame codec
 │       ├── Stream/                    # HTTP/3 stream types
 │       └── WebTransport/             # WebTransport support
+│           ├── WebTransportConfiguration.swift # Unified config
 │           ├── WebTransportServer.swift
 │           ├── WebTransportClient.swift
 │           ├── WebTransportSession.swift
@@ -257,26 +258,59 @@ print("Body: \(String(data: response.body, encoding: .utf8)!)")
 
 ```swift
 import HTTP3
+import QUIC
 
-let server = WebTransportServer()
+// Unified config — QUIC + WebTransport in one struct
+let config = WebTransportConfiguration(
+    quic: myQuicConfig,
+    maxSessions: 4
+)
 
-for await session in server.sessions {
+// One-call static factory
+let server = try await WebTransportServer.listen(
+    host: "0.0.0.0",
+    port: 4433,
+    configuration: config,
+    serverOptions: .init(allowedPaths: ["/echo"])
+)
+
+for await session in server.incomingSessions {
     Task {
         // Handle bidirectional streams
-        for await stream in session.incomingBidirectionalStreams {
+        for await stream in await session.incomingBidirectionalStreams {
             let data = try await stream.read()
             try await stream.write(data) // Echo
         }
     }
     Task {
         // Handle datagrams
-        for await datagram in session.incomingDatagrams {
+        for await datagram in await session.incomingDatagrams {
             try await session.sendDatagram(datagram)
         }
     }
 }
+```
 
-try await server.listen(host: "0.0.0.0", port: 4433)
+### WebTransport Client
+
+```swift
+import HTTP3
+import QUIC
+
+// One-call connect — creates QUIC endpoint, dials, sets up HTTP/3, sends Extended CONNECT
+let config = WebTransportConfiguration(quic: myQuicConfig)
+let session = try await WebTransportClient.connect(
+    url: "https://example.com:4433/echo",
+    configuration: config
+)
+
+// Open a bidirectional stream
+let stream = try await session.openBidirectionalStream()
+try await stream.write(Data("Hello, WebTransport!".utf8))
+let response = try await stream.read()
+
+// Send a datagram
+try await session.sendDatagram(Data("ping".utf8))
 ```
 
 ### Frame Encoding/Decoding
@@ -442,7 +476,6 @@ See [Examples/EXAMPLES.md](Examples/EXAMPLES.md) for detailed usage and API refe
 | [Examples/EXAMPLES.md](Examples/EXAMPLES.md) | Detailed examples with API reference |
 | [RFC_COMPLIANCE.md](RFC_COMPLIANCE.md) | Comprehensive RFC compliance documentation |
 | [Docs/RFC9114-HTTP3.md](Docs/RFC9114-HTTP3.md) | HTTP/3 implementation notes |
-| [Docs/WEBTRANSPORT_PLAN.md](Docs/WEBTRANSPORT_PLAN.md) | WebTransport architecture |
 
 ## References
 
