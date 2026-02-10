@@ -266,6 +266,7 @@ let package = Package(
                 "QUIC",
                 "QUICCore",
                 "QUICCrypto",
+                "QUICStream",
             ],
             path: "Tests/QUICBenchmarks"
         ),

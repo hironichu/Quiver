@@ -234,9 +234,11 @@ public struct DataBuffer: ReceiveBuffer, Sendable {
                     let overlap = Int(currentEnd - next.offset)
                     bytesRemoved += overlap
                     let newData = next.data.dropFirst(overlap)
+                    var merged = current.data
+                    merged.append(contentsOf: newData)
                     current = (
                         offset: current.offset,
-                        data: current.data + newData
+                        data: merged
                     )
                 } else {
                     // Next segment is completely contained - remove all its bytes

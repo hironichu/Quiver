@@ -891,7 +891,7 @@ public final class ManagedConnection: Sendable {
         // constructed by sendPMTUProbe() and already encrypted.
         var result: [Data] = state.withLock { s in
             let probes = s.probePacketQueue
-            s.probePacketQueue.removeAll()
+            s.probePacketQueue.removeAll(keepingCapacity: true)
             return probes
         }
 

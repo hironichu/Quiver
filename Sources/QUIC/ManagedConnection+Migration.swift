@@ -291,7 +291,7 @@ extension ManagedConnection {
     public func getPendingPathChallenges() -> [Data] {
         state.withLock { s in
             let challenges = s.pendingPathChallenges
-            s.pendingPathChallenges.removeAll()
+            s.pendingPathChallenges.removeAll(keepingCapacity: true)
             return challenges
         }
     }
@@ -300,7 +300,7 @@ extension ManagedConnection {
     public func getPendingPathResponses() -> [Data] {
         state.withLock { s in
             let responses = s.pendingPathResponses
-            s.pendingPathResponses.removeAll()
+            s.pendingPathResponses.removeAll(keepingCapacity: true)
             return responses
         }
     }

@@ -71,8 +71,8 @@ public struct AES128GCMOpener: PacketOpener, Sendable {
     }
 
     public func open(ciphertext: Data, packetNumber: UInt64, header: Data) throws -> Data {
-        // Construct nonce: IV XOR packet number (padded to 12 bytes)
-        let nonce = constructNonce(iv: iv, packetNumber: packetNumber)
+        // Construct nonce: IV XOR packet number (inline, no heap allocation)
+        let nonce = constructNonceInline(iv: iv, packetNumber: packetNumber)
 
         // Separate ciphertext and tag (last 16 bytes)
         guard ciphertext.count >= 16 else {
@@ -85,7 +85,7 @@ public struct AES128GCMOpener: PacketOpener, Sendable {
         // Decrypt using AES-GCM
         do {
             let sealedBox = try AES.GCM.SealedBox(
-                nonce: AES.GCM.Nonce(data: nonce),
+                nonce: nonce,
                 ciphertext: encryptedData,
                 tag: tag
             )
@@ -157,19 +157,22 @@ public struct AES128GCMSealer: PacketSealer, Sendable {
     }
 
     public func seal(plaintext: Data, packetNumber: UInt64, header: Data) throws -> Data {
-        // Construct nonce: IV XOR packet number (padded to 12 bytes)
-        let nonce = constructNonce(iv: iv, packetNumber: packetNumber)
+        // Construct nonce: IV XOR packet number (inline, no heap allocation)
+        let nonce = constructNonceInline(iv: iv, packetNumber: packetNumber)
 
         // Encrypt using AES-GCM
         let sealedBox = try AES.GCM.seal(
             plaintext,
             using: key,
-            nonce: AES.GCM.Nonce(data: nonce),
+            nonce: nonce,
             authenticating: header
         )
 
-        // Return ciphertext + tag
-        return sealedBox.ciphertext + sealedBox.tag
+        // Pre-allocate result: ciphertext + 16-byte tag
+        var result = Data(capacity: sealedBox.ciphertext.count + sealedBox.tag.count)
+        result.append(contentsOf: sealedBox.ciphertext)
+        result.append(contentsOf: sealedBox.tag)
+        return result
     }
 
     public func applyHeaderProtection(
@@ -200,31 +203,45 @@ public struct AES128GCMSealer: PacketSealer, Sendable {
 
 // MARK: - Helper Functions
 
-/// Constructs a nonce from IV and packet number
+/// 12-byte inline nonce stored as a tuple — avoids heap allocation per packet.
+private typealias Nonce12 = (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+
+/// Constructs a nonce as a stack-allocated 12-byte tuple.
 /// nonce = iv XOR (packet_number padded to 12 bytes, left-padded with zeros)
 ///
 /// - Precondition: iv.count == 12 (validated at init time)
 @inline(__always)
-private func constructNonce(iv: Data, packetNumber: UInt64) -> Data {
-    var nonce = iv
-
-    // XOR the last 8 bytes of the IV with the packet number (big-endian byte order)
-    nonce.withUnsafeMutableBytes { buffer in
-        let ptr = buffer.baseAddress!.assumingMemoryBound(to: UInt8.self)
-        let offset = buffer.count - 8
-
-        // Unroll the loop for performance (packet number is always 8 bytes)
-        ptr[offset + 0] ^= UInt8(truncatingIfNeeded: packetNumber >> 56)
-        ptr[offset + 1] ^= UInt8(truncatingIfNeeded: packetNumber >> 48)
-        ptr[offset + 2] ^= UInt8(truncatingIfNeeded: packetNumber >> 40)
-        ptr[offset + 3] ^= UInt8(truncatingIfNeeded: packetNumber >> 32)
-        ptr[offset + 4] ^= UInt8(truncatingIfNeeded: packetNumber >> 24)
-        ptr[offset + 5] ^= UInt8(truncatingIfNeeded: packetNumber >> 16)
-        ptr[offset + 6] ^= UInt8(truncatingIfNeeded: packetNumber >> 8)
-        ptr[offset + 7] ^= UInt8(truncatingIfNeeded: packetNumber)
+private func constructNonceTuple(iv: Data, packetNumber: UInt64) -> Nonce12 {
+    // Read IV bytes directly (always 12 bytes, validated at init)
+    return iv.withUnsafeBytes { buf in
+        let p = buf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+        return (
+            p[0],
+            p[1],
+            p[2],
+            p[3],
+            p[4]  ^ UInt8(truncatingIfNeeded: packetNumber >> 56),
+            p[5]  ^ UInt8(truncatingIfNeeded: packetNumber >> 48),
+            p[6]  ^ UInt8(truncatingIfNeeded: packetNumber >> 40),
+            p[7]  ^ UInt8(truncatingIfNeeded: packetNumber >> 32),
+            p[8]  ^ UInt8(truncatingIfNeeded: packetNumber >> 24),
+            p[9]  ^ UInt8(truncatingIfNeeded: packetNumber >> 16),
+            p[10] ^ UInt8(truncatingIfNeeded: packetNumber >> 8),
+            p[11] ^ UInt8(truncatingIfNeeded: packetNumber)
+        )
     }
+}
 
-    return nonce
+/// Constructs a nonce and returns it as an AES.GCM.Nonce directly — zero-copy path for AES-GCM.
+///
+/// - Precondition: iv.count == 12 (validated at init time)
+@inline(__always)
+private func constructNonceInline(iv: Data, packetNumber: UInt64) -> AES.GCM.Nonce {
+    var nonceBytes = constructNonceTuple(iv: iv, packetNumber: packetNumber)
+    return withUnsafeBytes(of: &nonceBytes) { buf in
+        // AES.GCM.Nonce(data:) accepts any ContiguousBytes; UnsafeRawBufferPointer qualifies.
+        try! AES.GCM.Nonce(data: buf)
+    }
 }
 
 // MARK: - ChaCha20 Header Protection
@@ -292,8 +309,8 @@ public struct ChaCha20Poly1305Opener: PacketOpener, Sendable {
     }
 
     public func open(ciphertext: Data, packetNumber: UInt64, header: Data) throws -> Data {
-        // Construct nonce: IV XOR packet number (padded to 12 bytes)
-        let nonce = constructNonce(iv: iv, packetNumber: packetNumber)
+        // Construct nonce: IV XOR packet number (inline, no heap allocation)
+        let nonceBytes = constructNonceTuple(iv: iv, packetNumber: packetNumber)
 
         // Separate ciphertext and tag (last 16 bytes)
         guard ciphertext.count >= 16 else {
@@ -305,11 +322,13 @@ public struct ChaCha20Poly1305Opener: PacketOpener, Sendable {
 
         // Decrypt using ChaCha20-Poly1305
         do {
-            let sealedBox = try ChaChaPoly.SealedBox(
-                nonce: ChaChaPoly.Nonce(data: nonce),
-                ciphertext: encryptedData,
-                tag: tag
-            )
+            let sealedBox = try withUnsafeBytes(of: nonceBytes) { buf in
+                try ChaChaPoly.SealedBox(
+                    nonce: ChaChaPoly.Nonce(data: buf),
+                    ciphertext: encryptedData,
+                    tag: tag
+                )
+            }
 
             let plaintext = try ChaChaPoly.open(sealedBox, using: key, authenticating: header)
             return plaintext
@@ -381,19 +400,24 @@ public struct ChaCha20Poly1305Sealer: PacketSealer, Sendable {
     }
 
     public func seal(plaintext: Data, packetNumber: UInt64, header: Data) throws -> Data {
-        // Construct nonce: IV XOR packet number (padded to 12 bytes)
-        let nonce = constructNonce(iv: iv, packetNumber: packetNumber)
+        // Construct nonce: IV XOR packet number (inline, no heap allocation)
+        let nonceBytes = constructNonceTuple(iv: iv, packetNumber: packetNumber)
 
         // Encrypt using ChaCha20-Poly1305
-        let sealedBox = try ChaChaPoly.seal(
-            plaintext,
-            using: key,
-            nonce: ChaChaPoly.Nonce(data: nonce),
-            authenticating: header
-        )
+        let sealedBox = try withUnsafeBytes(of: nonceBytes) { buf in
+            try ChaChaPoly.seal(
+                plaintext,
+                using: key,
+                nonce: ChaChaPoly.Nonce(data: buf),
+                authenticating: header
+            )
+        }
 
-        // Return ciphertext + tag
-        return sealedBox.ciphertext + sealedBox.tag
+        // Pre-allocate result: ciphertext + 16-byte tag
+        var result = Data(capacity: sealedBox.ciphertext.count + sealedBox.tag.count)
+        result.append(contentsOf: sealedBox.ciphertext)
+        result.append(contentsOf: sealedBox.tag)
+        return result
     }
 
     public func applyHeaderProtection(

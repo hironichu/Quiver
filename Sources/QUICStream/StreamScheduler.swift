@@ -162,48 +162,58 @@ public struct StreamScheduler: StreamScheduling, Sendable {
         _ group: [(UInt64, DataStream)],
         urgency: UInt8
     ) -> [(streamID: UInt64, stream: DataStream)] {
-        // Partition into non-incremental and incremental
-        let nonIncremental = group.filter { !$0.1.priority.incremental }
-        let incremental = group.filter { $0.1.priority.incremental }
+        // Single-pass partition into non-incremental and incremental indices
+        var nonIncrementalIndices: [Int] = []
+        var incrementalIndices: [Int] = []
+        nonIncrementalIndices.reserveCapacity(group.count)
+        incrementalIndices.reserveCapacity(group.count)
+        for i in group.indices {
+            if group[i].1.priority.incremental {
+                incrementalIndices.append(i)
+            } else {
+                nonIncrementalIndices.append(i)
+            }
+        }
 
         var result: [(streamID: UInt64, stream: DataStream)] = []
+        result.reserveCapacity(group.count)
 
         // Handle non-incremental streams: serve only the active one first
-        if !nonIncremental.isEmpty {
+        if !nonIncrementalIndices.isEmpty {
             let cursor = cursors[urgency] ?? 0
-            let validCursor = cursor % nonIncremental.count
+            let validCursor = cursor % nonIncrementalIndices.count
 
             // The active non-incremental stream goes first
-            let active = nonIncremental[validCursor]
-            result.append((streamID: active.0, stream: active.1))
-
-            // Remaining non-incremental streams go after incremental ones
-            var remaining: [(streamID: UInt64, stream: DataStream)] = []
-            for (i, entry) in nonIncremental.enumerated() where i != validCursor {
-                remaining.append((streamID: entry.0, stream: entry.1))
-            }
+            let activeIdx = nonIncrementalIndices[validCursor]
+            result.append((streamID: group[activeIdx].0, stream: group[activeIdx].1))
 
             // Incremental streams interleaved after active non-incremental
-            if !incremental.isEmpty {
-                // Use a separate cursor space for incremental within same urgency
-                let incrementalCursorKey = urgency &+ 128  // offset to avoid collision
+            // (index-offset iteration — no temporary array allocation)
+            if !incrementalIndices.isEmpty {
+                let incrementalCursorKey = urgency &+ 128
                 let incCursor = cursors[incrementalCursorKey] ?? 0
-                let validIncCursor = incCursor % incremental.count
-                let rotated = rotateArray(incremental, startingAt: validIncCursor)
-                for entry in rotated {
-                    result.append((streamID: entry.0, stream: entry.1))
+                let validIncCursor = incCursor % incrementalIndices.count
+                let incCount = incrementalIndices.count
+                for j in 0..<incCount {
+                    let idx = incrementalIndices[(validIncCursor + j) % incCount]
+                    result.append((streamID: group[idx].0, stream: group[idx].1))
                 }
             }
 
-            // Append remaining non-incremental
-            result.append(contentsOf: remaining)
-        } else if !incremental.isEmpty {
-            // Only incremental streams — round-robin all of them
+            // Remaining non-incremental streams go last
+            let niCount = nonIncrementalIndices.count
+            for j in 1..<niCount {
+                let idx = nonIncrementalIndices[(validCursor + j) % niCount]
+                result.append((streamID: group[idx].0, stream: group[idx].1))
+            }
+        } else if !incrementalIndices.isEmpty {
+            // Only incremental streams — round-robin via index offset
             let cursor = cursors[urgency] ?? 0
-            let validCursor = cursor % incremental.count
-            let rotated = rotateArray(incremental, startingAt: validCursor)
-            for entry in rotated {
-                result.append((streamID: entry.0, stream: entry.1))
+            let validCursor = cursor % incrementalIndices.count
+            let incCount = incrementalIndices.count
+            for j in 0..<incCount {
+                let idx = incrementalIndices[(validCursor + j) % incCount]
+                result.append((streamID: group[idx].0, stream: group[idx].1))
             }
         }
 
@@ -217,17 +227,18 @@ public struct StreamScheduler: StreamScheduling, Sendable {
     ) -> [(streamID: UInt64, stream: DataStream)] {
         let cursor = cursors[urgency] ?? 0
         let validCursor = cursor % group.count
+        let count = group.count
 
-        // Rotate the group to start from cursor position
-        let rotated = rotateArray(group, startingAt: validCursor)
-
+        // Index-offset iteration — no temporary array allocation
         var result: [(streamID: UInt64, stream: DataStream)] = []
-        for entry in rotated {
-            result.append((streamID: entry.0, stream: entry.1))
+        result.reserveCapacity(count)
+        for j in 0..<count {
+            let idx = (validCursor + j) % count
+            result.append((streamID: group[idx].0, stream: group[idx].1))
         }
 
         // Update cursor for next round (advance by group size)
-        cursors[urgency] = (validCursor + group.count) % group.count
+        cursors[urgency] = (validCursor + count) % count
 
         return result
     }
@@ -290,14 +301,6 @@ public struct StreamScheduler: StreamScheduling, Sendable {
     }
 
     // MARK: - Private
-
-    /// Rotates an array to start at a specific index.
-    private func rotateArray<T>(_ array: [T], startingAt index: Int) -> [T] {
-        guard !array.isEmpty, index > 0, index < array.count else {
-            return array
-        }
-        return Array(array[index...]) + Array(array[..<index])
-    }
 }
 
 // MARK: - StreamScheduler Statistics
