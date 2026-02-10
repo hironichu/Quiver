@@ -6,6 +6,7 @@ import Foundation
 import NIOCore
 import NIOUDPTransport
 import QUICCore
+import Synchronization
 
 // MARK: - QUIC Socket
 
@@ -32,8 +33,8 @@ public protocol QUICSocket: Sendable {
 
 /// An incoming QUIC packet
 public struct IncomingPacket: Sendable {
-    /// The packet data
-    public let data: Data
+    /// The packet data as ByteBuffer (zero-copy from NIO).
+    public let buffer: ByteBuffer
 
     /// The remote address that sent this packet
     public let remoteAddress: SocketAddress
@@ -41,10 +42,16 @@ public struct IncomingPacket: Sendable {
     /// The time the packet was received
     public let receivedAt: ContinuousClock.Instant
 
-    public init(data: Data, remoteAddress: SocketAddress, receivedAt: ContinuousClock.Instant) {
-        self.data = data
+    public init(buffer: ByteBuffer, remoteAddress: SocketAddress, receivedAt: ContinuousClock.Instant) {
+        self.buffer = buffer
         self.remoteAddress = remoteAddress
         self.receivedAt = receivedAt
+    }
+
+    /// The packet data as Data (convenience, copies bytes).
+    @inlinable
+    public var data: Data {
+        Data(buffer: buffer)
     }
 }
 
@@ -55,6 +62,9 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
     private let transport: NIOUDPTransport
     private let incomingStream: AsyncStream<IncomingPacket>
     private let incomingContinuation: AsyncStream<IncomingPacket>.Continuation
+
+    /// The forwarding task handle, stored to allow cancellation on stop.
+    private let forwardingTask: Mutex<Task<Void, Never>?>
 
     /// The local address
     public var localAddress: SocketAddress? {
@@ -73,38 +83,55 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
     public init(configuration: UDPConfiguration) {
         self.transport = NIOUDPTransport(configuration: configuration)
 
-        var continuation: AsyncStream<IncomingPacket>.Continuation!
-        self.incomingStream = AsyncStream { cont in
-            continuation = cont
-        }
+        let (stream, continuation) = AsyncStream<IncomingPacket>.makeStream(
+            bufferingPolicy: .bufferingNewest(100)
+        )
+        self.incomingStream = stream
         self.incomingContinuation = continuation
+        self.forwardingTask = Mutex(nil)
     }
 
     /// Starts the socket and begins receiving packets
     public func start() async throws {
         try await transport.start()
 
-        // Forward incoming datagrams to our stream
-        Task {
+        // Forward incoming datagrams to our stream.
+        // The Task is stored so it can be cancelled in stop().
+        // The Task owns stream termination via finish() when the loop exits.
+        let continuation = self.incomingContinuation
+        let transport = self.transport
+        let task = Task {
             for await datagram in transport.incomingDatagrams {
                 let packet = IncomingPacket(
-                    data: datagram.data,
+                    buffer: datagram.buffer,
                     remoteAddress: datagram.remoteAddress,
                     receivedAt: .now
                 )
-                incomingContinuation.yield(packet)
+                continuation.yield(packet)
             }
-            incomingContinuation.finish()
+            continuation.finish()
         }
+        forwardingTask.withLock { $0 = task }
     }
 
     /// Stops the socket
     ///
-    /// This method stops the underlying transport and finishes the incoming
-    /// packets AsyncStream, allowing any `for await` loops to exit gracefully.
+    /// This method stops the underlying transport, which finishes
+    /// its incoming datagrams stream, causing the forwarding task
+    /// to exit and call finish() on the packets stream.
     public func stop() async {
         await transport.stop()
-        // Finish the incoming stream to unblock any waiting consumers
+
+        // Cancel the forwarding task in case transport.stop()
+        // didn't cause the for-await loop to exit promptly.
+        let task = forwardingTask.withLock { t -> Task<Void, Never>? in
+            let existing = t
+            t = nil
+            return existing
+        }
+        task?.cancel()
+
+        // Defensive finish — idempotent if the task already called it.
         incomingContinuation.finish()
     }
 

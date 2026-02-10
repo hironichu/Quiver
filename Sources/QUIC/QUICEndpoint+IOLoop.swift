@@ -148,7 +148,7 @@ extension QUICEndpoint {
             }
 
             do {
-                let responses = try await processIncomingPacket(packet.data, from: remoteAddress)
+                let responses = try await processIncomingPacket(Data(buffer: packet.buffer), from: remoteAddress)
                 for response in responses {
                     try await socket.send(response, to: packet.remoteAddress)
                 }

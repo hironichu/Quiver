@@ -59,13 +59,13 @@ let package = Package(
 
         // X.509 Certificates and ASN.1
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.17.0"),
-        .package(url: "https://github.com/apple/swift-asn1.git", from: "1.5.0"),
+        .package(url: "https://github.com/apple/swift-asn1.git", from: "1.5.1"),
 
         // Logging
-        .package(url: "https://github.com/apple/swift-log.git", from: "1.9.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.9.1"),
 
         // Documentation
-        .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.3"),
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
     ],
     targets: [
         // MARK: - Core Types (No I/O)
