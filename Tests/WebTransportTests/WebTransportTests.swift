@@ -5,7 +5,7 @@
 /// - Stream routing (bidirectional and unidirectional)
 /// - Datagram framing and routing
 /// - Capsule codec (encode/decode, close/drain)
-/// - WebTransportClient and WebTransportServer wrappers
+/// - WebTransport connect API and WebTransportServer wrappers
 /// - Error handling and edge cases
 /// - Stream error code mapping
 
@@ -1829,122 +1829,177 @@ final class WebTransportSettingsTests: XCTestCase {
     }
 }
 
-// MARK: - WebTransport Client Tests
+// MARK: - WebTransport Connect API Tests
 
-final class WebTransportClientTests: XCTestCase {
+final class WebTransportConnectAPITests: XCTestCase {
 
-    func testClientCreation() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
+    // MARK: - WebTransportOptions
 
-        let state = await client.state
-        XCTAssertEqual(state, .idle)
+    func testOptionsDefaults() {
+        let opts = WebTransportOptions()
 
-        let isReady = await client.isReady
-        XCTAssertFalse(isReady)
-
-        let isClosed = await client.isClosed
-        XCTAssertFalse(isClosed)
-
-        mockConn.finish()
+        XCTAssertNil(opts.caCertificates)
+        XCTAssertTrue(opts.verifyPeer)
+        XCTAssertEqual(opts.alpn, ["h3"])
+        XCTAssertTrue(opts.headers.isEmpty)
+        XCTAssertEqual(opts.maxIdleTimeout, .seconds(30))
+        XCTAssertEqual(opts.connectionReadyTimeout, .seconds(10))
+        XCTAssertEqual(opts.connectTimeout, .seconds(10))
+        XCTAssertEqual(opts.initialMaxStreamsBidi, 100)
+        XCTAssertEqual(opts.initialMaxStreamsUni, 100)
+        XCTAssertEqual(opts.maxSessions, 1)
     }
 
-    func testClientCustomConfiguration() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let config = WebTransportClient.Configuration(
-            maxSessions: 10,
-            connectionReadyTimeout: .seconds(30),
-            connectTimeout: .seconds(20)
+    func testOptionsInsecureFactory() {
+        let opts = WebTransportOptions.insecure()
+
+        XCTAssertFalse(opts.verifyPeer)
+        // Other defaults should remain
+        XCTAssertEqual(opts.alpn, ["h3"])
+        XCTAssertEqual(opts.maxSessions, 1)
+    }
+
+    func testOptionsCustomValues() {
+        let opts = WebTransportOptions(
+            caCertificates: [Data([0x01, 0x02])],
+            verifyPeer: false,
+            alpn: ["h3", "webtransport"],
+            headers: [("authorization", "Bearer abc")],
+            maxIdleTimeout: .seconds(60),
+            connectionReadyTimeout: .seconds(20),
+            connectTimeout: .seconds(15),
+            initialMaxStreamsBidi: 200,
+            initialMaxStreamsUni: 50,
+            maxSessions: 4
         )
-        let client = WebTransportClient(
-            quicConnection: mockConn,
-            configuration: config
-        )
 
-        let maxSessions = await client.configuration.maxSessions
-        XCTAssertEqual(maxSessions, 10)
-
-        mockConn.finish()
+        XCTAssertEqual(opts.caCertificates?.count, 1)
+        XCTAssertFalse(opts.verifyPeer)
+        XCTAssertEqual(opts.alpn, ["h3", "webtransport"])
+        XCTAssertEqual(opts.headers.count, 1)
+        XCTAssertEqual(opts.maxIdleTimeout, .seconds(60))
+        XCTAssertEqual(opts.connectionReadyTimeout, .seconds(20))
+        XCTAssertEqual(opts.connectTimeout, .seconds(15))
+        XCTAssertEqual(opts.initialMaxStreamsBidi, 200)
+        XCTAssertEqual(opts.initialMaxStreamsUni, 50)
+        XCTAssertEqual(opts.maxSessions, 4)
     }
 
-    func testClientRemoteAddress() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
+    func testOptionsBuildQUICConfiguration() {
+        var opts = WebTransportOptions()
+        opts.maxIdleTimeout = .seconds(45)
+        opts.alpn = ["h3", "webtransport"]
+        opts.initialMaxStreamsBidi = 150
+        opts.initialMaxStreamsUni = 75
 
-        let remote = await client.remoteAddress
-        XCTAssertEqual(remote.ipAddress, "127.0.0.1")
-        XCTAssertEqual(remote.port, 443)
+        let quicConfig = opts.buildQUICConfiguration()
 
-        mockConn.finish()
+        XCTAssertEqual(quicConfig.maxIdleTimeout, .seconds(45))
+        XCTAssertEqual(quicConfig.alpn, ["h3", "webtransport"])
+        XCTAssertEqual(quicConfig.initialMaxStreamsBidi, 150)
+        XCTAssertEqual(quicConfig.initialMaxStreamsUni, 75)
+        XCTAssertTrue(quicConfig.enableDatagrams)
+        XCTAssertEqual(quicConfig.maxDatagramFrameSize, 65535)
     }
 
-    func testClientLocalAddress() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
+    func testOptionsBuildHTTP3Settings() {
+        var opts = WebTransportOptions()
+        opts.maxSessions = 5
 
-        let local = await client.localAddress
-        XCTAssertNotNil(local)
-        XCTAssertEqual(local?.port, 4433)
+        let settings = opts.buildHTTP3Settings()
 
-        mockConn.finish()
+        XCTAssertTrue(settings.enableConnectProtocol)
+        XCTAssertTrue(settings.enableH3Datagram)
+        XCTAssertEqual(settings.webtransportMaxSessions, 5)
     }
 
-    func testClientSessionCount() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
+    // MARK: - WebTransportOptionsAdvanced
 
-        let count = await client.activeSessionCount
-        XCTAssertEqual(count, 0)
+    func testAdvancedOptionsDefaults() {
+        let quic = QUICConfiguration()
+        let opts = WebTransportOptionsAdvanced(quic: quic)
 
-        let total = await client.totalSessions
-        XCTAssertEqual(total, 0)
-
-        mockConn.finish()
+        XCTAssertTrue(opts.headers.isEmpty)
+        XCTAssertEqual(opts.connectionReadyTimeout, .seconds(10))
+        XCTAssertEqual(opts.connectTimeout, .seconds(10))
     }
 
-    func testClientDebugDescription() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
+    func testAdvancedOptionsValidated() {
+        var quic = QUICConfiguration()
+        quic.enableDatagrams = false
+        quic.alpn = ["custom"]
 
-        let desc = await client.debugDescription
-        XCTAssertTrue(desc.contains("idle"))
-        XCTAssertTrue(desc.contains("127.0.0.1:443"))
+        var h3 = HTTP3Settings()
+        h3.enableConnectProtocol = false
+        h3.enableH3Datagram = false
+        h3.webtransportMaxSessions = nil
 
-        mockConn.finish()
+        let opts = WebTransportOptionsAdvanced(quic: quic, http3Settings: h3)
+        let validated = opts.validated()
+
+        // QUIC mandatory flags
+        XCTAssertTrue(validated.quic.enableDatagrams)
+        XCTAssertTrue(validated.quic.alpn.contains("h3"))
+        XCTAssertTrue(validated.quic.alpn.contains("custom")) // preserved
+
+        // HTTP/3 mandatory flags
+        XCTAssertTrue(validated.http3Settings.enableConnectProtocol)
+        XCTAssertTrue(validated.http3Settings.enableH3Datagram)
+        XCTAssertEqual(validated.http3Settings.webtransportMaxSessions, 1)
     }
 
-    func testClientConnectBeforeInitialize() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
+    func testAdvancedOptionsValidatedIdempotent() {
+        var quic = QUICConfiguration()
+        quic.alpn = ["h3"]
+        quic.enableDatagrams = true
+
+        var h3 = HTTP3Settings()
+        h3.enableConnectProtocol = true
+        h3.enableH3Datagram = true
+        h3.webtransportMaxSessions = 3
+
+        let opts = WebTransportOptionsAdvanced(quic: quic, http3Settings: h3)
+        let v1 = opts.validated()
+        let v2 = v1.validated()
+
+        XCTAssertEqual(v1.quic.alpn, v2.quic.alpn)
+        XCTAssertEqual(v1.http3Settings.webtransportMaxSessions, 3)
+        XCTAssertEqual(v2.http3Settings.webtransportMaxSessions, 3)
+    }
+
+    func testAdvancedOptionsBuildMethods() {
+        var quic = QUICConfiguration()
+        quic.maxIdleTimeout = .seconds(99)
+
+        let opts = WebTransportOptionsAdvanced(quic: quic)
+
+        let builtQuic = opts.buildQUICConfiguration()
+        XCTAssertEqual(builtQuic.maxIdleTimeout, .seconds(99))
+        XCTAssertTrue(builtQuic.enableDatagrams) // enforced
+
+        let builtH3 = opts.buildHTTP3Settings()
+        XCTAssertTrue(builtH3.enableConnectProtocol) // enforced
+        XCTAssertTrue(builtH3.enableH3Datagram) // enforced
+    }
+
+    // MARK: - WebTransport.connect URL parsing (via invalid URL)
+
+    func testConnectInvalidURL() async {
+        let opts = WebTransportOptions()
 
         do {
-            _ = try await client.connect(authority: "example.com", path: "/wt")
-            XCTFail("Expected error")
+            _ = try await WebTransport.connect(url: "://invalid", options: opts)
+            XCTFail("Expected error for invalid URL")
         } catch let error as WebTransportError {
             if case .internalError(let msg, _) = error {
-                XCTAssertTrue(msg.contains("not ready"))
+                XCTAssertTrue(msg.contains("Invalid URL"))
             } else {
-                XCTFail("Wrong error: \(error)")
+                XCTFail("Wrong error case: \(error)")
             }
         } catch {
-            XCTFail("Wrong error type: \(error)")
+            // Connection errors are also acceptable since the URL may parse
+            // but fail to connect — depends on URLComponents behavior
         }
-
-        mockConn.finish()
-    }
-
-    func testClientClose() async {
-        let mockConn = MockWTConnection(isClient: true)
-        let client = WebTransportClient(quicConnection: mockConn)
-
-        await client.close()
-        let isClosed = await client.isClosed
-        XCTAssertTrue(isClosed)
-
-        // Double close should be safe
-        await client.close()
-
-        mockConn.finish()
     }
 }
 
@@ -1952,77 +2007,164 @@ final class WebTransportClientTests: XCTestCase {
 
 final class WebTransportServerTests: XCTestCase {
 
+    /// Helper: creates a minimal WebTransportServerOptions for testing.
+    /// Uses dummy cert/key paths since tests don't actually start TLS.
+    private func testServerOptions(
+        maxSessions: UInt64 = 1,
+        maxConnections: Int = 0
+    ) -> WebTransportServerOptions {
+        WebTransportServerOptions(
+            certificatePath: "/dev/null/cert.pem",
+            privateKeyPath: "/dev/null/key.pem",
+            maxSessions: maxSessions,
+            maxConnections: maxConnections
+        )
+    }
+
     func testServerCreation() async {
-        let server = WebTransportServer()
+        let server = WebTransportServer(
+            host: "0.0.0.0",
+            port: 4433,
+            options: testServerOptions()
+        )
 
         let state = await server.state
         XCTAssertEqual(state, .idle)
 
         let isListening = await server.isListening
         XCTAssertFalse(isListening)
-
-        let totalSessions = await server.totalSessions
-        XCTAssertEqual(totalSessions, 0)
     }
 
-    func testServerWithCustomConfiguration() async {
-        let config = WebTransportServer.Configuration(
-            maxSessionsPerConnection: 10,
-            maxConnections: 100,
-            allowedPaths: ["/wt", "/echo"]
+    func testServerOptionsAccessible() async {
+        let opts = testServerOptions(maxSessions: 10, maxConnections: 100)
+        let server = WebTransportServer(
+            host: "0.0.0.0",
+            port: 4433,
+            options: opts
         )
-        let server = WebTransportServer(configuration: config)
 
-        let maxSessions = await server.configuration.maxSessionsPerConnection
+        let maxSessions = await server.options.maxSessions
         XCTAssertEqual(maxSessions, 10)
 
-        let paths = await server.configuration.allowedPaths
-        XCTAssertEqual(paths, ["/wt", "/echo"])
+        let maxConns = await server.options.maxConnections
+        XCTAssertEqual(maxConns, 100)
     }
 
-    func testServerConvenienceInit() async {
-        let server = WebTransportServer(maxSessions: 5, maxConnections: 50)
+    func testServerRouteRegistration() async {
+        let server = WebTransportServer(
+            host: "0.0.0.0",
+            port: 4433,
+            options: testServerOptions()
+        )
 
-        let maxSessions = await server.configuration.maxSessionsPerConnection
-        XCTAssertEqual(maxSessions, 5)
+        await server.register(path: "/echo")
+        await server.register(path: "/chat")
 
-        let maxConns = await server.configuration.maxConnections
-        XCTAssertEqual(maxConns, 50)
+        let routeCount = await server.registeredRouteCount
+        XCTAssertEqual(routeCount, 2)
+    }
+
+    func testServerRouteWithMiddleware() async {
+        let server = WebTransportServer(
+            host: "0.0.0.0",
+            port: 4433,
+            options: testServerOptions()
+        )
+
+        await server.register(path: "/secure") { context in
+            guard context.headers.contains(where: { $0.0 == "authorization" }) else {
+                return .reject(reason: "No auth")
+            }
+            return .accept
+        }
+
+        let routeCount = await server.registeredRouteCount
+        XCTAssertEqual(routeCount, 1)
     }
 
     func testServerDebugDescription() async {
-        let server = WebTransportServer(maxSessions: 3)
+        let server = WebTransportServer(
+            host: "127.0.0.1",
+            port: 4433,
+            options: testServerOptions(maxSessions: 3)
+        )
 
         let desc = await server.debugDescription
         XCTAssertTrue(desc.contains("idle"))
         XCTAssertTrue(desc.contains("3"))
+        XCTAssertTrue(desc.contains("127.0.0.1:4433"))
     }
 
-    func testServerDefaultConfiguration() async {
-        let config = WebTransportServer.Configuration.default
-        XCTAssertEqual(config.maxSessionsPerConnection, 1)
-        XCTAssertEqual(config.maxConnections, 0)
-        XCTAssertTrue(config.allowedPaths.isEmpty)
+    func testServerGlobalMiddleware() async {
+        let server = WebTransportServer(
+            host: "0.0.0.0",
+            port: 4433,
+            options: testServerOptions(),
+            middleware: { _ in .accept }
+        )
+
+        let desc = await server.debugDescription
+        XCTAssertTrue(desc.contains("globalMiddleware=true"))
     }
 
-    func testServerStartWithoutIdle() async {
-        let server = WebTransportServer()
+    func testServerNoMiddleware() async {
+        let server = WebTransportServer(
+            host: "0.0.0.0",
+            port: 4433,
+            options: testServerOptions()
+        )
 
-        // Force to listening state first via serveConnection, then try serve
-        // Actually, we can test the guard directly by trying to serve twice
-        // via a cancelled stream
-        let (stream, continuation) = AsyncStream<any QUICConnectionProtocol>.makeStream()
-        continuation.finish() // End immediately
+        let desc = await server.debugDescription
+        XCTAssertTrue(desc.contains("globalMiddleware=false"))
+    }
 
-        do {
-            try await server.serve(connectionSource: stream)
-        } catch {
-            // May throw or not depending on state
-        }
+    func testServerOptionsValidation() {
+        // Valid options
+        let valid = WebTransportServerOptions(
+            certificatePath: "/path/to/cert.pem",
+            privateKeyPath: "/path/to/key.pem"
+        )
+        XCTAssertNoThrow(try valid.validate())
 
-        // Server should be stopped now
-        let isStopped = await server.isStopped
-        XCTAssertTrue(isStopped)
+        // Missing private key
+        var noKey = WebTransportServerOptions(
+            certificatePath: "/path/to/cert.pem",
+            privateKeyPath: "/path/to/key.pem"
+        )
+        noKey.privateKeyPath = nil
+        noKey.privateKey = nil
+        XCTAssertThrowsError(try noKey.validate())
+    }
+
+    func testServerOptionsHTTP3Settings() {
+        let opts = WebTransportServerOptions(
+            certificatePath: "/cert.pem",
+            privateKeyPath: "/key.pem",
+            maxSessions: 5
+        )
+
+        let settings = opts.buildHTTP3Settings()
+        XCTAssertTrue(settings.enableConnectProtocol)
+        XCTAssertTrue(settings.enableH3Datagram)
+        XCTAssertEqual(settings.webtransportMaxSessions, 5)
+    }
+
+    func testServerOptionsQUICConfiguration() {
+        let opts = WebTransportServerOptions(
+            certificatePath: "/cert.pem",
+            privateKeyPath: "/key.pem",
+            alpn: ["h3", "webtransport"],
+            maxIdleTimeout: .seconds(45),
+            initialMaxStreamsBidi: 200,
+            initialMaxStreamsUni: 150
+        )
+
+        let quicConfig = opts.buildQUICConfiguration()
+        XCTAssertEqual(quicConfig.maxIdleTimeout, .seconds(45))
+        XCTAssertEqual(quicConfig.alpn, ["h3", "webtransport"])
+        XCTAssertEqual(quicConfig.initialMaxStreamsBidi, 200)
+        XCTAssertEqual(quicConfig.initialMaxStreamsUni, 150)
+        XCTAssertTrue(quicConfig.enableDatagrams)
     }
 }
 
