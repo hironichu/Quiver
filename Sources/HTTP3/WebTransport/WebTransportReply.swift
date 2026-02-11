@@ -188,3 +188,32 @@ extension WebTransportRequestContext: CustomStringConvertible {
 /// }
 /// ```
 public typealias WebTransportMiddleware = @Sendable (WebTransportRequestContext) async -> WebTransportReply
+
+// MARK: - WebTransport Session Handler
+
+/// A closure that handles an accepted WebTransport session for a registered route.
+///
+/// Called by the server after middleware (if any) returns `.accept`.
+/// The handler receives a fully established `WebTransportSession` and
+/// owns its lifecycle — streams, datagrams, and close.
+///
+/// Sessions dispatched to a handler are **not** yielded to
+/// `WebTransportServer.incomingSessions`. Sessions on routes without
+/// a handler (or with no routes registered) still appear there.
+///
+/// ## Thread Safety
+///
+/// The closure must be `@Sendable` because it may be called concurrently
+/// for multiple accepted sessions.
+///
+/// ## Example
+///
+/// ```swift
+/// server.register(path: "/echo") { session in
+///     for await stream in await session.incomingBidirectionalStreams {
+///         let data = try await stream.read()
+///         try await stream.write(data)
+///     }
+/// }
+/// ```
+public typealias WebTransportSessionHandler = @Sendable (WebTransportSession) async -> Void

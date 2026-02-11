@@ -112,10 +112,19 @@ public actor WebTransportServer {
     /// Global middleware applied when no route-specific middleware matches.
     private let globalMiddleware: WebTransportMiddleware?
 
-    /// Registered routes: path -> optional middleware.
+    /// A registered route entry containing optional middleware and handler.
+    private struct RouteEntry {
+        /// Optional middleware for accept/reject gating.
+        let middleware: WebTransportMiddleware?
+        /// Optional session handler. When present, accepted sessions are
+        /// dispatched here instead of being yielded to `incomingSessions`.
+        let handler: WebTransportSessionHandler?
+    }
+
+    /// Registered routes: path -> route entry.
     /// When a path is registered with `nil` middleware, the global
     /// middleware (if any) is used; otherwise the request is accepted.
-    private var routes: [String: WebTransportMiddleware?] = [:]
+    private var routes: [String: RouteEntry] = [:]
 
     /// The underlying HTTP/3 server.
     public let httpServer: HTTP3Server
@@ -205,16 +214,24 @@ public actor WebTransportServer {
     /// When routes are registered, only requests matching a registered
     /// path are considered. Unmatched paths receive a 404 rejection.
     ///
+    /// When a `handler` is provided, accepted sessions on this path are
+    /// dispatched directly to the handler and do **not** appear in
+    /// `incomingSessions`. Sessions on routes without a handler (or
+    /// unrouted sessions on an open server) still go to `incomingSessions`.
+    ///
     /// - Parameters:
     ///   - path: The request path to accept (e.g. `"/echo"`, `"/chat"`)
-    ///   - middleware: Optional per-route middleware. When `nil`, the global
-    ///     middleware is used; if no global middleware exists, the request
-    ///     is accepted unconditionally.
+    ///   - middleware: Optional per-route middleware for accept/reject gating.
+    ///     When `nil`, the global middleware is used; if no global middleware
+    ///     exists, the request is accepted unconditionally.
+    ///   - handler: Optional session handler. Called with the established
+    ///     `WebTransportSession` after middleware accepts.
     public func register(
         path: String,
-        middleware: WebTransportMiddleware? = nil
+        middleware: WebTransportMiddleware? = nil,
+        handler: WebTransportSessionHandler? = nil
     ) {
-        routes[path] = middleware
+        routes[path] = RouteEntry(middleware: middleware, handler: handler)
     }
 
     // MARK: - Server Lifecycle
@@ -362,53 +379,56 @@ public actor WebTransportServer {
 
     // MARK: - Middleware Resolution
 
-    /// Resolves the middleware for an incoming request.
+    /// Resolves the middleware and handler for an incoming request.
     ///
     /// Resolution logic:
-    /// 1. If routes are registered and path matches a route with middleware -> that middleware
-    /// 2. If routes are registered and path matches a route without middleware -> global middleware (if any)
+    /// 1. If routes are registered and path matches a route with middleware -> that middleware + route handler
+    /// 2. If routes are registered and path matches a route without middleware -> global middleware (if any) + route handler
     /// 3. If routes are registered and path matches NO route -> reject 404
-    /// 4. If no routes registered and global middleware exists -> global middleware
-    /// 5. If no routes registered and no global middleware -> accept (open server)
+    /// 4. If no routes registered and global middleware exists -> global middleware, no handler
+    /// 5. If no routes registered and no global middleware -> accept (open server), no handler
     ///
     /// - Parameter path: The `:path` from the Extended CONNECT request
-    /// - Returns: A `WebTransportReply` or a middleware to evaluate
+    /// - Returns: A `MiddlewareResolution` indicating accept/reject/run and an optional handler
     private func resolveMiddleware(
         for path: String
     ) -> MiddlewareResolution {
         if routes.isEmpty {
-            // No routes registered
+            // No routes registered — no handler possible
             if let global = globalMiddleware {
-                return .runMiddleware(global)
+                return .runMiddleware(global, handler: nil)
             } else {
-                return .accept
+                return .accept(handler: nil)
             }
         }
 
         // Routes are registered — path must match
-        guard let routeEntry = routes[path] else {
+        guard let entry = routes[path] else {
             return .reject(reason: "No route registered for path: \(path)")
         }
 
         // Route exists — check for route-specific middleware
-        if let routeMiddleware = routeEntry {
-            return .runMiddleware(routeMiddleware)
+        if let routeMiddleware = entry.middleware {
+            return .runMiddleware(routeMiddleware, handler: entry.handler)
         }
 
         // Route exists but no route-specific middleware — try global
         if let global = globalMiddleware {
-            return .runMiddleware(global)
+            return .runMiddleware(global, handler: entry.handler)
         }
 
-        // Route exists, no middleware anywhere — accept
-        return .accept
+        // Route exists, no middleware anywhere — accept with route handler
+        return .accept(handler: entry.handler)
     }
 
     /// Internal resolution result.
     private enum MiddlewareResolution {
-        case accept
+        /// Accept the session, optionally dispatching to a handler.
+        case accept(handler: WebTransportSessionHandler?)
+        /// Reject the session with a reason.
         case reject(reason: String)
-        case runMiddleware(WebTransportMiddleware)
+        /// Run middleware first, then dispatch to handler if accepted.
+        case runMiddleware(WebTransportMiddleware, handler: WebTransportSessionHandler?)
     }
 
     // MARK: - Internal: Enable WebTransport
@@ -460,15 +480,19 @@ public actor WebTransportServer {
             let resolution = await server.resolveMiddleware(for: context.request.path)
 
             let reply: WebTransportReply
+            let handler: WebTransportSessionHandler?
             switch resolution {
-            case .accept:
+            case .accept(let h):
                 reply = .accept
+                handler = h
 
             case .reject(let reason):
                 reply = .reject(reason: reason)
+                handler = nil
 
-            case .runMiddleware(let middleware):
+            case .runMiddleware(let middleware, let h):
                 reply = await middleware(requestContext)
+                handler = h
             }
 
             // Apply the reply
@@ -493,7 +517,13 @@ public actor WebTransportServer {
                         ]
                     )
 
-                    await server.yieldSession(session)
+                    // Dispatch to route handler if registered,
+                    // otherwise yield to incomingSessions stream
+                    if let handler = handler {
+                        Task { await handler(session) }
+                    } else {
+                        await server.yieldSession(session)
+                    }
                 } catch {
                     Self.logger.warning(
                         "Failed to create WebTransport session: \(error)",
@@ -566,7 +596,13 @@ public actor WebTransportServer {
         parts.append("state=\(state)")
         parts.append("host=\(host):\(port)")
         parts.append("maxSessions=\(options.maxSessions)")
-        parts.append("routes=\(routes.keys.sorted())")
+        let routeInfo = routes.map { path, entry in
+            var flags = [String]()
+            if entry.middleware != nil { flags.append("middleware") }
+            if entry.handler != nil { flags.append("handler") }
+            return flags.isEmpty ? path : "\(path)[\(flags.joined(separator: "+"))]"
+        }.sorted()
+        parts.append("routes=\(routeInfo)")
         parts.append("globalMiddleware=\(globalMiddleware != nil)")
         return "WebTransportServer(\(parts.joined(separator: ", ")))"
     }

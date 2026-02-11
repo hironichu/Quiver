@@ -137,6 +137,20 @@ public actor WebTransportSession {
     /// QUIC DATAGRAM frames to associate datagrams with this session.
     public let quarterStreamID: UInt64
 
+    /// The `:path` from the Extended CONNECT request (e.g. `"/echo"`).
+    ///
+    /// On the server side this is the path the client requested.
+    /// On the client side this is the path that was connected to.
+    /// Empty string when not provided at creation time.
+    public let path: String
+
+    /// The `:authority` from the Extended CONNECT request (e.g. `"example.com:4433"`).
+    ///
+    /// On the server side this is the authority the client targeted.
+    /// On the client side this is the authority that was connected to.
+    /// Empty string when not provided at creation time.
+    public let authority: String
+
     /// The QUIC stream underlying the Extended CONNECT request.
     ///
     /// Capsules (CLOSE, DRAIN) are exchanged on this stream's data
@@ -243,11 +257,15 @@ public actor WebTransportSession {
     public init(
         connectStream: any QUICStreamProtocol,
         connection: HTTP3Connection,
-        role: Role
+        role: Role,
+        path: String = "",
+        authority: String = ""
     ) {
         self.connectStream = connectStream
         self.connection = connection
         self.role = role
+        self.path = path
+        self.authority = authority
         self.sessionID = connectStream.id
         self.quarterStreamID = connectStream.id / 4
 
@@ -875,6 +893,8 @@ public actor WebTransportSession {
         parts.append("sessionID=\(sessionID)")
         parts.append("state=\(state)")
         parts.append("role=\(role)")
+        if !path.isEmpty { parts.append("path=\(path)") }
+        if !authority.isEmpty { parts.append("authority=\(authority)") }
         parts.append("bidiStreams=\(activeBidiStreams.count)")
         parts.append("uniStreams=\(activeUniStreams.count)")
         return "WebTransportSession(\(parts.joined(separator: ", ")))"

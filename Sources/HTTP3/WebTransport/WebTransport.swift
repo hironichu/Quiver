@@ -342,7 +342,9 @@ public enum WebTransport {
         do {
             return try await h3.createClientWebTransportSession(
                 connectStream: connectStream,
-                response: response
+                response: response,
+                path: path,
+                authority: authority
             )
         } catch {
             throw WebTransportError.internalError(

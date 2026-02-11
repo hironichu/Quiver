@@ -135,7 +135,9 @@ extension HTTP3Connection {
         let session = WebTransportSession(
             connectStream: context.stream,
             connection: self,
-            role: role
+            role: role,
+            path: context.request.path,
+            authority: context.request.authority
         )
 
         // Enforce per-connection session quota
@@ -160,7 +162,9 @@ extension HTTP3Connection {
     /// - Throws: `WebTransportError` if the response is not 200 or setup fails
     public func createClientWebTransportSession(
         connectStream: any QUICStreamProtocol,
-        response: borrowing HTTP3ResponseHead
+        response: borrowing HTTP3ResponseHead,
+        path: String = "",
+        authority: String = ""
     ) async throws -> WebTransportSession {
         guard response.isSuccess else {
             throw WebTransportError.sessionRejected(
@@ -172,7 +176,9 @@ extension HTTP3Connection {
         let session = WebTransportSession(
             connectStream: connectStream,
             connection: self,
-            role: .client
+            role: .client,
+            path: path,
+            authority: authority
         )
 
         // Enforce per-connection session quota (client side)
