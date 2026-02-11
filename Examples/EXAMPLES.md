@@ -997,14 +997,32 @@ let server = WebTransportServer(
     }
 )
 
-// Register paths (unmatched paths get 404 when routes are registered)
-await server.register(path: "/echo")
-await server.register(path: "/chat", middleware: { ctx in
-    guard ctx.origin == "https://trusted.example.com" else {
-        return .reject(reason: "untrusted origin")
+// Register routes with inline session handlers — like a normal HTTP router.
+// Sessions dispatched to a handler do NOT appear in incomingSessions.
+await server.register(path: "/echo") { session in
+    for await stream in await session.incomingBidirectionalStreams {
+        let data = try await stream.read()
+        try await stream.write(data) // Echo
     }
-    return .accept
-})
+}
+
+// Routes can combine middleware (accept/reject gating) with a handler
+await server.register(
+    path: "/chat",
+    middleware: { ctx in
+        guard ctx.origin == "https://trusted.example.com" else {
+            return .reject(reason: "untrusted origin")
+        }
+        return .accept
+    }
+) { session in
+    for await stream in await session.incomingBidirectionalStreams {
+        // handle chat streams...
+    }
+}
+
+// Paths without a handler still work — sessions go to incomingSessions
+await server.register(path: "/monitor")
 
 // Option A: simple listen (server builds QUIC endpoint internally)
 try await server.listen()
@@ -1012,8 +1030,10 @@ try await server.listen()
 // Option B: bring your own QUIC endpoint (recommended for full TLS control)
 await server.serve(connectionSource: quicEndpoint.newConnections)
 
-// Consume accepted sessions
+// Sessions on routes without a handler (or on an open server with no
+// routes registered) fall through here. session.path is available.
 for await session in await server.incomingSessions {
+    print("Unrouted session on path: \(await session.path)")
     Task { await handleSession(session) }
 }
 ```
