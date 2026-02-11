@@ -64,6 +64,7 @@ public enum StreamID {
 // MARK: - Stream State
 
 /// Send-side stream state
+@frozen
 public enum SendState: Sendable, Hashable {
     case ready
     case send
@@ -74,6 +75,7 @@ public enum SendState: Sendable, Hashable {
 }
 
 /// Receive-side stream state
+@frozen
 public enum RecvState: Sendable, Hashable {
     case recv
     case sizeKnown

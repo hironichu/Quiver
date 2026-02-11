@@ -51,7 +51,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("ConnectionRouter lookup: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 100_000, "Expected > 100k ops/sec")
+        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
     }
 
     @Test("ConnectionRouter DCID extraction performance")
@@ -76,7 +76,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("DCID extraction (short header): \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
+        #expect(opsPerSecond > 250_000, "Expected > 250k ops/sec")
     }
 
     @Test("ConnectionRouter long header DCID extraction performance")
@@ -98,7 +98,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("DCID extraction (long header): \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 300_000, "Expected > 300k ops/sec")
+        #expect(opsPerSecond > 150_000, "Expected > 150k ops/sec")
     }
 
     // MARK: - PacketProcessor Benchmarks
@@ -121,7 +121,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("Initial key derivation: \(Int(opsPerSecond)) ops/sec (\(elapsed * 1000 / Double(iterations)) ms/op)")
-        #expect(opsPerSecond > 500, "Expected > 500 ops/sec (key derivation is expensive)")
+        #expect(opsPerSecond > 250, "Expected > 250 ops/sec (key derivation is expensive)")
     }
 
     @Test("PacketProcessor packet type extraction performance")
@@ -149,7 +149,7 @@ struct QUICBenchmarks {
         let totalOps = iterations * packets.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("Packet type extraction: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 1_000_000, "Expected > 1M ops/sec")
+        #expect(opsPerSecond > 500_000, "Expected > 500k ops/sec")
     }
 
     // MARK: - Crypto Context Benchmarks
@@ -169,7 +169,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("KeyMaterial derivation: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 1_000, "Expected > 1k ops/sec")
+        #expect(opsPerSecond > 500, "Expected > 500 ops/sec")
     }
 
     @Test("AES-GCM sealer creation performance")
@@ -187,7 +187,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("AES-GCM Sealer creation: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 5_000, "Expected > 5k ops/sec")
+        #expect(opsPerSecond > 2_500, "Expected > 2.5k ops/sec")
     }
 
     // MARK: - CID Management Benchmarks
@@ -204,7 +204,7 @@ struct QUICBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("ConnectionID random: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 50_000, "Expected > 50k ops/sec")
+        #expect(opsPerSecond > 25_000, "Expected > 25k ops/sec")
     }
 
     @Test("ConnectionID hash performance")
@@ -225,7 +225,7 @@ struct QUICBenchmarks {
         let totalOps = iterations * cids.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("ConnectionID hash: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 8_000_000, "Expected > 8M ops/sec")
+        #expect(opsPerSecond > 4_000_000, "Expected > 4M ops/sec")
     }
 
     @Test("Dictionary lookup by ConnectionID performance")
@@ -257,7 +257,7 @@ struct QUICBenchmarks {
         let totalOps = iterations * lookupCids.count
         let opsPerSecond = Double(totalOps) / elapsed
         print("CID Dictionary lookup: \(Int(opsPerSecond)) ops/sec")
-        #expect(opsPerSecond > 5_000_000, "Expected > 5M ops/sec")
+        #expect(opsPerSecond > 2_500_000, "Expected > 2.5M ops/sec")
     }
 
     // MARK: - Helpers

@@ -74,7 +74,7 @@ private struct DataStreamInternalState: Sendable {
 /// Bidirectional streams have both send and receive sides.
 /// Unidirectional streams have only one side active.
 public final class DataStream: Sendable {
-    private static let logger = Logger(label: "quic.stream.data")
+    private static let logger = QuiverLogging.logger(label: "quic.stream.data")
     /// Stream identifier
     public let id: UInt64
 
@@ -279,6 +279,18 @@ public final class DataStream: Sendable {
             // Check if we can receive on this stream
             if StreamID.isUnidirectional(id) && isLocallyInitiated {
                 throw StreamError.cannotReceiveOnSendOnlyStream
+            }
+
+            // RFC 9000 §3.2: In terminal receive states the peer's data has
+            // already been fully received (or the stream was reset).  Late or
+            // retransmitted STREAM frames are harmless — silently discard them
+            // so we don't abort processing of the entire QUIC packet (which
+            // may carry frames for other, still-active streams).
+            switch `internal`.state.recvState {
+            case .dataRecvd, .dataRead, .resetRecvd, .resetRead:
+                return
+            default:
+                break
             }
 
             guard `internal`.state.canReceive else {

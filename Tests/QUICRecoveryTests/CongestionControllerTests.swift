@@ -157,7 +157,7 @@ struct NewRenoCongestionControllerTests {
         cc.onPacketsLost(packets: [lossPacket], now: now + .milliseconds(100), rtt: rtt)
 
         let recoveryStart = now + .milliseconds(100)
-        let windowAfterLoss = cc.congestionWindow  // 6000 (12000 / 2)
+        _ = cc.congestionWindow  // 6000 (12000 / 2)
 
         // Send and ACK a post-recovery packet to exit recovery
         let recoveryPacket = SentPacket(

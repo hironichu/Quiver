@@ -16,10 +16,10 @@ public struct DataReader: Sendable {
     var position: Data.Index
 
     /// Creates a new DataReader
-    /// - Parameter data: The data to read from
-    public init(_ data: Data) {
+    /// - Parameter data: The data to read from (ownership is transferred to the reader)
+    public init(_ data: consuming Data) {
         self.data = data
-        self.position = data.startIndex
+        self.position = self.data.startIndex
     }
 
     /// The number of bytes remaining to be read
@@ -102,11 +102,13 @@ public struct DataReader: Sendable {
     }
 
     /// Reads a UInt8 (1 byte)
+    @inlinable
     public mutating func readUInt8() -> UInt8? {
         readByte()
     }
 
     /// Reads a UInt16 in big-endian byte order
+    @inlinable
     public mutating func readUInt16() -> UInt16? {
         guard let bytes = readBytes(2) else { return nil }
         return UInt16(bytes[bytes.startIndex]) << 8
@@ -114,6 +116,7 @@ public struct DataReader: Sendable {
     }
 
     /// Reads a UInt32 in big-endian byte order
+    @inlinable
     public mutating func readUInt32() -> UInt32? {
         guard let bytes = readBytes(4) else { return nil }
         return UInt32(bytes[bytes.startIndex]) << 24
@@ -123,6 +126,7 @@ public struct DataReader: Sendable {
     }
 
     /// Reads a UInt64 in big-endian byte order
+    @inlinable
     public mutating func readUInt64() -> UInt64? {
         guard let bytes = readBytes(8) else { return nil }
         var result: UInt64 = 0
@@ -137,7 +141,7 @@ public struct DataReader: Sendable {
     /// This method uses an optimized internal path that avoids Data slice creation.
     /// Performance is equivalent to `readVarintValue()`.
     @inlinable
-    public mutating func readVarint() throws -> Varint {
+    public mutating func readVarint() throws(Varint.DecodeError) -> Varint {
         // Use the fast path: readVarintValue() operates directly on data[position]
         // without creating an intermediate Data slice via remainingData
         return Varint(try readVarintValue())
@@ -146,7 +150,7 @@ public struct DataReader: Sendable {
     /// Reads a QUIC variable-length integer value directly (faster than readVarint())
     /// - Returns: The decoded UInt64 value
     @inlinable
-    public mutating func readVarintValue() throws -> UInt64 {
+    public mutating func readVarintValue() throws(Varint.DecodeError) -> UInt64 {
         guard hasRemaining else {
             throw Varint.DecodeError.insufficientData
         }
@@ -166,7 +170,7 @@ public struct DataReader: Sendable {
 
     /// Slow path for multi-byte varint values
     @usableFromInline
-    mutating func readVarintValueSlow(firstByte: UInt8) throws -> UInt64 {
+    mutating func readVarintValueSlow(firstByte: UInt8) throws(Varint.DecodeError) -> UInt64 {
         let prefix = firstByte >> 6
 
         let length: Int
@@ -211,7 +215,7 @@ public struct DataReader: Sendable {
     ///
     /// This method uses an optimized path that avoids Data slice creation.
     @inlinable
-    public func peekVarint() throws -> (value: UInt64, length: Int) {
+    public func peekVarint() throws(Varint.DecodeError) -> (value: UInt64, length: Int) {
         guard hasRemaining else {
             throw Varint.DecodeError.insufficientData
         }
@@ -261,58 +265,61 @@ public struct DataReader: Sendable {
 // MARK: - DataWriter
 
 /// A helper for building binary data
-public struct DataWriter: Sendable {
+package struct DataWriter: Sendable {
     /// The accumulated data
     @usableFromInline
     var data: Data
 
     /// Creates an empty DataWriter
     /// - Parameter capacity: Initial capacity hint
-    public init(capacity: Int = 64) {
+    package init(capacity: Int = 64) {
         data = Data(capacity: capacity)
     }
 
     /// The current length of written data
-    public var count: Int {
+    package var count: Int {
         data.count
     }
 
     /// Returns the accumulated data
-    public func toData() -> Data {
+    package func toData() -> Data {
         data
     }
 
     /// Writes a single byte
     @inlinable
-    public mutating func writeByte(_ byte: UInt8) {
+    package mutating func writeByte(_ byte: UInt8) {
         data.append(byte)
     }
 
     /// Writes raw bytes
     @inlinable
-    public mutating func writeBytes(_ bytes: Data) {
+    package mutating func writeBytes(_ bytes: Data) {
         data.append(bytes)
     }
 
     /// Writes raw bytes from a sequence
     @inlinable
-    public mutating func writeBytes<S: Sequence>(_ bytes: S) where S.Element == UInt8 {
+    package mutating func writeBytes<S: Sequence>(_ bytes: S) where S.Element == UInt8 {
         data.append(contentsOf: bytes)
     }
 
     /// Writes a UInt8 (1 byte)
-    public mutating func writeUInt8(_ value: UInt8) {
+    @inlinable
+    package mutating func writeUInt8(_ value: UInt8) {
         data.append(value)
     }
 
     /// Writes a UInt16 in big-endian byte order
-    public mutating func writeUInt16(_ value: UInt16) {
+    @inlinable
+    package mutating func writeUInt16(_ value: UInt16) {
         data.append(UInt8(value >> 8))
         data.append(UInt8(value & 0xFF))
     }
 
     /// Writes a UInt32 in big-endian byte order
-    public mutating func writeUInt32(_ value: UInt32) {
+    @inlinable
+    package mutating func writeUInt32(_ value: UInt32) {
         data.append(UInt8(value >> 24))
         data.append(UInt8((value >> 16) & 0xFF))
         data.append(UInt8((value >> 8) & 0xFF))
@@ -320,7 +327,8 @@ public struct DataWriter: Sendable {
     }
 
     /// Writes a UInt64 in big-endian byte order
-    public mutating func writeUInt64(_ value: UInt64) {
+    @inlinable
+    package mutating func writeUInt64(_ value: UInt64) {
         for i in (0..<8).reversed() {
             data.append(UInt8((value >> (i * 8)) & 0xFF))
         }
@@ -328,13 +336,13 @@ public struct DataWriter: Sendable {
 
     /// Writes a QUIC variable-length integer
     @inlinable
-    public mutating func writeVarint(_ varint: Varint) {
+    package mutating func writeVarint(_ varint: Varint) {
         varint.encode(to: &data)
     }
 
     /// Writes a QUIC variable-length integer from a UInt64
     @inlinable
-    public mutating func writeVarint(_ value: UInt64) {
+    package mutating func writeVarint(_ value: UInt64) {
         Varint(value).encode(to: &data)
     }
 
@@ -343,20 +351,20 @@ public struct DataWriter: Sendable {
     /// Uses `Data(count:)` which is zero-initialized and faster than
     /// `Data(repeating: 0x00, count:)` for large counts.
     @inlinable
-    public mutating func writeZeroBytes(_ count: Int) {
+    package mutating func writeZeroBytes(_ count: Int) {
         data.append(Data(count: count))
     }
 
     /// Reserves space for later filling, returns the offset
     @inlinable
-    public mutating func reserveBytes(_ count: Int) -> Int {
+    package mutating func reserveBytes(_ count: Int) -> Int {
         let offset = data.count
         data.append(Data(count: count))  // Data(count:) is zero-initialized and faster
         return offset
     }
 
     /// Fills previously reserved bytes at the given offset
-    public mutating func fillBytes(_ bytes: Data, at offset: Int) {
+    package mutating func fillBytes(_ bytes: Data, at offset: Int) {
         precondition(offset + bytes.count <= data.count)
         data.replaceSubrange(offset..<(offset + bytes.count), with: bytes)
     }

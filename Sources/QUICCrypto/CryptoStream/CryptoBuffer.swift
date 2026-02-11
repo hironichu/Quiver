@@ -56,9 +56,11 @@ struct CryptoBuffer: Sendable {
                     // Next segment extends beyond current
                     let overlap = Int(currentEnd - next.offset)
                     let newData = next.data.dropFirst(overlap)
+                    var merged = current.data
+                    merged.append(contentsOf: newData)
                     current = (
                         offset: current.offset,
-                        data: current.data + newData
+                        data: merged
                     )
                 }
                 // else: next segment is completely contained within current, skip it

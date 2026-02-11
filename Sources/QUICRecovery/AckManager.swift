@@ -247,7 +247,8 @@ public final class AckManager: Sendable {
     /// - Returns: An ACK frame, or nil if no ACK is needed
     public func generateAckFrame(
         now: ContinuousClock.Instant,
-        ackDelayExponent: UInt64
+        ackDelayExponent: UInt64,
+        ecnCounts: ECNCounts? = nil
     ) -> AckFrame? {
         state.withLock { state in
             guard let largest = state.largestReceived,
@@ -281,7 +282,7 @@ public final class AckManager: Sendable {
                 largestAcknowledged: largest,
                 ackDelay: encodedDelay,
                 ackRanges: ranges,
-                ecnCounts: nil
+                ecnCounts: ecnCounts
             )
         }
     }

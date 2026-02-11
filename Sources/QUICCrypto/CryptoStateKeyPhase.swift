@@ -11,27 +11,27 @@ import QUICCore
 // MARK: - Key Phase Context
 
 /// Context for managing key phase transitions in 1-RTT packets
-public struct KeyPhaseContext: Sendable {
+package struct KeyPhaseContext: Sendable {
     /// Current key phase bit (0 or 1)
-    public let currentPhase: UInt8
+    package let currentPhase: UInt8
 
     /// Opener for current key phase
-    public let currentOpener: any PacketOpener
+    package let currentOpener: any PacketOpener
 
     /// Sealer for current key phase
-    public let currentSealer: any PacketSealer
+    package let currentSealer: any PacketSealer
 
     /// Opener for previous key phase (for in-flight packets during transition)
-    public let previousOpener: (any PacketOpener)?
+    package let previousOpener: (any PacketOpener)?
 
     /// Opener for next key phase (speculatively derived for incoming key updates)
-    public let nextOpener: (any PacketOpener)?
+    package let nextOpener: (any PacketOpener)?
 
     /// Number of key updates performed
-    public let updateCount: UInt64
+    package let updateCount: UInt64
 
     /// Creates an initial key phase context
-    public init(
+    package init(
         opener: any PacketOpener,
         sealer: any PacketSealer
     ) {
@@ -44,7 +44,7 @@ public struct KeyPhaseContext: Sendable {
     }
 
     /// Creates a key phase context with all components
-    public init(
+    package init(
         currentPhase: UInt8,
         currentOpener: any PacketOpener,
         currentSealer: any PacketSealer,
@@ -63,7 +63,7 @@ public struct KeyPhaseContext: Sendable {
     /// Gets the opener for a specific key phase bit
     /// - Parameter phase: The key phase bit from the packet header
     /// - Returns: The appropriate opener, or nil if not available
-    public func opener(for phase: UInt8) -> (any PacketOpener)? {
+    package func opener(for phase: UInt8) -> (any PacketOpener)? {
         if phase == currentPhase {
             return currentOpener
         } else if let prev = previousOpener {
@@ -80,7 +80,7 @@ public struct KeyPhaseContext: Sendable {
 // MARK: - Key Phase Manager
 
 /// Manages key phase transitions for a connection
-public final class KeyPhaseManager: Sendable {
+package final class KeyPhaseManager: Sendable {
     /// Internal state
     private let state: Mutex<KeyPhaseState>
 
@@ -94,7 +94,7 @@ public final class KeyPhaseManager: Sendable {
     /// - Parameters:
     ///   - keySchedule: The key schedule to use for key derivation
     ///   - isClient: Whether this endpoint is a client
-    public init(keySchedule: KeySchedule, isClient: Bool) {
+    package init(keySchedule: KeySchedule, isClient: Bool) {
         self.keySchedule = Mutex(keySchedule)
         self.isClient = isClient
         self.state = Mutex(KeyPhaseState())
@@ -102,7 +102,7 @@ public final class KeyPhaseManager: Sendable {
 
     /// Sets the initial application keys
     /// - Parameter context: The initial key phase context
-    public func setInitialContext(_ context: KeyPhaseContext) {
+    package func setInitialContext(_ context: KeyPhaseContext) {
         state.withLock { state in
             state.context = context
             state.keyUpdateAllowed = true
@@ -110,12 +110,12 @@ public final class KeyPhaseManager: Sendable {
     }
 
     /// Gets the current key phase context
-    public var context: KeyPhaseContext? {
+    package var context: KeyPhaseContext? {
         state.withLock { $0.context }
     }
 
     /// Gets the current key phase bit
-    public var currentPhase: UInt8 {
+    package var currentPhase: UInt8 {
         state.withLock { $0.context?.currentPhase ?? 0 }
     }
 
@@ -127,7 +127,7 @@ public final class KeyPhaseManager: Sendable {
     ///
     /// - Returns: The new key phase context
     /// - Throws: KeyPhaseError if key update is not allowed
-    public func initiateKeyUpdate() throws -> KeyPhaseContext {
+    package func initiateKeyUpdate() throws -> KeyPhaseContext {
         try state.withLock { state in
             guard let currentContext = state.context else {
                 throw KeyPhaseError.noApplicationKeys
@@ -178,7 +178,7 @@ public final class KeyPhaseManager: Sendable {
     /// - Parameter receivedPhase: The key phase bit from the received packet
     /// - Returns: The opener to use for decryption
     /// - Throws: KeyPhaseError if keys are not available
-    public func handleReceivedKeyPhase(_ receivedPhase: UInt8) throws -> any PacketOpener {
+    package func handleReceivedKeyPhase(_ receivedPhase: UInt8) throws -> any PacketOpener {
         try state.withLock { state in
             guard let currentContext = state.context else {
                 throw KeyPhaseError.noApplicationKeys
@@ -229,7 +229,7 @@ public final class KeyPhaseManager: Sendable {
     /// complete the key phase transition.
     ///
     /// - Parameter phase: The key phase that was successfully used
-    public func confirmKeyUpdate(phase: UInt8) {
+    package func confirmKeyUpdate(phase: UInt8) {
         state.withLock { state in
             guard let currentContext = state.context,
                   phase != currentContext.currentPhase,
@@ -277,14 +277,14 @@ public final class KeyPhaseManager: Sendable {
     /// Re-enables key updates after previous update is confirmed
     ///
     /// Called when all packets sent with the old key phase have been acknowledged.
-    public func enableKeyUpdate() {
+    package func enableKeyUpdate() {
         state.withLock { state in
             state.keyUpdateAllowed = true
         }
     }
 
     /// Whether a key update can be initiated
-    public var canInitiateKeyUpdate: Bool {
+    package var canInitiateKeyUpdate: Bool {
         state.withLock { $0.keyUpdateAllowed }
     }
 

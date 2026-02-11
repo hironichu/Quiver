@@ -6,11 +6,41 @@
 ///
 /// Some limits are mandated by RFC 9000, others are implementation
 /// choices based on practical considerations (e.g., UDP MTU constraints).
+///
+/// ## RFC Constants vs Configurable Values
+///
+/// Values in this file are **protocol-mandated constants** that MUST NOT
+/// change regardless of configuration.  Runtime-configurable sizes (such
+/// as the active path MTU) belong in ``QUICConfiguration`` and are plumbed
+/// through the connection stack at initialisation time.
 
 import Foundation
 
 /// Protocol-defined limits for QUIC fields
 public enum ProtocolLimits {
+
+    // MARK: - Datagram Size (RFC 9000 Section 14)
+
+    /// Minimum UDP payload size that all QUIC implementations MUST support.
+    ///
+    /// RFC 9000 Section 14:
+    /// > "QUIC MUST NOT be used if the network path cannot support a
+    /// >  maximum datagram size of at least 1200 bytes."
+    ///
+    /// This is the absolute floor for `max_udp_payload_size` and the
+    /// minimum size to which Initial packets MUST be padded.
+    /// It is an RFC constant and MUST NOT be made configurable.
+    public static let minimumMaximumDatagramSize = 1200
+
+    /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1).
+    ///
+    /// > "A client MUST expand the payload of all UDP datagrams carrying
+    /// >  Initial packets to at least the smallest maximum datagram size
+    /// >  of 1200 bytes."
+    ///
+    /// Equivalent to ``minimumMaximumDatagramSize``; kept as a separate
+    /// name for call-site clarity when padding Initial packets.
+    public static let minimumInitialPacketSize = minimumMaximumDatagramSize
 
     // MARK: - Connection ID (RFC 9000 Section 17.2)
 
@@ -26,10 +56,11 @@ public enum ProtocolLimits {
 
     // MARK: - Packet Limits
 
-    /// Maximum length of an Initial packet token
-    /// Not specified by RFC, but constrained by UDP MTU (typically 1200-1500 bytes)
-    /// We use a conservative limit that allows for header overhead
-    public static let maxInitialTokenLength = 1200
+    /// Maximum length of an Initial packet token.
+    ///
+    /// Not specified by RFC, but bounded by the minimum datagram size
+    /// (``minimumMaximumDatagramSize``) minus header overhead.
+    public static let maxInitialTokenLength = minimumMaximumDatagramSize
 
     /// Maximum packet payload length
     /// Based on maximum UDP datagram size minus headers
@@ -52,9 +83,11 @@ public enum ProtocolLimits {
     /// Limited by packet size, but we enforce a maximum
     public static let maxStreamDataLength = 65535
 
-    /// Maximum NEW_TOKEN frame token length
-    /// Similar to Initial token constraints
-    public static let maxNewTokenLength = 1200
+    /// Maximum NEW_TOKEN frame token length.
+    ///
+    /// Bounded by ``minimumMaximumDatagramSize`` to guarantee the token
+    /// fits in the smallest compliant datagram.
+    public static let maxNewTokenLength = minimumMaximumDatagramSize
 
     /// Maximum CONNECTION_CLOSE reason phrase length
     /// RFC 9000 does not specify, but reason phrases should be human-readable

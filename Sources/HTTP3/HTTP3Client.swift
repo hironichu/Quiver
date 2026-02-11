@@ -48,6 +48,7 @@
 /// Connections are kept alive for subsequent requests to the same authority.
 
 import Foundation
+import QUIC
 import QUICCore
 import QPACK
 
@@ -144,11 +145,14 @@ public actor HTTP3Client {
 
     /// Performs an HTTP/3 request and returns the response.
     ///
+    /// The response body is always stream-backed. Consume it with
+    /// `response.body.data()`, `.text()`, `.json()`, or `.stream()`.
+    ///
     /// If a connection to the target authority already exists and is ready,
     /// it is reused. Otherwise, a new connection is established.
     ///
     /// - Parameter request: The HTTP/3 request to send
-    /// - Returns: The HTTP/3 response
+    /// - Returns: The HTTP/3 response with stream-backed body
     /// - Throws: `HTTP3Error` if the request fails
     ///
     /// ## Example
@@ -158,6 +162,7 @@ public actor HTTP3Client {
     /// let response = try await client.request(
     ///     HTTP3Request(method: .get, url: "https://example.com/")
     /// )
+    /// let body = try await response.body.data()
     /// ```
     public func request(_ request: HTTP3Request) async throws -> HTTP3Response {
         guard !isClosed else {
@@ -165,35 +170,39 @@ public actor HTTP3Client {
         }
 
         let authority = request.authority
-
-        // Get or create a connection for this authority
         let connection = try await getOrCreateConnection(for: authority)
-
-        // Send the request
         return try await connection.sendRequest(request)
     }
 
     /// Performs a GET request to the given URL.
     ///
-    /// Convenience method that constructs an HTTP3Request from a URL string.
+    /// Response body is stream-backed. Consume however you want:
+    /// ```swift
+    /// let response = try await client.get("https://example.com/data")
+    /// let data = try await response.body.data()
+    /// // OR
+    /// for await chunk in try response.body.stream() { ... }
+    /// ```
     ///
     /// - Parameters:
     ///   - url: The URL to request
     ///   - headers: Additional headers (default: empty)
-    /// - Returns: The HTTP/3 response
+    /// - Returns: The HTTP/3 response with stream-backed body
     /// - Throws: `HTTP3Error` if the request fails
     public func get(_ url: String, headers: [(String, String)] = []) async throws -> HTTP3Response {
         let request = HTTP3Request(method: .get, url: url, headers: headers)
         return try await self.request(request)
     }
 
-    /// Performs a POST request to the given URL.
+    /// Performs a POST request with a `Data` body.
+    ///
+    /// The entire body is sent in one shot. Response body is stream-backed.
     ///
     /// - Parameters:
     ///   - url: The URL to request
-    ///   - body: The request body
+    ///   - body: The request body data
     ///   - headers: Additional headers (default: empty)
-    /// - Returns: The HTTP/3 response
+    /// - Returns: The HTTP/3 response with stream-backed body
     /// - Throws: `HTTP3Error` if the request fails
     public func post(
         _ url: String,
@@ -204,13 +213,53 @@ public actor HTTP3Client {
         return try await self.request(request)
     }
 
-    /// Performs a PUT request to the given URL.
+    /// Performs a POST request with a streaming upload body.
+    ///
+    /// The request body is written in chunks via the writer closure.
+    /// Each `writer.write()` sends a DATA frame directly on the QUIC stream.
+    /// Memory usage is flat regardless of total body size.
+    ///
+    /// The response is returned after the upload completes (half-duplex).
+    /// For full-duplex, use `open(method:url:headers:)` (planned).
+    ///
+    /// ```swift
+    /// let response = try await client.post(
+    ///     "https://example.com/upload",
+    ///     headers: [("content-type", "application/octet-stream")]
+    /// ) { writer in
+    ///     for chunk in fileChunks {
+    ///         try await writer.write(chunk)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - url: The URL to POST to
+    ///   - headers: Additional headers (default: empty)
+    ///   - writer: Closure that writes body chunks via ``HTTP3BodyWriter``
+    /// - Returns: The HTTP/3 response with stream-backed body
+    /// - Throws: `HTTP3Error` if the request fails
+    public func post(
+        _ url: String,
+        headers: [(String, String)] = [],
+        _ writer: @escaping @Sendable (HTTP3BodyWriter) async throws -> Void
+    ) async throws -> HTTP3Response {
+        guard !isClosed else {
+            throw HTTP3Error(code: .internalError, reason: "Client is closed")
+        }
+
+        let request = HTTP3Request(method: .post, url: url, headers: headers)
+        let connection = try await getOrCreateConnection(for: request.authority)
+        return try await connection.sendRequestWithBodyWriter(request, bodyWriter: writer)
+    }
+
+    /// Performs a PUT request with a `Data` body.
     ///
     /// - Parameters:
     ///   - url: The URL to request
-    ///   - body: The request body
+    ///   - body: The request body data
     ///   - headers: Additional headers (default: empty)
-    /// - Returns: The HTTP/3 response
+    /// - Returns: The HTTP/3 response with stream-backed body
     /// - Throws: `HTTP3Error` if the request fails
     public func put(
         _ url: String,
@@ -226,7 +275,7 @@ public actor HTTP3Client {
     /// - Parameters:
     ///   - url: The URL to request
     ///   - headers: Additional headers (default: empty)
-    /// - Returns: The HTTP/3 response
+    /// - Returns: The HTTP/3 response with stream-backed body
     /// - Throws: `HTTP3Error` if the request fails
     public func delete(_ url: String, headers: [(String, String)] = []) async throws -> HTTP3Response {
         let request = HTTP3Request(method: .delete, url: url, headers: headers)

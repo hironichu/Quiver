@@ -21,6 +21,11 @@ This directory contains runnable demo binaries that showcase the **QUIC** and **
   - [Running the WebTransport Client](#running-the-webtransport-client)
   - [Echo Mechanisms](#echo-mechanisms)
   - [WebTransport API Reference](#webtransport-api-reference)
+- [QUICNetworkDemo — ECN / PMTUD / Platform Socket Demo](#quicnetworkdemo--ecn--pmtud--platform-socket-demo)
+  - [Platform Info Mode](#platform-info-mode)
+  - [Running the Server](#running-the-network-demo-server)
+  - [Running the Client](#running-the-network-demo-client)
+  - [Network Config API Reference](#network-config-api-reference)
 - [Architecture Overview](#architecture-overview)
 - [Security & TLS Configuration](#security--tls-configuration)
 - [Troubleshooting](#troubleshooting)
@@ -520,9 +525,9 @@ router.get("/") { context in
 }
 
 router.post("/api/data") { context in
-    let body = context.request.body ?? Data()
+    let body = try await context.body.data()  // or .text(), .json(MyType.self)
     // Process body...
-    try await context.respond(HTTP3Response(status: 201))
+    try await context.respond(status: 201)
 }
 
 router.put("/api/resource") { context in /* ... */ }
@@ -578,26 +583,32 @@ context.request.scheme      // "https"
 context.request.authority   // "example.com:443"
 context.request.path        // "/api/data"
 context.request.headers     // [(String, String)]
-context.request.body        // Data?
+context.request.trailers    // [(String, String)]?  (RFC 9114 §4.1)
+
+// Request body (server-side) — consumed via context, not request:
+let data = try await context.body.data()            // full body as Data
+let text = try await context.body.text()            // full body as String
+let obj  = try await context.body.json(MyType.self) // JSON decode
+for await chunk in context.body.stream() {          // raw streaming
+    process(chunk)
+}
 ```
 
 #### HTTP3Response
 
-Represents an outgoing HTTP/3 response.
+Represents an HTTP/3 response. `HTTP3Response` is `~Copyable` — the body is consumed exactly once via `.body()`.
 
 ```swift
-// Simple response
+// Creating a response (server-side)
 let response = HTTP3Response(status: 200)
-
-// Full response
 let response = HTTP3Response(
     status: 200,
     headers: [
         ("content-type", "application/json"),
         ("cache-control", "no-cache"),
-        ("x-custom", "value"),
     ],
-    body: Data("{\"ok\": true}".utf8)
+    body: Data("{\"ok\": true}".utf8),
+    trailers: [("x-checksum", "abc123")]  // optional trailing headers
 )
 
 // Status helpers
@@ -607,26 +618,64 @@ response.isRedirect       // 300-399
 response.isClientError    // 400-499
 response.isServerError    // 500-599
 response.statusText       // "OK", "Not Found", etc.
+
+// Consuming the body (~Copyable — pick exactly one):
+let data = try await response.body().data()              // full Data
+let text = try await response.body().text()              // String (UTF-8)
+let obj  = try await response.body().json(MyType.self)   // JSON decode
+for await chunk in response.body().stream() { ... }      // raw AsyncStream<Data>
 ```
 
 #### HTTP3RequestContext
 
-Wraps a request and a respond callback. Passed to request handlers.
+Wraps a request, a stream-backed body, and respond methods. Passed to request handlers.
 
 ```swift
 await server.onRequest { context in
-    // Read the request
+    // Read request metadata
     let method = context.request.method
     let path = context.request.path
     let streamID = context.streamID
-    
-    // Send a response (must be called exactly once)
-    try await context.respond(HTTP3Response(
+
+    // Consume request body (stream-backed, pick one):
+    let body = try await context.body.data()            // full Data
+    // let text = try await context.body.text()          // String
+    // let obj  = try await context.body.json(T.self)    // JSON
+    // for await chunk in context.body.stream() { … }    // raw chunks
+
+    // Buffered response (HEADERS + DATA + FIN)
+    try await context.respond(
         status: 200,
         headers: [("content-type", "text/plain")],
-        body: Data("OK".utf8)
-    ))
+        Data("OK".utf8)
+    )
 }
+```
+
+**Streaming response (flat memory):**
+
+```swift
+await server.onRequest { context in
+    try await context.respond(
+        status: 200,
+        headers: [("content-type", "application/octet-stream")]
+    ) { writer in
+        for chunk in largeDataChunks {
+            try await writer.write(chunk)   // each call sends a DATA frame
+        }
+    }
+}
+```
+
+**Trailers:**
+
+```swift
+try await context.respond(
+    status: 200,
+    headers: [("content-type", "application/grpc")],
+    responseData,
+    trailers: [("grpc-status", "0"), ("grpc-message", "OK")]
+)
 ```
 
 #### HTTP3Settings
@@ -721,11 +770,25 @@ let resp = try await client.put("https://example.com/api/resource",
                                  body: updateData)
 let resp = try await client.delete("https://example.com/api/resource/42")
 
+// Streaming upload (flat memory regardless of body size)
+let resp = try await client.post(
+    "https://example.com/upload",
+    headers: [("content-type", "application/octet-stream")]
+) { writer in
+    for chunk in fileChunks {
+        try await writer.write(chunk)   // each call sends a DATA frame
+    }
+}
+
 // Full request control
 let request = HTTP3Request(method: .patch, url: "https://example.com/api/item/1",
                            headers: [("content-type", "application/json")],
                            body: patchData)
 let resp = try await client.request(request)
+
+// Response body is ~Copyable — read status/headers first, then consume body:
+let status = resp.status
+let data = try await resp.body().data()     // or .text(), .json(T.self), .stream()
 
 // Connection pool management
 client.connectionCount        // Number of active connections
@@ -860,15 +923,48 @@ Client                          Server
 
 ### WebTransport API Reference
 
+#### WebTransportConfiguration
+
+Unified configuration shared by both client and server. Composes `QUICConfiguration` directly — no property duplication.
+
+```swift
+import HTTP3
+import QUIC
+
+// Minimal — just provide the QUIC config
+let config = WebTransportConfiguration(quic: myQuicConfig)
+
+// Full customization
+var config = WebTransportConfiguration(
+    quic: myQuicConfig,
+    maxSessions: 4,                          // SETTINGS_WEBTRANSPORT_MAX_SESSIONS
+    headers: [("authorization", "Bearer …")], // Client-side only; ignored on server
+    http3Settings: HTTP3Settings(),           // QPACK / HTTP/3 overrides
+    connectionReadyTimeout: .seconds(10),     // SETTINGS exchange timeout
+    connectTimeout: .seconds(10)              // Extended CONNECT timeout
+)
+
+// Modify QUIC settings directly
+config.quic.maxIdleTimeout = .seconds(60)
+config.quic.initialMaxStreamsBidi = 200
+```
+
 #### WebTransportServer
 
 The server-side convenience wrapper that handles session establishment automatically:
 
 ```swift
-// Create server with session limits
+import HTTP3
+import QUIC
+
+// Create server with unified configuration + server-only options
+let config = WebTransportConfiguration(
+    quic: quicConfig,
+    maxSessions: 4
+)
 let server = WebTransportServer(
-    configuration: WebTransportServer.Configuration(
-        maxSessionsPerConnection: 4,
+    configuration: config,
+    serverOptions: .init(
         maxConnections: 0,          // unlimited
         allowedPaths: ["/echo"]     // restrict accepted paths
     )
@@ -887,27 +983,60 @@ Task {
 }
 
 // Start serving (blocks until stop() is called)
-try await server.listen(
+// QUIC config comes from configuration.quic — no separate parameter
+try await server.listen(host: "0.0.0.0", port: 4445)
+```
+
+**Static factory (one-call):**
+
+```swift
+let server = try await WebTransportServer.listen(
     host: "0.0.0.0",
     port: 4445,
-    quicConfiguration: quicConfig
+    configuration: config,
+    serverOptions: .init(allowedPaths: ["/echo"])
 )
+// Returns immediately — serve() runs in the background
+for await session in server.incomingSessions {
+    Task { await handleSession(session) }
+}
 ```
 
 #### WebTransportClient
 
 The client-side wrapper that establishes sessions via Extended CONNECT:
 
-```swift
-// Connect via QUIC
-let endpoint = QUICEndpoint(configuration: config)
-let quicConn = try await endpoint.dial(address: serverAddress)
+**One-call convenience (Tier 1):**
 
-// Initialize HTTP/3 + WebTransport layer
+```swift
+import HTTP3
+import QUIC
+
+let config = WebTransportConfiguration(quic: myQuicConfig)
+let session = try await WebTransportClient.connect(
+    url: "https://example.com:4445/echo",
+    configuration: config
+)
+// session is ready — QUIC endpoint, HTTP/3, and Extended CONNECT all handled internally
+```
+
+**Bring your own QUIC connection (Tier 2):**
+
+```swift
+let quicConn = try await endpoint.dial(address: serverAddress)
+let session = try await WebTransportClient.connect(
+    authority: "example.com:4445",
+    path: "/echo",
+    over: quicConn
+    // configuration is optional — QUIC part is ignored since you provide the connection
+)
+```
+
+**Full manual control (Tier 3):**
+
+```swift
 let client = WebTransportClient(quicConnection: quicConn)
 try await client.initialize()
-
-// Establish a WebTransport session
 let session = try await client.connect(
     authority: "example.com:4445",
     path: "/echo"
@@ -967,6 +1096,176 @@ let data = try await stream.read()
 try await stream.write(Data("response".utf8))
 try await stream.closeWrite()           // Send FIN
 await stream.reset(applicationErrorCode: 0)  // Send RESET_STREAM
+```
+
+---
+
+## QUICNetworkDemo — ECN / PMTUD / Platform Socket Demo
+
+This demo exercises the network-configuration adaptation features added to
+quiver: platform socket option generation, ECN (Explicit Congestion
+Notification) wiring and validation, DPLPMTUD (RFC 8899) state inspection,
+and interface MTU querying.
+
+It runs in three modes: `info` (no network I/O), `server`, and `client`.
+
+### Platform Info Mode
+
+Prints platform socket constants, generated socket option descriptors,
+ECN/TOS helpers, interface MTU queries, and default PMTUD configuration
+without opening any network connections.
+
+```bash
+swift run QUICNetworkDemo info
+```
+
+Output includes:
+
+- `PlatformSocketConstants` — DF/ECN/GRO/GSO/MTU-query support flags
+- IPv4 and IPv6 `PlatformSocketOptions.forQUIC(...)` descriptor lists
+- `ecnFromTOS()` / `tosWithECN()` helper results
+- Loopback and default-interface MTU via `queryInterfaceMTU()` / `queryDefaultInterfaceMTU()`
+- `PMTUConfiguration` defaults (basePLPMTU, maxPLPMTU, granularity, probes, timers)
+
+### Running the Network Demo Server
+
+```bash
+# Default: ECN + DF enabled, bind 127.0.0.1:4434
+swift run QUICNetworkDemo server
+
+# Disable ECN
+swift run QUICNetworkDemo server --no-ecn
+
+# Disable DF (disables PMTUD)
+swift run QUICNetworkDemo server --no-df
+
+# Custom bind address
+swift run QUICNetworkDemo server --host 0.0.0.0 --port 5555
+
+# Verbose logging
+swift run QUICNetworkDemo server --log-level trace
+```
+
+The server:
+
+1. Validates `QUICConfiguration` (socket ceiling >= QUIC payload >= 1200).
+2. Logs the `PlatformSocketOptions` that will be applied to the UDP socket.
+3. Accepts connections and echoes stream data back.
+4. Prints ECN/PMTUD diagnostics after every 5 echoed messages and on
+   connection close.
+
+### Running the Network Demo Client
+
+```bash
+# Default: connects to 127.0.0.1:4434
+swift run QUICNetworkDemo client
+
+# Disable ECN on client side
+swift run QUICNetworkDemo client --no-ecn
+```
+
+The client runs a six-phase test sequence:
+
+| Phase | Description |
+|-------|-------------|
+| 1 | Post-handshake diagnostics — ECN enabled/validation state, PMTUD state/PLPMTU |
+| 2 | ECN validation — 20 ping-pong rounds with 50 ms delays; logs ECN validation progression (`testing` -> `capable`) |
+| 3 | Post-ECN-validation diagnostics |
+| 4 | PMTUD state inspection — current state, PLPMTU, history count, probe generation attempt |
+| 5 | Larger payload echo — 100 / 500 / 1000 byte payloads to verify data integrity |
+| 6 | Final summary — ECN validated flag, PMTUD state, confirmed PLPMTU |
+
+### Network Config API Reference
+
+#### SocketConfiguration
+
+```swift
+// Sources/QUIC/QUICConfiguration.swift
+public struct SocketConfiguration: Sendable {
+    var receiveBufferSize: Int?    // SO_RCVBUF (default: 65536)
+    var sendBufferSize: Int?       // SO_SNDBUF (default: 65536)
+    var maxDatagramSize: Int       // OS/NIO ceiling (default: 65507)
+    var enableECN: Bool            // IP_RECVTOS / IPV6_RECVTCLASS (default: true)
+    var enableDF: Bool             // IP_DONTFRAG / IP_MTU_DISCOVER (default: true)
+}
+```
+
+#### PlatformSocketConstants
+
+```swift
+// Sources/QUICTransport/PlatformSocket.swift
+enum PlatformSocketConstants {
+    static let isDFSupported: Bool
+    static let isECNSupported: Bool
+    static let isGROSupported: Bool
+    static let isGSOSupported: Bool
+    static let isMTUQuerySupported: Bool
+}
+```
+
+#### PlatformSocketOptions
+
+```swift
+// Sources/QUICTransport/PlatformSocket.swift
+struct PlatformSocketOptions: Sendable {
+    let options: [SocketOptionDescriptor]
+    let dfEnabled: Bool
+    let ecnEnabled: Bool
+
+    static func forQUIC(
+        addressFamily: AddressFamily,
+        enableECN: Bool = true,
+        enableDF: Bool = true,
+        ecnValue: UInt8 = 0x02
+    ) -> PlatformSocketOptions
+}
+
+func queryInterfaceMTU(_ interfaceName: String) -> Int?
+func queryDefaultInterfaceMTU() -> Int?
+func ecnFromTOS(_ tosByte: UInt8) -> UInt8
+func tosWithECN(dscp: UInt8 = 0, ecn: UInt8) -> UInt8
+```
+
+#### ECN on ManagedConnection
+
+```swift
+// Sources/QUIC/ManagedConnection.swift
+extension ManagedConnection {
+    func enableECN()
+    func disableECN()
+    var isECNEnabled: Bool
+    var ecnValidationState: ECNValidationState   // .unknown | .testing | .capable | .failed
+    var isECNValidated: Bool
+}
+```
+
+#### DPLPMTUD on ManagedConnection
+
+```swift
+// Sources/QUIC/ManagedConnection.swift
+extension ManagedConnection {
+    func enablePMTUD()
+    func disablePMTUD()
+    var pmtuState: PMTUState       // .disabled | .base | .searching | .searchComplete | .error
+    var currentPathMTU: Int
+    var pmtuDiagnostics: String
+    var pmtuHistoryCount: Int
+    func generatePMTUProbe() -> PMTUDiscoveryManager.ProbeRequest?
+    func resetPMTUDForPathChange()
+}
+```
+
+#### QUICConfiguration.validate()
+
+```swift
+// Sources/QUIC/QUICConfiguration.swift
+extension QUICConfiguration {
+    func validate() throws
+    // Checks:
+    //   maxUDPPayloadSize >= 1200
+    //   socketConfiguration.maxDatagramSize >= maxUDPPayloadSize
+    //   connectionIDLength in 0...20
+}
 ```
 
 ---
@@ -1239,8 +1538,10 @@ Examples/
 │   └── main.swift               ← QUIC echo server + client demo
 ├── HTTP3Demo/
 │   └── main.swift               ← HTTP/3 server + client demo
-└── WebTransportDemo/
-    └── main.swift               ← WebTransport echo server + client demo
+├── WebTransportDemo/
+│   └── main.swift               ← WebTransport echo server + client demo
+└── QUICNetworkDemo/
+    └── main.swift               ← ECN / PMTUD / platform socket demo
 ```
 
 ---
@@ -1256,3 +1557,5 @@ Examples/
 - [RFC 9220 — Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html) (Extended CONNECT)
 - [RFC 9297 — HTTP Datagrams and the Capsule Protocol](https://www.rfc-editor.org/rfc/rfc9297.html)
 - [draft-ietf-webtrans-http3 — WebTransport over HTTP/3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
+- [RFC 3168 — Explicit Congestion Notification](https://www.rfc-editor.org/rfc/rfc3168.html)
+- [RFC 8899 — DPLPMTUD](https://www.rfc-editor.org/rfc/rfc8899.html)

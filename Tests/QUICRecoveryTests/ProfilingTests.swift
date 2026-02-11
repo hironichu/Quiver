@@ -78,7 +78,7 @@ struct ProfilingTests {
         let iterations = Self.iterations
 
         let start = ContinuousClock.now
-        for iter in 0..<iterations {
+        for _ in 0..<iterations {
             var dict: [UInt64: Int] = Dictionary(minimumCapacity: 128)
             for i in 0..<100 {
                 dict[UInt64(i)] = i
@@ -334,7 +334,7 @@ struct ProfilingTests {
 
     @Test("Profile: Array binary search")
     func arrayBinarySearch() {
-        var arr: [Int] = Array(0..<1000)
+        let arr: [Int] = Array(0..<1000)
         let iterations = Self.iterations * 10
 
         let start = ContinuousClock.now

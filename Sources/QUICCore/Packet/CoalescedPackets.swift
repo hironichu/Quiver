@@ -20,8 +20,9 @@ public struct CoalescedPacketBuilder: Sendable {
     private var currentSize: Int
 
     /// Creates a coalesced packet builder
-    /// - Parameter maxDatagramSize: Maximum size of the UDP datagram (default: 1200)
-    public init(maxDatagramSize: Int = 1200) {
+    /// - Parameter maxDatagramSize: Maximum size of the UDP datagram.
+    ///   Callers must supply the configured path MTU explicitly.
+    public init(maxDatagramSize: Int) {
         self.maxDatagramSize = maxDatagramSize
         // Pre-allocate for typical case of 2-3 coalesced packets
         self.packets = []
@@ -291,11 +292,12 @@ extension CoalescedPacketBuilder {
     /// Creates a coalesced packet from an array of packet data
     /// - Parameters:
     ///   - packets: Array of encoded packet data
-    ///   - maxDatagramSize: Maximum datagram size
+    ///   - maxDatagramSize: Maximum datagram size.  Callers must supply the
+    ///     configured path MTU explicitly.
     /// - Returns: The coalesced packet data, or nil if no packets fit
     public static func coalesce(
         packets: [Data],
-        maxDatagramSize: Int = 1200
+        maxDatagramSize: Int
     ) -> Data? {
         var builder = CoalescedPacketBuilder(maxDatagramSize: maxDatagramSize)
         for packet in packets {

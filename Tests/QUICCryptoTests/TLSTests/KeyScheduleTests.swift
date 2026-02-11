@@ -22,7 +22,6 @@ struct KeyScheduleTests {
         var keySchedule = TLSKeySchedule()
 
         // Create a mock shared secret
-        let sharedSecretData = Data(repeating: 0x42, count: 32)
         let privateKey = Curve25519.KeyAgreement.PrivateKey()
         let publicKey = privateKey.publicKey
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)

@@ -9,7 +9,7 @@ import QUICCore
 ///
 /// QUIC uses credit-based flow control similar to HTTP/2.
 /// The receiver advertises the maximum amount of data the sender can send.
-public struct FlowController: Sendable {
+package struct FlowController: Sendable {
     // MARK: - Role
 
     /// Whether this endpoint is the client
@@ -67,13 +67,13 @@ public struct FlowController: Sendable {
     private(set) var openRemoteUniStreams: UInt64
 
     /// Initial stream data limit for locally-initiated bidirectional streams
-    public let initialMaxStreamDataBidiLocal: UInt64
+    package let initialMaxStreamDataBidiLocal: UInt64
 
     /// Initial stream data limit for remotely-initiated bidirectional streams
-    public let initialMaxStreamDataBidiRemote: UInt64
+    package let initialMaxStreamDataBidiRemote: UInt64
 
     /// Initial stream data limit for unidirectional streams
-    public let initialMaxStreamDataUni: UInt64
+    package let initialMaxStreamDataUni: UInt64
 
     /// Per-stream receive limits (stream ID -> current limit)
     private var streamRecvLimits: [UInt64: UInt64]
@@ -96,7 +96,7 @@ public struct FlowController: Sendable {
     ///   - peerMaxStreamsBidi: Peer's initial MAX_STREAMS_BIDI
     ///   - peerMaxStreamsUni: Peer's initial MAX_STREAMS_UNI
     ///   - autoUpdateThreshold: Threshold for auto-sending MAX_DATA (0.0-1.0)
-    public init(
+    package init(
         isClient: Bool,
         initialMaxData: UInt64 = 1024 * 1024,  // 1MB default
         initialMaxStreamDataBidiLocal: UInt64 = 256 * 1024,  // 256KB
@@ -142,7 +142,7 @@ public struct FlowController: Sendable {
     /// Check if we can receive more data on the connection
     /// - Parameter bytes: Number of bytes to receive
     /// - Returns: true if within receive limit
-    public func canReceive(bytes: UInt64) -> Bool {
+    package func canReceive(bytes: UInt64) -> Bool {
         // Use saturating arithmetic to prevent overflow
         let (total, overflow) = connectionBytesReceived.addingReportingOverflow(bytes)
         if overflow { return false }
@@ -151,7 +151,7 @@ public struct FlowController: Sendable {
 
     /// Record bytes received on the connection
     /// - Parameter bytes: Number of bytes received
-    public mutating func recordBytesReceived(_ bytes: UInt64) {
+    package mutating func recordBytesReceived(_ bytes: UInt64) {
         // Use saturating addition to prevent overflow
         let (total, overflow) = connectionBytesReceived.addingReportingOverflow(bytes)
         connectionBytesReceived = overflow ? UInt64.max : total
@@ -160,7 +160,7 @@ public struct FlowController: Sendable {
     /// Check if we can send more data on the connection
     /// - Parameter bytes: Number of bytes to send
     /// - Returns: true if within send limit
-    public func canSend(bytes: UInt64) -> Bool {
+    package func canSend(bytes: UInt64) -> Bool {
         // Use saturating arithmetic to prevent overflow
         let (total, overflow) = connectionBytesSent.addingReportingOverflow(bytes)
         if overflow { return false }
@@ -169,7 +169,7 @@ public struct FlowController: Sendable {
 
     /// Record bytes sent on the connection
     /// - Parameter bytes: Number of bytes sent
-    public mutating func recordBytesSent(_ bytes: UInt64) {
+    package mutating func recordBytesSent(_ bytes: UInt64) {
         // Use saturating addition to prevent overflow
         let (total, overflow) = connectionBytesSent.addingReportingOverflow(bytes)
         connectionBytesSent = overflow ? UInt64.max : total
@@ -179,14 +179,14 @@ public struct FlowController: Sendable {
     }
 
     /// Available connection-level send window
-    public var connectionSendWindow: UInt64 {
+    package var connectionSendWindow: UInt64 {
         guard connectionSendLimit > connectionBytesSent else { return 0 }
         return connectionSendLimit - connectionBytesSent
     }
 
     /// Update connection send limit (from peer's MAX_DATA)
     /// - Parameter maxData: New maximum data limit
-    public mutating func updateConnectionSendLimit(_ maxData: UInt64) {
+    package mutating func updateConnectionSendLimit(_ maxData: UInt64) {
         if maxData > connectionSendLimit {
             connectionSendLimit = maxData
             connectionBlocked = false
@@ -195,7 +195,7 @@ public struct FlowController: Sendable {
 
     /// Generate MAX_DATA frame if needed
     /// - Returns: MAX_DATA frame if window update needed, nil otherwise
-    public mutating func generateMaxData() -> MaxDataFrame? {
+    package mutating func generateMaxData() -> MaxDataFrame? {
         // Calculate remaining window (with underflow protection)
         guard connectionRecvLimit >= connectionBytesReceived else {
             // Already exceeded limit - shouldn't happen but protect against it
@@ -217,7 +217,7 @@ public struct FlowController: Sendable {
 
     /// Generate DATA_BLOCKED frame if needed
     /// - Returns: DATA_BLOCKED frame if blocked, nil otherwise
-    public func generateDataBlocked() -> DataBlockedFrame? {
+    package func generateDataBlocked() -> DataBlockedFrame? {
         if connectionBlocked {
             return DataBlockedFrame(dataLimit: connectionSendLimit)
         }
@@ -232,7 +232,7 @@ public struct FlowController: Sendable {
     ///   - bytes: Number of bytes
     ///   - endOffset: Ending byte offset (offset + length)
     /// - Returns: true if within stream limit
-    public func canReceiveOnStream(_ streamID: UInt64, endOffset: UInt64) -> Bool {
+    package func canReceiveOnStream(_ streamID: UInt64, endOffset: UInt64) -> Bool {
         guard let limit = streamRecvLimits[streamID] else {
             // New stream - check against initial limit
             return endOffset <= getInitialStreamLimit(for: streamID)
@@ -243,7 +243,7 @@ public struct FlowController: Sendable {
     /// Get the highest offset received on a stream
     /// - Parameter streamID: Stream identifier
     /// - Returns: The highest byte offset received, or 0 if no data received
-    public func streamBytesReceived(for streamID: UInt64) -> UInt64 {
+    package func streamBytesReceived(for streamID: UInt64) -> UInt64 {
         streamBytesReceived[streamID] ?? 0
     }
 
@@ -253,7 +253,7 @@ public struct FlowController: Sendable {
     ///   - endOffset: The ending offset of the received data
     /// - Returns: The number of NEW bytes (not previously counted for flow control)
     @discardableResult
-    public mutating func recordStreamBytesReceived(_ streamID: UInt64, endOffset: UInt64) -> UInt64 {
+    package mutating func recordStreamBytesReceived(_ streamID: UInt64, endOffset: UInt64) -> UInt64 {
         let current = streamBytesReceived[streamID] ?? 0
         if endOffset > current {
             let newBytes = endOffset - current
@@ -265,7 +265,7 @@ public struct FlowController: Sendable {
 
     /// Initialize stream flow control
     /// - Parameter streamID: Stream identifier
-    public mutating func initializeStream(_ streamID: UInt64) {
+    package mutating func initializeStream(_ streamID: UInt64) {
         if streamRecvLimits[streamID] == nil {
             streamRecvLimits[streamID] = getInitialStreamLimit(for: streamID)
             streamBytesReceived[streamID] = 0
@@ -292,7 +292,7 @@ public struct FlowController: Sendable {
     /// - Parameters:
     ///   - streamID: Stream identifier
     ///   - maxData: New maximum data limit
-    public mutating func updateStreamRecvLimit(_ streamID: UInt64, maxData: UInt64) {
+    package mutating func updateStreamRecvLimit(_ streamID: UInt64, maxData: UInt64) {
         let current = streamRecvLimits[streamID] ?? 0
         if maxData > current {
             streamRecvLimits[streamID] = maxData
@@ -302,7 +302,7 @@ public struct FlowController: Sendable {
     /// Generate MAX_STREAM_DATA frame if needed for a stream
     /// - Parameter streamID: Stream identifier
     /// - Returns: MAX_STREAM_DATA frame if window update needed
-    public mutating func generateMaxStreamData(for streamID: UInt64) -> MaxStreamDataFrame? {
+    package mutating func generateMaxStreamData(for streamID: UInt64) -> MaxStreamDataFrame? {
         guard let limit = streamRecvLimits[streamID],
               let received = streamBytesReceived[streamID] else {
             return nil
@@ -327,13 +327,13 @@ public struct FlowController: Sendable {
 
     /// Remove stream from tracking (when closed)
     /// - Parameter streamID: Stream identifier
-    public mutating func removeStream(_ streamID: UInt64) {
+    package mutating func removeStream(_ streamID: UInt64) {
         streamRecvLimits.removeValue(forKey: streamID)
         streamBytesReceived.removeValue(forKey: streamID)
     }
 
     /// Get all tracked stream IDs (for cleanup on connection close)
-    public var trackedStreamIDs: [UInt64] {
+    package var trackedStreamIDs: [UInt64] {
         Array(streamRecvLimits.keys)
     }
 
@@ -342,7 +342,7 @@ public struct FlowController: Sendable {
     /// Check if we can open a new locally-initiated stream
     /// - Parameter bidirectional: Whether bidirectional
     /// - Returns: true if allowed
-    public func canOpenStream(bidirectional: Bool) -> Bool {
+    package func canOpenStream(bidirectional: Bool) -> Bool {
         if bidirectional {
             return openLocalBidiStreams < maxRemoteBidiStreams
         } else {
@@ -352,7 +352,7 @@ public struct FlowController: Sendable {
 
     /// Record opening a local stream
     /// - Parameter bidirectional: Whether bidirectional
-    public mutating func recordLocalStreamOpened(bidirectional: Bool) {
+    package mutating func recordLocalStreamOpened(bidirectional: Bool) {
         if bidirectional {
             openLocalBidiStreams += 1
         } else {
@@ -362,7 +362,7 @@ public struct FlowController: Sendable {
 
     /// Record closing a local stream
     /// - Parameter bidirectional: Whether bidirectional
-    public mutating func recordLocalStreamClosed(bidirectional: Bool) {
+    package mutating func recordLocalStreamClosed(bidirectional: Bool) {
         if bidirectional {
             if openLocalBidiStreams > 0 { openLocalBidiStreams -= 1 }
         } else {
@@ -373,7 +373,7 @@ public struct FlowController: Sendable {
     /// Check if peer can open a new stream
     /// - Parameter bidirectional: Whether bidirectional
     /// - Returns: true if allowed
-    public func canAcceptRemoteStream(bidirectional: Bool) -> Bool {
+    package func canAcceptRemoteStream(bidirectional: Bool) -> Bool {
         if bidirectional {
             return openRemoteBidiStreams < maxLocalBidiStreams
         } else {
@@ -383,7 +383,7 @@ public struct FlowController: Sendable {
 
     /// Record opening a remote stream
     /// - Parameter bidirectional: Whether bidirectional
-    public mutating func recordRemoteStreamOpened(bidirectional: Bool) {
+    package mutating func recordRemoteStreamOpened(bidirectional: Bool) {
         if bidirectional {
             openRemoteBidiStreams += 1
         } else {
@@ -393,7 +393,7 @@ public struct FlowController: Sendable {
 
     /// Record closing a remote stream
     /// - Parameter bidirectional: Whether bidirectional
-    public mutating func recordRemoteStreamClosed(bidirectional: Bool) {
+    package mutating func recordRemoteStreamClosed(bidirectional: Bool) {
         if bidirectional {
             if openRemoteBidiStreams > 0 { openRemoteBidiStreams -= 1 }
         } else {
@@ -405,7 +405,7 @@ public struct FlowController: Sendable {
     /// - Parameters:
     ///   - maxStreams: New maximum
     ///   - bidirectional: Whether for bidirectional streams
-    public mutating func updateRemoteStreamLimit(_ maxStreams: UInt64, bidirectional: Bool) {
+    package mutating func updateRemoteStreamLimit(_ maxStreams: UInt64, bidirectional: Bool) {
         if bidirectional {
             if maxStreams > maxRemoteBidiStreams {
                 maxRemoteBidiStreams = maxStreams
@@ -420,7 +420,7 @@ public struct FlowController: Sendable {
     /// Generate MAX_STREAMS frame if needed
     /// - Parameter bidirectional: Whether for bidirectional streams
     /// - Returns: MAX_STREAMS frame if update needed
-    public mutating func generateMaxStreams(bidirectional: Bool) -> MaxStreamsFrame? {
+    package mutating func generateMaxStreams(bidirectional: Bool) -> MaxStreamsFrame? {
         // Simple auto-increase: when 50% of streams are used, increase limit
         if bidirectional {
             // Skip auto-increase if streams are disabled (limit = 0)
@@ -449,7 +449,7 @@ public struct FlowController: Sendable {
     /// Generate STREAMS_BLOCKED frame if blocked
     /// - Parameter bidirectional: Whether for bidirectional streams
     /// - Returns: STREAMS_BLOCKED frame if blocked
-    public func generateStreamsBlocked(bidirectional: Bool) -> StreamsBlockedFrame? {
+    package func generateStreamsBlocked(bidirectional: Bool) -> StreamsBlockedFrame? {
         if bidirectional {
             if openLocalBidiStreams >= maxRemoteBidiStreams {
                 return StreamsBlockedFrame(streamLimit: maxRemoteBidiStreams, isBidirectional: true)

@@ -1648,7 +1648,6 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         )
 
         let connectStream = MockWTStream(id: 4)
-        connectStream.enqueueFIN()
 
         let sendResponseCalled = SendResponseTracker()
         let context = ExtendedConnectContext(
@@ -1670,6 +1669,9 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         let count = await h3Conn.activeWebTransportSessionCount
         XCTAssertEqual(count, 1)
 
+        // Enqueue FIN *after* assertions so the capsule reader task does not
+        // race with the isEstablished check above.
+        connectStream.enqueueFIN()
         mockConn.finish()
     }
 
@@ -1682,7 +1684,6 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         )
 
         let connectStream = MockWTStream(id: 0)
-        connectStream.enqueueFIN()
         let response = HTTP3Response(status: 200)
 
         let session = try await h3Conn.createClientWebTransportSession(
@@ -1698,6 +1699,9 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         let count = await h3Conn.activeWebTransportSessionCount
         XCTAssertEqual(count, 1)
 
+        // Enqueue FIN *after* assertions so the capsule reader task does not
+        // race with the isEstablished check above.
+        connectStream.enqueueFIN()
         mockConn.finish()
     }
 

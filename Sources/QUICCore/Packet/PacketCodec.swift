@@ -31,23 +31,23 @@ public enum PacketCodecError: Error, Sendable {
 // MARK: - Parsed Packet
 
 /// A fully parsed and decrypted QUIC packet
-public struct ParsedPacket: Sendable {
+package struct ParsedPacket: Sendable {
     /// The packet header
-    public let header: PacketHeader
+    package let header: PacketHeader
 
     /// The decoded packet number
-    public let packetNumber: UInt64
+    package let packetNumber: UInt64
 
     /// The decrypted frames
-    public let frames: [Frame]
+    package let frames: [Frame]
 
     /// The encryption level of this packet
-    public let encryptionLevel: EncryptionLevel
+    package let encryptionLevel: EncryptionLevel
 
     /// Total size of the packet in bytes
-    public let packetSize: Int
+    package let packetSize: Int
 
-    public init(
+    package init(
         header: PacketHeader,
         packetNumber: UInt64,
         frames: [Frame],
@@ -92,24 +92,59 @@ public protocol PacketSealerProtocol: Sendable {
     func seal(plaintext: Data, packetNumber: UInt64, header: Data) throws -> Data
 }
 
+// MARK: - Packet Constants
+
+/// Non-generic constants for QUIC packet encoding/decoding.
+///
+/// These are extracted from the generic `PacketEncoder` / `PacketDecoder` types
+/// so they can be referenced without specifying a generic parameter
+/// (e.g. `PacketConstants.minimumMTU` instead of `PacketEncoder<…>.minimumMTU`).
+package enum PacketConstants {
+    /// Minimum MTU that all QUIC paths MUST support (RFC 9000 Section 14).
+    ///
+    /// This is an RFC constant — the absolute floor for packet sizing.
+    /// The **active** MTU used at runtime is supplied by configuration
+    /// (`QUICConfiguration.maxUDPPayloadSize`) and may be larger when
+    /// the path supports it (e.g. after DPLPMTUD).
+    package static let minimumMTU = ProtocolLimits.minimumMaximumDatagramSize
+
+    /// AEAD tag size (16 bytes for AES-GCM)
+    package static let aeadTagSize = 16
+
+    /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1).
+    ///
+    /// Initial packets MUST be padded to at least this size.
+    /// References the same RFC constant as ``minimumMTU``.
+    package static let initialPacketMinSize = ProtocolLimits.minimumInitialPacketSize
+}
+
 // MARK: - Packet Encoder
 
 /// Encodes QUIC packets from frames
-public struct PacketEncoder: Sendable {
-    private let frameCodec: StandardFrameCodec
+///
+/// Generic over the frame codec type. The default codec is `StandardFrameCodec`,
+/// so existing callers using `PacketEncoder()` continue to work without changes.
+/// Pass a custom `FrameEncoder & FrameDecoder` implementation for testing or
+/// alternative frame encoding strategies.
+package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sendable {
+    private let frameCodec: Codec
 
-    /// Default MTU for QUIC (minimum guaranteed)
-    public static let defaultMTU = 1200
+    /// Minimum MTU for QUIC (RFC 9000 Section 14).
+    ///
+    /// Forwarded from ``PacketConstants/minimumMTU``.  At runtime prefer
+    /// the configured `maxDatagramSize` value over this constant.
+    package static var minimumMTU: Int { PacketConstants.minimumMTU }
 
     /// AEAD tag size (16 bytes for AES-GCM)
-    public static let aeadTagSize = 16
+    package static var aeadTagSize: Int { PacketConstants.aeadTagSize }
 
-    public init() {
-        self.frameCodec = StandardFrameCodec()
+    /// Creates a packet encoder with the given frame codec.
+    package init(frameCodec: Codec) {
+        self.frameCodec = frameCodec
     }
 
     /// Minimum UDP datagram size for Initial packets (RFC 9000 Section 14.1)
-    public static let initialPacketMinSize = 1200
+    package static var initialPacketMinSize: Int { PacketConstants.initialPacketMinSize }
 
     /// Encodes a Long Header packet
     /// - Parameters:
@@ -117,15 +152,18 @@ public struct PacketEncoder: Sendable {
     ///   - header: The long header (will be modified with packet number)
     ///   - packetNumber: The packet number to use
     ///   - sealer: The sealer for encryption
-    ///   - maxPacketSize: Maximum packet size (default: 1200)
-    ///   - padToMinimum: If true and this is an Initial packet, pad to 1200 bytes (default: true)
+    ///   - maxPacketSize: Maximum packet size.  Callers MUST supply the
+    ///     configured path MTU; there is no default so that hardcoded
+    ///     values do not silently creep in.
+    ///   - padToMinimum: If true and this is an Initial packet, pad to
+    ///     ``PacketConstants/initialPacketMinSize`` bytes (default: true)
     /// - Returns: The fully encoded and protected packet
-    public func encodeLongHeaderPacket(
+    package func encodeLongHeaderPacket(
         frames: [Frame],
         header: LongHeader,
         packetNumber: UInt64,
         sealer: any PacketSealerProtocol,
-        maxPacketSize: Int = defaultMTU,
+        maxPacketSize: Int,
         padToMinimum: Bool = true
     ) throws -> Data {
         var header = header
@@ -207,14 +245,16 @@ public struct PacketEncoder: Sendable {
     ///   - header: The short header
     ///   - packetNumber: The packet number to use
     ///   - sealer: The sealer for encryption
-    ///   - maxPacketSize: Maximum packet size
+    ///   - maxPacketSize: Maximum packet size.  Callers MUST supply the
+    ///     configured path MTU; there is no default so that hardcoded
+    ///     values do not silently creep in.
     /// - Returns: The fully encoded and protected packet
-    public func encodeShortHeaderPacket(
+    package func encodeShortHeaderPacket(
         frames: [Frame],
         header: ShortHeader,
         packetNumber: UInt64,
         sealer: any PacketSealerProtocol,
-        maxPacketSize: Int = defaultMTU
+        maxPacketSize: Int
     ) throws -> Data {
         var header = header
         header.packetNumber = packetNumber
@@ -336,12 +376,16 @@ public struct PacketEncoder: Sendable {
 // MARK: - Packet Decoder
 
 /// Decodes QUIC packets
-public struct PacketDecoder: Sendable {
-    private static let logger = Logger(label: "quic.core.packet-codec")
-    private let frameCodec: StandardFrameCodec
+///
+/// Generic over the frame codec type. The default codec is `StandardFrameCodec`,
+/// so existing callers using `PacketDecoder()` continue to work without changes.
+package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sendable {
+    private static var logger: Logger { QuiverLogging.logger(label: "quic.core.packet-codec") }
+    private let frameCodec: Codec
 
-    public init() {
-        self.frameCodec = StandardFrameCodec()
+    /// Creates a packet decoder with the given frame codec.
+    package init(frameCodec: Codec) {
+        self.frameCodec = frameCodec
     }
 
     /// Decodes a packet from raw data
@@ -351,7 +395,7 @@ public struct PacketDecoder: Sendable {
     ///   - opener: The opener for decryption (nil for unprotected packets)
     ///   - largestPN: Largest packet number received (for PN decoding)
     /// - Returns: The parsed packet
-    public func decodePacket(
+    package func decodePacket(
         data: Data,
         dcidLength: Int,
         opener: (any PacketOpenerProtocol)?,
@@ -605,6 +649,22 @@ public struct PacketDecoder: Sendable {
 
 }
 
+// MARK: - Default Convenience Initializers
+
+extension PacketEncoder where Codec == StandardFrameCodec {
+    /// Creates a packet encoder with the default `StandardFrameCodec`.
+    package init() {
+        self.init(frameCodec: StandardFrameCodec())
+    }
+}
+
+extension PacketDecoder where Codec == StandardFrameCodec {
+    /// Creates a packet decoder with the default `StandardFrameCodec`.
+    package init() {
+        self.init(frameCodec: StandardFrameCodec())
+    }
+}
+
 // MARK: - Packet Size Utilities
 
 extension PacketEncoder {
@@ -616,7 +676,7 @@ extension PacketEncoder {
     ///   - packetNumberLength: Packet number length (1-4)
     ///   - payloadLength: Expected payload length (for accurate Length field size calculation)
     /// - Returns: Total header + crypto overhead in bytes
-    public static func longHeaderOverhead(
+    package static func longHeaderOverhead(
         dcidLength: Int,
         scidLength: Int,
         tokenLength: Int = 0,
@@ -655,7 +715,7 @@ extension PacketEncoder {
     ///   - dcidLength: Destination connection ID length
     ///   - packetNumberLength: Packet number length (1-4)
     /// - Returns: Total header + crypto overhead in bytes
-    public static func shortHeaderOverhead(
+    package static func shortHeaderOverhead(
         dcidLength: Int,
         packetNumberLength: Int = 4
     ) -> Int {

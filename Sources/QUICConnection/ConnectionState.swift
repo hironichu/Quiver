@@ -8,6 +8,7 @@ import QUICCore
 // MARK: - Connection State
 
 /// The state of a QUIC connection
+@frozen
 public enum ConnectionStatus: Sendable, Hashable {
     /// Connection is being established (handshake in progress)
     case handshaking
@@ -36,40 +37,40 @@ public enum ConnectionRole: Sendable {
 // MARK: - Connection State
 
 /// Internal state for a QUIC connection
-public struct ConnectionState: Sendable {
+package struct ConnectionState: Sendable {
     /// Current connection status
-    public var status: ConnectionStatus
+    package var status: ConnectionStatus
 
     /// This endpoint's role
-    public let role: ConnectionRole
+    package let role: ConnectionRole
 
     /// QUIC version being used
-    public var version: QUICVersion
+    package var version: QUICVersion
 
     /// Source connection IDs (ours)
-    public var sourceConnectionIDs: [ConnectionID]
+    package var sourceConnectionIDs: [ConnectionID]
 
     /// Destination connection IDs (peer's)
-    public var destinationConnectionIDs: [ConnectionID]
+    package var destinationConnectionIDs: [ConnectionID]
 
     /// Current destination connection ID
-    public var currentDestinationCID: ConnectionID {
+    package var currentDestinationCID: ConnectionID {
         destinationConnectionIDs.first ?? .empty
     }
 
     /// Current source connection ID
-    public var currentSourceCID: ConnectionID {
+    package var currentSourceCID: ConnectionID {
         sourceConnectionIDs.first ?? .empty
     }
 
     /// Next packet number to send for each encryption level
-    public var nextPacketNumber: [EncryptionLevel: UInt64]
+    package var nextPacketNumber: [EncryptionLevel: UInt64]
 
     /// Largest packet number received for each encryption level
-    public var largestReceivedPacketNumber: [EncryptionLevel: UInt64]
+    package var largestReceivedPacketNumber: [EncryptionLevel: UInt64]
 
     /// Creates initial connection state
-    public init(
+    package init(
         role: ConnectionRole,
         version: QUICVersion,
         sourceConnectionID: ConnectionID,
@@ -89,14 +90,14 @@ public struct ConnectionState: Sendable {
     }
 
     /// Gets the next packet number for the given level and increments it
-    public mutating func getNextPacketNumber(for level: EncryptionLevel) -> UInt64 {
+    package mutating func getNextPacketNumber(for level: EncryptionLevel) -> UInt64 {
         let pn = nextPacketNumber[level] ?? 0
         nextPacketNumber[level] = pn + 1
         return pn
     }
 
     /// Updates the largest received packet number if the new one is larger
-    public mutating func updateLargestReceived(_ pn: UInt64, level: EncryptionLevel) {
+    package mutating func updateLargestReceived(_ pn: UInt64, level: EncryptionLevel) {
         if let current = largestReceivedPacketNumber[level] {
             if pn > current {
                 largestReceivedPacketNumber[level] = pn

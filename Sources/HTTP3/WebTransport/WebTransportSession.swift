@@ -111,7 +111,7 @@ import Logging
 /// try await stream.write(Data("Hello".utf8))
 /// ```
 public actor WebTransportSession {
-    private static let logger = Logger(label: "webtransport.session")
+    private static let logger = QuiverLogging.logger(label: "webtransport.session")
 
     // MARK: - Types
 
@@ -944,16 +944,30 @@ public actor WebTransportSession {
             }
         }
 
-        // If we exited the loop without an explicit close, transition to closed
-        if state != .closed(nil) && !isClosed {
-            if receivedFIN {
-                // Peer finished sending capsules; keep the session established so
-                // WebTransport streams and datagrams remain usable until an
-                // explicit close capsule or application shutdown.
-                return
-            }
-            transitionToClosed(nil)
+        // If we exited the loop without an explicit close, decide what to do.
+        guard !isClosed else {
+            // Already closed by handleCapsule or a decode-error path above — nothing to do.
+            Self.logger.trace(
+                "Capsule reader: session already closed",
+                metadata: ["sessionID": "\(sessionID)"]
+            )
+            return
         }
+
+        if receivedFIN {
+            // RFC 9297: When the CONNECT stream is closed (FIN received),
+            // the associated WebTransport session MUST be terminated.
+            Self.logger.debug(
+                "Capsule reader: FIN received, closing session",
+                metadata: ["sessionID": "\(sessionID)"]
+            )
+            transitionToClosed(nil)
+            return
+        }
+
+        // The loop exited for an unexpected reason (e.g. read error while the
+        // session was still active). Transition to closed.
+        transitionToClosed(nil)
 
         Self.logger.trace(
             "Capsule reader stopped",

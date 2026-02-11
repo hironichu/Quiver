@@ -4,6 +4,51 @@
 
 import Foundation
 
+// MARK: - ReceiveBuffer Protocol
+
+/// Protocol for stream receive buffers that reassemble out-of-order data.
+///
+/// Conforming types handle insertion of potentially out-of-order data segments,
+/// contiguous data extraction, and FIN (end-of-stream) tracking.
+///
+/// This protocol enables:
+/// - Testability via mock buffer implementations
+/// - Alternative implementations (e.g., ring buffer for large streams)
+/// - Decoupling `DataStream` from a specific buffer implementation
+public protocol ReceiveBuffer: Sendable {
+    /// Inserts data at the specified byte offset.
+    ///
+    /// - Parameters:
+    ///   - offset: The byte offset where this data starts
+    ///   - data: The data to insert
+    ///   - fin: Whether this is the final data (FIN flag)
+    /// - Throws: On validation failures (e.g., buffer overflow, final size mismatch)
+    mutating func insert(offset: UInt64, data: Data, fin: Bool) throws
+
+    /// Reads and consumes contiguous data starting from the current read offset.
+    ///
+    /// - Returns: Contiguous data if available, `nil` if there's a gap or no data
+    mutating func readContiguous() -> Data?
+
+    /// Whether all data has been received (FIN received and no gaps).
+    var isComplete: Bool { get }
+
+    /// The number of bytes available to read contiguously from the current read offset.
+    var contiguousBytesAvailable: Int { get }
+
+    /// Whether the buffer is empty (no buffered segments).
+    var isEmpty: Bool { get }
+
+    /// Total buffered bytes (may include non-contiguous data).
+    var bufferedBytes: Int { get }
+
+    /// Whether the final size is known (FIN was received).
+    var finalSizeKnown: Bool { get }
+
+    /// Resets the buffer to empty state.
+    mutating func reset()
+}
+
 /// Error types for DataBuffer operations
 public enum DataBufferError: Error, Sendable {
     /// Data exceeds the maximum buffer size
@@ -21,7 +66,7 @@ public enum DataBufferError: Error, Sendable {
 /// - Overlapping segment detection and merging
 /// - FIN tracking and final size validation
 /// - Contiguous data extraction
-public struct DataBuffer: Sendable {
+public struct DataBuffer: ReceiveBuffer, Sendable {
     /// Segments stored as (offset, data), sorted by offset
     private var segments: [(offset: UInt64, data: Data)] = []
 
@@ -49,7 +94,7 @@ public struct DataBuffer: Sendable {
     ///   - data: The data to insert
     ///   - fin: Whether this is the final data (FIN flag)
     /// - Throws: DataBufferError on validation failures
-    public mutating func insert(offset: UInt64, data: Data, fin: Bool) throws {
+    public mutating func insert(offset: UInt64, data: Data, fin: Bool) throws(DataBufferError) {
         // Empty data with FIN is valid (just marks the end)
         let endOffset = offset + UInt64(data.count)
 
@@ -189,9 +234,11 @@ public struct DataBuffer: Sendable {
                     let overlap = Int(currentEnd - next.offset)
                     bytesRemoved += overlap
                     let newData = next.data.dropFirst(overlap)
+                    var merged = current.data
+                    merged.append(contentsOf: newData)
                     current = (
                         offset: current.offset,
-                        data: current.data + newData
+                        data: merged
                     )
                 } else {
                     // Next segment is completely contained - remove all its bytes
