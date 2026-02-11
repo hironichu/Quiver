@@ -1100,7 +1100,12 @@ func testDatagramEcho(session: WebTransportSession) async throws {
             "Client",
             "[\(num)/\(messages.count)] Sending datagram: \"\(message)\" (\(data.count) bytes)")
         do {
-            try await session.sendDatagram(data)
+            if message.contains("fast") {
+                // Demonstrate TTL strategy for this specific message
+                try await session.sendDatagram(data, strategy: .ttl(.milliseconds(200)))
+            } else {
+                try await session.sendDatagram(data)
+            }
         } catch {
             log("Client", "[\(num)/\(messages.count)] Send failed: \(error)")
             log("Client", "  (Datagrams require H3_DATAGRAM and may not be supported by all peers)")

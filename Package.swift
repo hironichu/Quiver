@@ -34,6 +34,19 @@ let package = Package(
             name: "HTTP3",
             targets: ["HTTP3"]
         ),
+        // Media Over QUIC (MOQ)
+        .library(
+            name: "MOQCore",
+            targets: ["MOQCore"]
+        ),
+        .library(
+            name: "MOQRelay",
+            targets: ["MOQRelay"]
+        ),
+        .library(
+            name: "MOQClient",
+            targets: ["MOQClient"]
+        ),
         // Example: QUIC Echo Server/Client
         .executable(
             name: "QUICEchoServer",
@@ -193,6 +206,41 @@ let package = Package(
             path: "Sources/HTTP3"
         ),
 
+        // MARK: - MOQ Core
+
+        .target(
+            name: "MOQCore",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICStream",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/MOQCore"
+        ),
+
+        // MARK: - MOQ Relay & Client
+
+        .target(
+            name: "MOQRelay",
+            dependencies: [
+                "MOQCore",
+                "QUICCore",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/MOQRelay"
+        ),
+
+        .target(
+            name: "MOQClient",
+            dependencies: [
+                "MOQCore",
+                "QUICCore",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/MOQClient"
+        ),
+
         // MARK: - Test Support
 
         .target(
@@ -209,6 +257,12 @@ let package = Package(
             name: "QUICCoreTests",
             dependencies: ["QUICCore"],
             path: "Tests/QUICCoreTests"
+        ),
+
+        .testTarget(
+            name: "MOQCoreTests",
+            dependencies: ["MOQCore", "MOQRelay", "QUICCore"],
+            path: "Tests/MOQCoreTests"
         ),
 
         .testTarget(

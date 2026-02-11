@@ -1069,6 +1069,9 @@ for await stream in await session.incomingUnidirectionalStreams {
 
 // Datagrams (unreliable, unordered)
 try await session.sendDatagram(Data("ping".utf8))
+
+// Send a datagram with TTL (drops if not sent within 100ms)
+try await session.sendDatagram(Data("realtime".utf8), strategy: .ttl(.milliseconds(100)))
 for await datagram in await session.incomingDatagrams {
     print("Got: \(datagram.count) bytes")
 }

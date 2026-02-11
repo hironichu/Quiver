@@ -2880,6 +2880,7 @@ private final class MinimalMockConnection: QUICConnectionProtocol, @unchecked Se
     func openStream() async throws -> any QUICStreamProtocol { MockQUICStream(id: 0) }
     func openUniStream() async throws -> any QUICStreamProtocol { MockQUICStream(id: 2) }
     func sendDatagram(_ data: Data) async throws {}
+    func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy) async throws {}
     func close(error: UInt64?) async {}
     func close(applicationError errorCode: UInt64, reason: String) async {}
 }
