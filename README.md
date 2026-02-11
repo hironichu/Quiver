@@ -163,12 +163,16 @@ quiver/
 │       ├── Frame/                     # HTTP/3 frame codec
 │       ├── Stream/                    # HTTP/3 stream types
 │       └── WebTransport/             # WebTransport support
-│           ├── WebTransportConfiguration.swift # Unified config
-│           ├── WebTransportServer.swift
-│           ├── WebTransportClient.swift
-│           ├── WebTransportSession.swift
-│           ├── WebTransportStream.swift
-│           └── WebTransportCapsule.swift
+│           ├── WebTransport.swift             # Client entry point (connect API)
+│           ├── WebTransportOptions.swift       # Simple client options
+│           ├── WebTransportOptionsAdvanced.swift # Power-user client options
+│           ├── WebTransportServer.swift        # Server actor (middleware + routing)
+│           ├── WebTransportServerOptions.swift # Server configuration
+│           ├── WebTransportReply.swift         # Middleware reply + request context
+│           ├── WebTransportSession.swift       # Session lifecycle
+│           ├── WebTransportStream.swift        # Stream wrapper
+│           ├── WebTransportCapsule.swift       # Capsule codec
+│           └── WebTransportError.swift         # Error types
 │
 ├── Examples/
 │   ├── QUICEchoServer/          # QUIC echo demo
@@ -260,30 +264,37 @@ print("Body: \(String(data: response.body, encoding: .utf8)!)")
 import HTTP3
 import QUIC
 
-// Unified config — QUIC + WebTransport in one struct
-let config = WebTransportConfiguration(
-    quic: myQuicConfig,
+let serverOpts = WebTransportServerOptions(
+    certificateChain: [certData],
+    privateKey: keyData,
     maxSessions: 4
 )
 
-// One-call static factory
-let server = try await WebTransportServer.listen(
+let server = WebTransportServer(
     host: "0.0.0.0",
     port: 4433,
-    configuration: config,
-    serverOptions: .init(allowedPaths: ["/echo"])
+    options: serverOpts,
+    middleware: { context in
+        // Optional: inspect context.path, context.headers, context.origin
+        return .accept
+    }
 )
 
-for await session in server.incomingSessions {
+// Register paths (unmatched paths get 404 when routes are registered)
+await server.register(path: "/echo")
+
+// Start via external QUIC endpoint (recommended for full TLS control)
+// or call server.listen() for simple cases
+await server.serve(connectionSource: quicEndpoint.newConnections)
+
+for await session in await server.incomingSessions {
     Task {
-        // Handle bidirectional streams
         for await stream in await session.incomingBidirectionalStreams {
             let data = try await stream.read()
             try await stream.write(data) // Echo
         }
     }
     Task {
-        // Handle datagrams
         for await datagram in await session.incomingDatagrams {
             try await session.sendDatagram(datagram)
         }
@@ -297,11 +308,16 @@ for await session in server.incomingSessions {
 import HTTP3
 import QUIC
 
-// One-call connect — creates QUIC endpoint, dials, sets up HTTP/3, sends Extended CONNECT
-let config = WebTransportConfiguration(quic: myQuicConfig)
-let session = try await WebTransportClient.connect(
+// Simple — insecure defaults for dev/testing
+let session = try await WebTransport.connect(
     url: "https://example.com:4433/echo",
-    configuration: config
+    options: .insecure()
+)
+
+// Or advanced — full QUIC config control
+let session = try await WebTransport.connect(
+    url: "https://example.com:4433/echo",
+    options: WebTransportOptionsAdvanced(quic: myQuicConfig)
 )
 
 // Open a bidirectional stream

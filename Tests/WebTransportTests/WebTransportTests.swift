@@ -234,6 +234,10 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
         state.withLock { $0.sentDatagrams.append(data) }
     }
 
+    func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy) async throws {
+        state.withLock { $0.sentDatagrams.append(data) }
+    }
+
     /// Deliver an incoming stream for testing
     func deliverIncomingStream(_ stream: any QUICStreamProtocol) {
         incomingStreamContinuation?.yield(stream)
@@ -1684,7 +1688,7 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         )
 
         let connectStream = MockWTStream(id: 0)
-        let response = HTTP3Response(status: 200)
+        let response = HTTP3ResponseHead(status: 200)
 
         let session = try await h3Conn.createClientWebTransportSession(
             connectStream: connectStream,
@@ -1714,7 +1718,7 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         )
 
         let connectStream = MockWTStream(id: 0)
-        let response = HTTP3Response(status: 403)
+        let response = HTTP3ResponseHead(status: 403)
 
         do {
             _ = try await h3Conn.createClientWebTransportSession(
@@ -2293,8 +2297,7 @@ final class WebTransportSessionQuotaTests: XCTestCase {
         if maxSessions > 0 && activeCount >= Int(maxSessions) {
             try await context.reject(
                 status: 429,
-                headers: [("content-type", "text/plain")],
-                body: Data("Too many WebTransport sessions".utf8)
+                headers: [("content-type", "text/plain")]
             )
         }
 

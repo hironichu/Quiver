@@ -238,6 +238,10 @@ private final class MockIntegrationConnection: QUICConnectionProtocol, @unchecke
         state.withLock { $0.sentDatagrams.append(data) }
     }
 
+    func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy) async throws {
+        state.withLock { $0.sentDatagrams.append(data) }
+    }
+
     func deliverIncomingStream(_ stream: any QUICStreamProtocol) {
         incomingStreamContinuation?.yield(stream)
     }
@@ -350,7 +354,7 @@ final class WebTransportEndToEndTests: XCTestCase {
         // Client side: create session from a 200 response
         let clientConnectStream = MockIntegrationStream(id: 0)
         // Do NOT enqueue FIN before session creation — same race as above.
-        let response = HTTP3Response(status: 200)
+        let response = HTTP3ResponseHead(status: 200)
 
         let clientSession = try await clientH3.createClientWebTransportSession(
             connectStream: clientConnectStream,
@@ -781,20 +785,32 @@ final class WebTransportServePathTests: XCTestCase {
 
     /// Tests that WebTransportServer creates the correct HTTP3Settings
     func testWebTransportServerConfiguresSettings() async {
+        let opts = WebTransportServerOptions(
+            certificateChain: [Data("cert".utf8)],
+            privateKey: Data("key".utf8),
+            maxSessions: 10,
+            maxConnections: 50
+        )
         let server = WebTransportServer(
-            configuration: WebTransportServer.Configuration(
-                maxSessionsPerConnection: 10,
-                maxConnections: 50,
-                additionalSettings: HTTP3Settings(),
-                allowedPaths: ["/wt", "/echo"]
-            )
+            host: "0.0.0.0",
+            port: 4433,
+            options: opts
         )
 
-        // Verify configuration
-        let config = await server.configuration
-        XCTAssertEqual(config.maxSessionsPerConnection, 10)
-        XCTAssertEqual(config.maxConnections, 50)
-        XCTAssertEqual(config.allowedPaths, ["/wt", "/echo"])
+        // Register paths to verify route registration works
+        await server.register(path: "/wt")
+        await server.register(path: "/echo")
+
+        // Verify options
+        let serverOpts = await server.options
+        XCTAssertEqual(serverOpts.maxSessions, 10)
+        XCTAssertEqual(serverOpts.maxConnections, 50)
+
+        // Verify HTTP3 settings carry WT flags
+        let h3Settings = serverOpts.buildHTTP3Settings()
+        XCTAssertTrue(h3Settings.enableConnectProtocol)
+        XCTAssertTrue(h3Settings.enableH3Datagram)
+        XCTAssertEqual(h3Settings.webtransportMaxSessions, 10)
     }
 
     /// Tests the serveConnection() codepath creates sessions correctly
@@ -960,7 +976,7 @@ final class WebTransportSessionQuotaEnforcementTests: XCTestCase {
         stream1.enqueueFIN()
         _ = try await h3Conn.createClientWebTransportSession(
             connectStream: stream1,
-            response: HTTP3Response(status: 200)
+            response: HTTP3ResponseHead(status: 200)
         )
 
         // Second should fail
@@ -969,7 +985,7 @@ final class WebTransportSessionQuotaEnforcementTests: XCTestCase {
         do {
             _ = try await h3Conn.createClientWebTransportSession(
                 connectStream: stream2,
-                response: HTTP3Response(status: 200)
+                response: HTTP3ResponseHead(status: 200)
             )
             XCTFail("Should have thrown maxSessionsExceeded")
         } catch let error as WebTransportError {

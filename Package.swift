@@ -323,6 +323,18 @@ let package = Package(
             path: "Tests/HTTP3Tests"
         ),
 
+        .testTarget(
+            name: "WebTransportTests",
+            dependencies: [
+                "HTTP3",
+                "QUIC",
+                "QPACK",
+                "QUICCore",
+                "QUICStream",
+            ],
+            path: "Tests/WebTransportTests"
+        ),
+
         // MARK: - Benchmarks (run separately with: swift test --filter QUICBenchmarks)
 
         .testTarget(
