@@ -3,6 +3,7 @@
 /// High-level interface for QUIC connections.
 
 import Foundation
+import NIOCore
 import QUICCore
 
 // MARK: - QUIC Connection Protocol
@@ -82,6 +83,9 @@ public protocol QUICConnectionProtocol: Sendable {
     /// ```swift
     /// try await connection.sendDatagram(Data("ping".utf8))
     /// ```
+    func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy) async throws
+
+    /// Sends a QUIC DATAGRAM frame with default FIFO strategy
     func sendDatagram(_ data: Data) async throws
 
     /// Stream of incoming QUIC DATAGRAM frame payloads.
@@ -193,7 +197,8 @@ public struct SocketAddress: Sendable, Hashable {
     public init?(string: String) {
         let parts = string.split(separator: ":")
         guard parts.count == 2,
-              let port = UInt16(parts[1]) else {
+            let port = UInt16(parts[1])
+        else {
             return nil
         }
         self.ipAddress = String(parts[0])
@@ -208,8 +213,6 @@ extension SocketAddress: CustomStringConvertible {
 }
 
 // MARK: - NIO Integration
-
-import NIOCore
 
 extension SocketAddress {
     /// Creates a SocketAddress from a NIOCore.SocketAddress
@@ -233,5 +236,12 @@ extension SocketAddress {
     /// Converts to NIOCore.SocketAddress
     public func toNIOAddress() throws -> NIOCore.SocketAddress {
         try NIOCore.SocketAddress(ipAddress: ipAddress, port: Int(port))
+    }
+}
+
+extension QUICConnectionProtocol {
+    /// Default implementation using FIFO strategy
+    public func sendDatagram(_ data: Data) async throws {
+        try await sendDatagram(data, strategy: .fifo)
     }
 }

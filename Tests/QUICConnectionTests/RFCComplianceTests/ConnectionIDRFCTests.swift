@@ -6,10 +6,11 @@
 /// - active_connection_id_limit enforcement
 /// - Connection ID sequence number management
 
-import Testing
 import Foundation
-@testable import QUICCore
+import Testing
+
 @testable import QUICConnection
+@testable import QUICCore
 
 @Suite("RFC 9000 §5.1 - Connection ID Lifecycle Compliance")
 struct ConnectionIDRFCTests {
@@ -35,7 +36,7 @@ struct ConnectionIDRFCTests {
         )
 
         // Should process without error
-        manager.handleNewConnectionID(validFrame)
+        try manager.handleNewConnectionID(validFrame)
 
         // Invalid frame: retire_prior_to > sequence_number
         let cid2 = try ConnectionID(bytes: Data([0x05, 0x06, 0x07, 0x08]))
@@ -68,7 +69,7 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xAA, count: 16)
         )
 
-        manager.handleNewConnectionID(frame1)
+        try manager.handleNewConnectionID(frame1)
 
         // Send duplicate with same sequence number but different CID
         let cid2 = try ConnectionID(bytes: Data([0x05, 0x06, 0x07, 0x08]))
@@ -85,10 +86,10 @@ struct ConnectionIDRFCTests {
         //
         // TODO: handleNewConnectionID should detect and reject this
 
-        manager.handleNewConnectionID(frame2)  // Currently does NOT validate
+        try manager.handleNewConnectionID(frame2)  // Currently does NOT validate
 
         // The second frame should have been rejected or the original retained
-        let availableCIDs = manager.availablePeerCIDs
+        _ = manager.availablePeerCIDs
         // Should still have the original CID, not the duplicate
     }
 
@@ -109,7 +110,7 @@ struct ConnectionIDRFCTests {
                 connectionID: cid,
                 statelessResetToken: Data(repeating: UInt8(seq), count: 16)
             )
-            manager.handleNewConnectionID(frame)
+            try manager.handleNewConnectionID(frame)
         }
 
         // Should have exactly `limit` CIDs
@@ -127,7 +128,7 @@ struct ConnectionIDRFCTests {
 
         // RFC 9000: Providing excess CIDs may cause connection error
         // The implementation should validate against the limit
-        manager.handleNewConnectionID(excessFrame)
+        try manager.handleNewConnectionID(excessFrame)
 
         // Note: Current implementation doesn't enforce this strictly
         // TODO: Add limit enforcement in handleNewConnectionID
@@ -145,7 +146,7 @@ struct ConnectionIDRFCTests {
 
         // Issue some CIDs (simulating peer)
         let issued1 = try manager.issueNewConnectionID(length: 8)
-        let issued2 = try manager.issueNewConnectionID(length: 8)
+        _ = try manager.issueNewConnectionID(length: 8)
 
         #expect(manager.activeIssuedCIDs.count == 2)
 
@@ -210,8 +211,8 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xBB, count: 16)
         )
 
-        manager.handleNewConnectionID(frame1)
-        manager.handleNewConnectionID(frame2)
+        try manager.handleNewConnectionID(frame1)
+        try manager.handleNewConnectionID(frame2)
 
         // Initially use CID at sequence 0
         #expect(manager.activePeerConnectionID != nil)
@@ -299,7 +300,7 @@ struct ConnectionIDRFCTests {
                 connectionID: cid,
                 statelessResetToken: Data(repeating: UInt8(seq), count: 16)
             )
-            manager.handleNewConnectionID(frame)
+            try manager.handleNewConnectionID(frame)
         }
 
         #expect(manager.availablePeerCIDs.count == 3)
@@ -314,7 +315,7 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0x04, count: 16)
         )
 
-        manager.handleNewConnectionID(frame4)
+        try manager.handleNewConnectionID(frame4)
 
         // Should now have only CIDs at sequence 2 and 3
         // (sequences 0 and 1 should be retired)
@@ -353,7 +354,7 @@ struct ConnectionIDRFCTests {
             connectionID: peerCID1,
             statelessResetToken: Data(repeating: 0x11, count: 16)
         )
-        manager.handleNewConnectionID(peerFrame)
+        try manager.handleNewConnectionID(peerFrame)
 
         #expect(manager.availablePeerCIDs.count == 1)
         #expect(manager.activePeerConnectionID == peerCID1)

@@ -52,10 +52,10 @@
 /// - [RFC 9220: Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html)
 
 import Foundation
+import Logging
+import QUIC
 import QUICCore
 import QUICStream
-import QUIC
-import Logging
 
 // MARK: - WebTransport Session
 
@@ -557,7 +557,7 @@ public actor WebTransportSession {
     /// quarter stream ID prefix (RFC 9297). Datagrams are unreliable
     /// and may be dropped by the network.
     ///
-    /// - Parameter data: The datagram payload
+    /// - Parameter strategy: The sending strategy (priority, expiry). Defaults to .fifo.
     /// - Throws: `WebTransportError` if the session is not established
     ///   or datagrams are not supported
     ///
@@ -573,9 +573,9 @@ public actor WebTransportSession {
     /// ## Example
     ///
     /// ```swift
-    /// try await session.sendDatagram(Data("ping".utf8))
+    /// try await session.sendDatagram(Data("ping".utf8), strategy: .ttl(.milliseconds(100)))
     /// ```
-    public func sendDatagram(_ data: Data) async throws {
+    public func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy = .fifo) async throws {
         guard state == .established else {
             throw WebTransportError.sessionNotEstablished
         }
@@ -587,7 +587,7 @@ public actor WebTransportSession {
 
         // Send via the QUIC connection's datagram API (RFC 9221)
         do {
-            try await connection.quicConnection.sendDatagram(payload)
+            try await connection.quicConnection.sendDatagram(payload, strategy: strategy)
         } catch {
             throw WebTransportError.datagramError(
                 "Failed to send datagram for session \(sessionID)",
@@ -920,7 +920,8 @@ public actor WebTransportSession {
 
             // Decode all complete capsules from the buffer
             do {
-                let (capsules, consumed) = try WebTransportCapsuleCodec.decodeAll(from: capsuleBuffer)
+                let (capsules, consumed) = try WebTransportCapsuleCodec.decodeAll(
+                    from: capsuleBuffer)
 
                 if consumed > 0 {
                     capsuleBuffer = Data(capsuleBuffer.dropFirst(consumed))

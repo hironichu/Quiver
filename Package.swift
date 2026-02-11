@@ -78,7 +78,7 @@ let package = Package(
         .target(
             name: "QUICCore",
             dependencies: [
-                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/QUICCore"
         ),
@@ -139,7 +139,7 @@ let package = Package(
         .target(
             name: "QUICRecovery",
             dependencies: [
-                "QUICCore",
+                "QUICCore"
             ],
             path: "Sources/QUICRecovery"
         ),
@@ -198,7 +198,7 @@ let package = Package(
         .target(
             name: "QuiverTestSupport",
             dependencies: [
-                "QUICCore",
+                "QUICCore"
             ],
             path: "Tests/QuiverTestSupport"
         ),
@@ -227,6 +227,17 @@ let package = Package(
             name: "QUICStreamTests",
             dependencies: ["QUICStream", "QUICCore"],
             path: "Tests/QUICStreamTests"
+        ),
+
+        .testTarget(
+            name: "QUICConnectionTests",
+            dependencies: [
+                "QUICConnection",
+                "QUICCore",
+                "QUIC",
+                "QuiverTestSupport",
+            ],
+            path: "Tests/QUICConnectionTests"
         ),
 
         .testTarget(
@@ -328,6 +339,6 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICNetworkDemo"
-        )
+        ),
     ]
 )
