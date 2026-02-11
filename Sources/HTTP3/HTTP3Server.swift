@@ -87,15 +87,18 @@ import Logging
 /// Pass an instance to `HTTP3Server.enableWebTransport(_:)` to configure
 /// how WebTransport sessions are accepted.
 ///
+/// - Note: Named `HTTP3WebTransportOptions` to avoid collision with the
+///   client-facing `WebTransportOptions` in the WebTransport module.
+///
 /// ## Usage
 ///
 /// ```swift
 /// let server = HTTP3Server()
 /// let sessions = await server.enableWebTransport(
-///     WebTransportOptions(maxSessionsPerConnection: 4)
+///     HTTP3WebTransportOptions(maxSessionsPerConnection: 4)
 /// )
 /// ```
-public struct WebTransportOptions: Sendable {
+public struct HTTP3WebTransportOptions: Sendable {
     /// Maximum number of concurrent WebTransport sessions per HTTP/3 connection.
     ///
     /// This value is advertised via `SETTINGS_WEBTRANSPORT_MAX_SESSIONS`.
@@ -687,7 +690,7 @@ public actor HTTP3Server {
     /// }
     ///
     /// let sessions = await server.enableWebTransport(
-    ///     WebTransportOptions(maxSessionsPerConnection: 4)
+    ///     HTTP3WebTransportOptions(maxSessionsPerConnection: 4)
     /// )
     ///
     /// Task {
@@ -699,7 +702,7 @@ public actor HTTP3Server {
     /// try await server.listen(host: "0.0.0.0", port: 443, quicConfiguration: config)
     /// ```
     public func enableWebTransport(
-        _ options: WebTransportOptions = WebTransportOptions()
+        _ options: HTTP3WebTransportOptions = HTTP3WebTransportOptions()
     ) -> AsyncStream<WebTransportSession> {
         // Merge WebTransport-required settings
         settings.enableConnectProtocol = true
