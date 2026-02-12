@@ -119,6 +119,7 @@ struct DemoArguments {
     let certPath: String?  // Server: PEM certificate path
     let keyPath: String?  // Server: PEM private key path
     let caCertPath: String?  // Client: PEM CA certificate path
+    let useSystemCertificates: Bool  // Client: use system trust store
 
     // Demo options
     let skipDatagrams: Bool
@@ -147,6 +148,7 @@ struct DemoArguments {
         var certPath: String?
         var keyPath: String?
         var caCertPath: String?
+        var useSystemCertificates = false
         var skipDatagrams = false
 
         var i = 1
@@ -179,6 +181,8 @@ struct DemoArguments {
             case "--ca-cert":
                 i += 1
                 if i < args.count { caCertPath = args[i] }
+            case "--use-system-certificates":
+                useSystemCertificates = true
             case "--skip-datagrams":
                 skipDatagrams = true
             default:
@@ -195,6 +199,7 @@ struct DemoArguments {
             certPath: certPath,
             keyPath: keyPath,
             caCertPath: caCertPath,
+            useSystemCertificates: useSystemCertificates,
             skipDatagrams: skipDatagrams
         )
     }
@@ -240,11 +245,23 @@ func makeServerTLSConfig(certPath: String?, keyPath: String?) throws -> (TLSConf
 
 /// Creates a client TLS configuration.
 ///
-/// When `caCertPath` is provided, loads a trusted CA certificate from disk
-/// and enables full peer verification (production mode). Otherwise, disables
-/// strict verification and allows self-signed certificates (development mode).
-func makeClientTLSConfig(caCertPath: String?) throws -> (TLSConfiguration, String) {
-    if let caCertPath = caCertPath {
+/// Resolution order:
+/// 1) `useSystemCertificates == true` => verify with system trust store
+/// 2) `caCertPath != nil` => verify with explicit CA bundle
+/// 3) fallback => development mode (allow self-signed)
+func makeClientTLSConfig(
+    caCertPath: String?,
+    useSystemCertificates: Bool
+) throws -> (TLSConfiguration, String) {
+    if useSystemCertificates {
+        var tlsConfig = TLSConfiguration.client(
+            serverName: "localhost",
+            alpnProtocols: [h3ALPN]
+        )
+        tlsConfig.verifyPeer = true
+        tlsConfig.allowSelfSigned = false
+        return (tlsConfig, "Production (system trust store, verifyPeer: true)")
+    } else if let caCertPath = caCertPath {
         var tlsConfig = TLSConfiguration.client(
             serverName: "localhost",
             alpnProtocols: [h3ALPN]
@@ -311,11 +328,17 @@ func makeServerConfiguration(certPath: String?, keyPath: String?) throws -> QUIC
 }
 
 /// Creates a QUIC configuration for the WebTransport client.
-func makeClientConfiguration(caCertPath: String?) throws -> QUICConfiguration {
-    let (tlsConfig, description) = try makeClientTLSConfig(caCertPath: caCertPath)
+func makeClientConfiguration(
+    caCertPath: String?,
+    useSystemCertificates: Bool
+) throws -> QUICConfiguration {
+    let (tlsConfig, description) = try makeClientTLSConfig(
+        caCertPath: caCertPath,
+        useSystemCertificates: useSystemCertificates
+    )
     log("Config", "TLS mode: \(description)")
 
-    let isProduction = (caCertPath != nil)
+    let isProduction = useSystemCertificates || (caCertPath != nil)
 
     var config: QUICConfiguration
     if isProduction {
@@ -713,22 +736,33 @@ func handleUniEcho(
 ///           └─► sendExtendedConnect()            ← Extended CONNECT → 200 OK
 ///               └─► WebTransportSession          ← Ready for streams & datagrams
 /// ```
-func runClient(host: String, port: UInt16, caCertPath: String?, skipDatagrams: Bool) async throws {
+func runClient(
+    host: String,
+    port: UInt16,
+    caCertPath: String?,
+    useSystemCertificates: Bool,
+    skipDatagrams: Bool
+) async throws {
     log("Client", "╔══════════════════════════════════════════════════════════════╗")
     log("Client", "║            WebTransport Echo Client                         ║")
     log("Client", "╚══════════════════════════════════════════════════════════════╝")
     log("Client", "")
     log("Client", "Connecting to \(host):\(port)")
 
-    if let caCertPath = caCertPath {
-        log("Client", "  TLS: Production (CA cert: \(caCertPath))")
+    if useSystemCertificates {
+        log("WebTransport", "  TLS: Production (system trust store)")
+    } else if let caCertPath = caCertPath {
+        log("WebTransport", "  TLS: Production (CA cert: \(caCertPath))")
     } else {
-        log("Client", "  TLS: Development (allowSelfSigned: true)")
+        log("WebTransport", "  TLS: Development (allowSelfSigned: true)")
     }
     log("Client", "")
 
     // Step 1: Create client QUIC configuration
-    let config = try makeClientConfiguration(caCertPath: caCertPath)
+    let quicConfig = try makeClientConfiguration(
+        caCertPath: caCertPath,
+        useSystemCertificates: useSystemCertificates
+    )
 
     // Step 2: Connect and establish a WebTransport session
     //
@@ -742,7 +776,7 @@ func runClient(host: String, port: UInt16, caCertPath: String?, skipDatagrams: B
     // QUICConfiguration with custom TLS (production/development mode).
     //
     let url = "https://\(host):\(port)\(echoPath)"
-    let advancedOptions = WebTransportOptionsAdvanced(quic: config)
+    let advancedOptions = WebTransportOptionsAdvanced(quic: quicConfig)
 
     log("Client", "Connecting to \(url) via WebTransport...")
     let session: WebTransportSession
@@ -1274,6 +1308,7 @@ case .client:
             host: arguments.host,
             port: arguments.port,
             caCertPath: arguments.caCertPath,
+            useSystemCertificates: arguments.useSystemCertificates,
             skipDatagrams: arguments.skipDatagrams
         )
     } catch {

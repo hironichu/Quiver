@@ -91,7 +91,25 @@ public enum WebTransport {
     ) async throws -> WebTransportSession {
         let (scheme, authority, host, port, path) = try parseURL(url)
 
-        let quicConfig = options.buildQUICConfiguration()
+        var quicConfig = options.buildQUICConfiguration()
+
+        // Pass TLS trust source intent to QUIC/TLS layer (resolved there)
+        quicConfig.verifyPeer = options.verifyPeer
+        switch options.caCertificates {
+        case .system:
+            quicConfig.useSystemTrustStore = true
+            quicConfig.userTrustedCACertificatesDER = nil
+            quicConfig.userTrustedCAsPEMPath = nil
+        case .der(let certs):
+            quicConfig.useSystemTrustStore = false
+            quicConfig.userTrustedCACertificatesDER = certs
+            quicConfig.userTrustedCAsPEMPath = nil
+        case .pem(let path):
+            quicConfig.useSystemTrustStore = false
+            quicConfig.userTrustedCACertificatesDER = nil
+            quicConfig.userTrustedCAsPEMPath = path
+        }
+
         let h3Settings = options.buildHTTP3Settings()
 
         let endpoint = QUICEndpoint(configuration: quicConfig)

@@ -280,6 +280,33 @@ public struct QUICConfiguration: Sendable {
     /// configuration, use `TLSConfiguration.alpnProtocols` instead.
     public var alpn: [String]
 
+    // MARK: - Trust Source Passthrough (for TLS layer resolution)
+
+    /// Optional DER-encoded trusted CA certificates supplied by upper layers.
+    ///
+    /// This field is a passthrough hint for TLS provider creation code.
+    /// If set, the TLS layer should map this to `TLSConfiguration.trustedCACertificates`.
+    public var userTrustedCACertificatesDER: [Data]?
+
+    /// Optional path to a PEM bundle containing trusted CA certificates.
+    ///
+    /// This field is a passthrough hint for TLS provider creation code.
+    /// If set, the TLS layer can load certificates via PEM parsing and map
+    /// them into `TLSConfiguration.trustedCACertificates`.
+    public var userTrustedCAsPEMPath: String?
+
+    /// Whether upper layers request using system trust roots when no explicit
+    /// CA source is provided.
+    ///
+    /// Default is `true` to preserve existing system-trust behavior.
+    public var useSystemTrustStore: Bool
+
+    /// Whether peer certificate verification is required.
+    ///
+    /// This value is passed through to the TLS layer and should map to
+    /// `TLSConfiguration.verifyPeer`.
+    public var verifyPeer: Bool
+
     // MARK: - TLS Provider
 
     /// Custom TLS provider factory (legacy).
@@ -362,6 +389,10 @@ public struct QUICConfiguration: Sendable {
         self.connectionIDLength = 8
         self.version = .v1
         self.alpn = ["h3"]
+        self.userTrustedCACertificatesDER = nil
+        self.userTrustedCAsPEMPath = nil
+        self.useSystemTrustStore = true
+        self.verifyPeer = true
         self.enableDatagrams = false
         self.maxDatagramFrameSize = 65535
         self.tlsProviderFactory = nil

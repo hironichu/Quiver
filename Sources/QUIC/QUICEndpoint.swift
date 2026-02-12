@@ -123,11 +123,11 @@ public actor QUICEndpoint {
     /// This method enforces the security mode hierarchy:
     /// 1. If `securityMode` is set, use it
     /// 2. Otherwise, if `tlsProviderFactory` is set (legacy), use it
-    /// 3. Otherwise, throw `QUICSecurityError.tlsProviderNotConfigured`
+    /// 3. Otherwise, build a default `TLS13Handler` from QUIC trust passthrough
     ///
     /// - Parameter isClient: Whether this is for a client connection
     /// - Returns: A configured TLS provider
-    /// - Throws: `QUICSecurityError.tlsProviderNotConfigured` if no TLS provider is configured
+    /// - Throws: TLS parsing/loading errors when PEM/DER trust inputs are invalid
     func createTLSProvider(isClient: Bool) throws -> any TLS13Provider {
         // Priority 1: Check securityMode (new API)
         if let securityMode = configuration.securityMode {
@@ -152,12 +152,22 @@ public actor QUICEndpoint {
             return factory(isClient)
         }
 
-        // No TLS provider configured - fail safely
-        logger.error(
-            "TLS provider not configured. Set securityMode or tlsProviderFactory before connecting.",
-            metadata: ["isClient": "\(isClient)"]
-        )
-        throw QUICSecurityError.tlsProviderNotConfigured
+        // Priority 3: Build default TLS provider from QUICConfiguration passthrough
+        var tlsConfig = TLSConfiguration()
+        tlsConfig.alpnProtocols = configuration.alpn
+        tlsConfig.verifyPeer = configuration.verifyPeer
+
+        if let derRoots = configuration.userTrustedCACertificatesDER, !derRoots.isEmpty {
+            tlsConfig.trustedCACertificates = derRoots
+        } else if let pemPath = configuration.userTrustedCAsPEMPath, !pemPath.isEmpty {
+            let derRoots = try PEMLoader.loadCertificates(fromPath: pemPath)
+            tlsConfig.trustedCACertificates = derRoots
+        } else if !configuration.useSystemTrustStore {
+            // Explicitly disable system fallback by supplying empty trust anchors.
+            tlsConfig.trustedRootCertificates = []
+        }
+
+        return TLS13Handler(configuration: tlsConfig)
     }
 
     /// Creates a TLS provider with session resumption configuration.
@@ -167,7 +177,7 @@ public actor QUICEndpoint {
     ///   - sessionTicket: Optional session ticket for resumption
     ///   - maxEarlyDataSize: Maximum early data size for 0-RTT
     /// - Returns: A configured TLS provider
-    /// - Throws: `QUICSecurityError.tlsProviderNotConfigured` if no TLS provider is configured
+    /// - Throws: TLS parsing/loading errors when PEM/DER trust inputs are invalid
     func createTLSProvider(
         isClient: Bool,
         sessionTicket: Data?,
@@ -201,12 +211,26 @@ public actor QUICEndpoint {
             return factory(isClient)
         }
 
-        // No TLS provider configured - fail safely
-        logger.error(
-            "TLS provider not configured. Set securityMode or tlsProviderFactory before connecting.",
-            metadata: ["isClient": "\(isClient)"]
-        )
-        throw QUICSecurityError.tlsProviderNotConfigured
+        // Priority 3: Build default TLS provider from QUICConfiguration passthrough
+        var tlsConfig = TLSConfiguration()
+        tlsConfig.alpnProtocols = configuration.alpn
+        tlsConfig.verifyPeer = configuration.verifyPeer
+        tlsConfig.sessionTicket = sessionTicket
+        if let maxSize = maxEarlyDataSize {
+            tlsConfig.maxEarlyDataSize = maxSize
+        }
+
+        if let derRoots = configuration.userTrustedCACertificatesDER, !derRoots.isEmpty {
+            tlsConfig.trustedCACertificates = derRoots
+        } else if let pemPath = configuration.userTrustedCAsPEMPath, !pemPath.isEmpty {
+            let derRoots = try PEMLoader.loadCertificates(fromPath: pemPath)
+            tlsConfig.trustedCACertificates = derRoots
+        } else if !configuration.useSystemTrustStore {
+            // Explicitly disable system fallback by supplying empty trust anchors.
+            tlsConfig.trustedRootCertificates = []
+        }
+
+        return TLS13Handler(configuration: tlsConfig)
     }
 
     // MARK: - Address Management
