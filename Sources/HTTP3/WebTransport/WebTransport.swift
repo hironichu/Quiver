@@ -14,13 +14,16 @@
 ///     options: .insecure()
 /// )
 ///
-/// // Production — custom CA
+/// // Production — custom CA (DER source)
 /// var opts = WebTransportOptions()
-/// opts.caCertificates = [myRootCertDER]
+/// opts.caCertificates = .der([myRootCertDER])
 /// let session = try await WebTransport.connect(
 ///     url: "https://example.com:4433/wt",
 ///     options: opts
 /// )
+///
+/// // Production — custom CA (PEM file source)
+/// opts.caCertificates = .pem(path: "/path/to/roots.pem")
 ///
 /// // Power-user — full QUIC/HTTP3 control
 /// var quic = QUICConfiguration()

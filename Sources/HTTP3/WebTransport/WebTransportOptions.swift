@@ -19,10 +19,13 @@
 ///     options: .insecure()
 /// )
 ///
-/// // Custom CA bundle
+/// // Custom CA bundle (DER)
 /// var opts = WebTransportOptions()
-/// opts.caCertificates = [myRootCertDER]
+/// opts.caCertificates = .der([myRootCertDER])
 /// opts.maxIdleTimeout = .seconds(60)
+///
+/// // Custom CA bundle (PEM file path)
+/// opts.caCertificates = .pem(path: "/path/to/roots.pem")
 /// ```
 ///
 /// For full control over QUIC and HTTP/3 parameters, use
@@ -37,6 +40,23 @@ import Foundation
 import QUIC
 import QUICCore
 
+// MARK: - CA Certificate Source
+
+/// Source of trusted CA certificates used for TLS peer verification.
+///
+/// This type does not parse certificates directly in the HTTP3 module.
+/// Resolution (for example PEM file loading) is performed by the QUIC/TLS layer.
+public enum CACertificateSource: Sendable {
+    /// Use platform/system trust store.
+    case system
+
+    /// Use explicit DER-encoded root CA certificate blobs.
+    case der([Data])
+
+    /// Load PEM-encoded certificates from a file path.
+    case pem(path: String)
+}
+
 // MARK: - WebTransport Client Options
 
 /// Simplified client-side options for establishing a WebTransport session.
@@ -48,14 +68,14 @@ public struct WebTransportOptions: Sendable {
 
     // MARK: - TLS / Security
 
-    /// Trusted CA certificates (DER-encoded) for peer verification.
+    /// Trusted CA certificate source for peer verification.
     ///
-    /// When `nil`, the system default trust store is used (if the TLS
-    /// provider supports it). Provide explicit roots when connecting
-    /// to servers with custom or private CAs.
+    /// - `.system`: use system/platform trust roots
+    /// - `.der([Data])`: use explicit DER-encoded roots
+    /// - `.pem(path:)`: resolve PEM file at TLS provider creation layer
     ///
-    /// - Default: `nil` (system defaults)
-    public var caCertificates: [Data]?
+    /// - Default: `.system`
+    public var caCertificates: CACertificateSource
 
     /// Whether to verify the server's TLS certificate.
     ///
@@ -152,7 +172,7 @@ public struct WebTransportOptions: Sendable {
     /// Creates client options with sensible defaults.
     ///
     /// - Parameters:
-    ///   - caCertificates: Trusted CA certs in DER format (default: nil = system)
+    ///   - caCertificates: Trusted CA source (default: `.system`)
     ///   - verifyPeer: Verify server certificate (default: true)
     ///   - alpn: ALPN tokens (default: ["h3"])
     ///   - headers: Extra CONNECT headers (default: [])
@@ -164,7 +184,7 @@ public struct WebTransportOptions: Sendable {
     ///   - initialMaxStreamsUni: Max peer uni streams (default: 100)
     ///   - maxSessions: Max concurrent WT sessions (default: 1)
     public init(
-        caCertificates: [Data]? = nil,
+        caCertificates: CACertificateSource = .system,
         verifyPeer: Bool = true,
         alpn: [String] = ["h3"],
         headers: [(String, String)] = [],
@@ -187,6 +207,48 @@ public struct WebTransportOptions: Sendable {
         self.initialMaxStreamsBidi = initialMaxStreamsBidi
         self.initialMaxStreamsUni = initialMaxStreamsUni
         self.maxSessions = maxSessions
+    }
+
+    /// Backward-compatible initializer for DER certificate arrays.
+    ///
+    /// - Parameters:
+    ///   - caCertificatesDER: Trusted CA certs in DER format (nil => `.system`)
+    ///   - verifyPeer: Verify server certificate (default: true)
+    ///   - alpn: ALPN tokens (default: `["h3"]`)
+    ///   - headers: Extra CONNECT headers (default: `[]`)
+    ///   - datagramStrategy: Datagram queuing strategy (default: `.fifo`)
+    ///   - maxIdleTimeout: QUIC idle timeout (default: 30s)
+    ///   - connectionReadyTimeout: SETTINGS exchange timeout (default: 10s)
+    ///   - connectTimeout: Extended CONNECT timeout (default: 10s)
+    ///   - initialMaxStreamsBidi: Max peer bidi streams (default: 100)
+    ///   - initialMaxStreamsUni: Max peer uni streams (default: 100)
+    ///   - maxSessions: Max concurrent WT sessions (default: 1)
+    public init(
+        caCertificatesDER: [Data]?,
+        verifyPeer: Bool = true,
+        alpn: [String] = ["h3"],
+        headers: [(String, String)] = [],
+        datagramStrategy: DatagramSendingStrategy = .fifo,
+        maxIdleTimeout: Duration = .seconds(30),
+        connectionReadyTimeout: Duration = .seconds(10),
+        connectTimeout: Duration = .seconds(10),
+        initialMaxStreamsBidi: UInt64 = 100,
+        initialMaxStreamsUni: UInt64 = 100,
+        maxSessions: UInt64 = 1
+    ) {
+        self.init(
+            caCertificates: caCertificatesDER.map { .der($0) } ?? .system,
+            verifyPeer: verifyPeer,
+            alpn: alpn,
+            headers: headers,
+            datagramStrategy: datagramStrategy,
+            maxIdleTimeout: maxIdleTimeout,
+            connectionReadyTimeout: connectionReadyTimeout,
+            connectTimeout: connectTimeout,
+            initialMaxStreamsBidi: initialMaxStreamsBidi,
+            initialMaxStreamsUni: initialMaxStreamsUni,
+            maxSessions: maxSessions
+        )
     }
 
     // MARK: - Factory Methods
@@ -215,8 +277,8 @@ public struct WebTransportOptions: Sendable {
     ///
     /// **Does not set `securityMode`**. The caller (e.g. `WebTransport.connect()`)
     /// is responsible for configuring TLS using `verifyPeer` and `caCertificates`
-    /// from this options struct, because TLS provider creation requires types
-    /// from QUICCrypto which is not a direct dependency of the HTTP3 module.
+    /// from this options struct. Certificate source resolution (notably `.pem(path:)`)
+    /// is intentionally deferred to the QUIC/TLS layer, where crypto loaders exist.
     ///
     /// - Returns: A partially-configured `QUICConfiguration`.
     internal func buildQUICConfiguration() -> QUICConfiguration {

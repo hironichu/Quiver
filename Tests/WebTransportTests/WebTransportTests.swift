@@ -1842,7 +1842,11 @@ final class WebTransportConnectAPITests: XCTestCase {
     func testOptionsDefaults() {
         let opts = WebTransportOptions()
 
-        XCTAssertNil(opts.caCertificates)
+        if case .system = opts.caCertificates {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected default CA source to be .system")
+        }
         XCTAssertTrue(opts.verifyPeer)
         XCTAssertEqual(opts.alpn, ["h3"])
         XCTAssertTrue(opts.headers.isEmpty)
@@ -1865,7 +1869,7 @@ final class WebTransportConnectAPITests: XCTestCase {
 
     func testOptionsCustomValues() {
         let opts = WebTransportOptions(
-            caCertificates: [Data([0x01, 0x02])],
+            caCertificates: .der([Data([0x01, 0x02])]),
             verifyPeer: false,
             alpn: ["h3", "webtransport"],
             headers: [("authorization", "Bearer abc")],
@@ -1877,7 +1881,12 @@ final class WebTransportConnectAPITests: XCTestCase {
             maxSessions: 4
         )
 
-        XCTAssertEqual(opts.caCertificates?.count, 1)
+        switch opts.caCertificates {
+        case .der(let certs):
+            XCTAssertEqual(certs.count, 1)
+        default:
+            XCTFail("Expected CA source to be .der")
+        }
         XCTAssertFalse(opts.verifyPeer)
         XCTAssertEqual(opts.alpn, ["h3", "webtransport"])
         XCTAssertEqual(opts.headers.count, 1)
@@ -1887,6 +1896,18 @@ final class WebTransportConnectAPITests: XCTestCase {
         XCTAssertEqual(opts.initialMaxStreamsBidi, 200)
         XCTAssertEqual(opts.initialMaxStreamsUni, 50)
         XCTAssertEqual(opts.maxSessions, 4)
+    }
+
+    func testOptionsPEMSourceValue() {
+        var opts = WebTransportOptions()
+        opts.caCertificates = .pem(path: "/tmp/roots.pem")
+
+        switch opts.caCertificates {
+        case .pem(let path):
+            XCTAssertEqual(path, "/tmp/roots.pem")
+        default:
+            XCTFail("Expected CA source to be .pem(path:)")
+        }
     }
 
     func testOptionsBuildQUICConfiguration() {
@@ -1904,6 +1925,20 @@ final class WebTransportConnectAPITests: XCTestCase {
         XCTAssertEqual(quicConfig.initialMaxStreamsUni, 75)
         XCTAssertTrue(quicConfig.enableDatagrams)
         XCTAssertEqual(quicConfig.maxDatagramFrameSize, 65535)
+    }
+
+    func testOptionsBackwardCompatibleDERInitializer() {
+        let opts = WebTransportOptions(
+            caCertificatesDER: [Data([0xAA, 0xBB])]
+        )
+
+        switch opts.caCertificates {
+        case .der(let certs):
+            XCTAssertEqual(certs.count, 1)
+            XCTAssertEqual(certs[0], Data([0xAA, 0xBB]))
+        default:
+            XCTFail("Expected CA source to be .der from compatibility initializer")
+        }
     }
 
     func testOptionsBuildHTTP3Settings() {
