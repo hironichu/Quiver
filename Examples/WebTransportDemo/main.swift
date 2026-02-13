@@ -121,6 +121,9 @@ struct DemoArguments {
     let caCertPath: String?  // Client: PEM CA certificate path
     let useSystemCertificates: Bool  // Client: use system trust store
 
+    // Debug options
+    let dumpSystemRootCNs: Bool  // Client: dump loaded system root certificate CNs
+
     // Demo options
     let skipDatagrams: Bool
 
@@ -149,6 +152,7 @@ struct DemoArguments {
         var keyPath: String?
         var caCertPath: String?
         var useSystemCertificates = false
+        var dumpSystemRootCNs = false
         var skipDatagrams = false
 
         var i = 1
@@ -183,6 +187,8 @@ struct DemoArguments {
                 if i < args.count { caCertPath = args[i] }
             case "--use-system-certificates":
                 useSystemCertificates = true
+            case "--dump-system-root-cns":
+                dumpSystemRootCNs = true
             case "--skip-datagrams":
                 skipDatagrams = true
             default:
@@ -200,6 +206,7 @@ struct DemoArguments {
             keyPath: keyPath,
             caCertPath: caCertPath,
             useSystemCertificates: useSystemCertificates,
+            dumpSystemRootCNs: dumpSystemRootCNs,
             skipDatagrams: skipDatagrams
         )
     }
@@ -251,13 +258,25 @@ func makeServerTLSConfig(certPath: String?, keyPath: String?) throws -> (TLSConf
 /// 3) fallback => development mode (allow self-signed)
 func makeClientTLSConfig(
     caCertPath: String?,
-    useSystemCertificates: Bool
+    useSystemCertificates: Bool,
+    dumpSystemRootCNs: Bool
 ) throws -> (TLSConfiguration, String) {
     if useSystemCertificates {
         var tlsConfig = TLSConfiguration.client(
             serverName: "localhost",
             alpnProtocols: [h3ALPN]
         )
+        try tlsConfig.useSystemTrustStore()
+        let roots = tlsConfig.trustedRootCertificates ?? []
+        let rootCount = roots.count
+        log("Config", "TLS trust source selected: system trust store (rootCount: \(rootCount))")
+        if dumpSystemRootCNs {
+            for (idx, cert) in roots.enumerated() {
+                let subject = String(describing: cert.subject)
+                let cn = extractCommonName(fromSubjectDescription: subject) ?? "<none>"
+                log("Config", "Root[\(idx)] CN=\(cn)")
+            }
+        }
         tlsConfig.verifyPeer = true
         tlsConfig.allowSelfSigned = false
         return (tlsConfig, "Production (system trust store, verifyPeer: true)")
@@ -267,6 +286,8 @@ func makeClientTLSConfig(
             alpnProtocols: [h3ALPN]
         )
         try tlsConfig.loadTrustedCAs(fromPEMFile: caCertPath)
+        let rootCount = tlsConfig.trustedRootCertificates?.count ?? 0
+        log("Config", "TLS trust source selected: PEM CA bundle (path: \(caCertPath), rootCount: \(rootCount))")
         tlsConfig.verifyPeer = true
         tlsConfig.allowSelfSigned = false
         return (tlsConfig, "Production (CA: \(caCertPath), verifyPeer: true)")
@@ -275,6 +296,7 @@ func makeClientTLSConfig(
             serverName: "localhost",
             alpnProtocols: [h3ALPN]
         )
+        log("Config", "TLS trust source selected: none (development mode, self-signed allowed)")
         tlsConfig.verifyPeer = false
         tlsConfig.allowSelfSigned = true
         return (tlsConfig, "Development (allowSelfSigned: true, verifyPeer: false)")
@@ -330,11 +352,13 @@ func makeServerConfiguration(certPath: String?, keyPath: String?) throws -> QUIC
 /// Creates a QUIC configuration for the WebTransport client.
 func makeClientConfiguration(
     caCertPath: String?,
-    useSystemCertificates: Bool
+    useSystemCertificates: Bool,
+    dumpSystemRootCNs: Bool
 ) throws -> QUICConfiguration {
     let (tlsConfig, description) = try makeClientTLSConfig(
         caCertPath: caCertPath,
-        useSystemCertificates: useSystemCertificates
+        useSystemCertificates: useSystemCertificates,
+        dumpSystemRootCNs: dumpSystemRootCNs
     )
     log("Config", "TLS mode: \(description)")
 
@@ -741,6 +765,7 @@ func runClient(
     port: UInt16,
     caCertPath: String?,
     useSystemCertificates: Bool,
+    dumpSystemRootCNs: Bool,
     skipDatagrams: Bool
 ) async throws {
     log("Client", "╔══════════════════════════════════════════════════════════════╗")
@@ -761,7 +786,8 @@ func runClient(
     // Step 1: Create client QUIC configuration
     let quicConfig = try makeClientConfiguration(
         caCertPath: caCertPath,
-        useSystemCertificates: useSystemCertificates
+        useSystemCertificates: useSystemCertificates,
+        dumpSystemRootCNs: dumpSystemRootCNs
     )
 
     // Step 2: Connect and establish a WebTransport session
@@ -1148,6 +1174,22 @@ enum DemoError: Error, CustomStringConvertible {
 
 // MARK: - Help
 
+func extractCommonName(fromSubjectDescription subject: String) -> String? {
+    let patterns = ["CN=", "commonName=", "CommonName="]
+    for pattern in patterns {
+        if let range = subject.range(of: pattern) {
+            let tail = subject[range.upperBound...]
+            let delimiters = [",", ")", ";", "\n"]
+            let end = tail.firstIndex { delimiters.contains(String($0)) } ?? tail.endIndex
+            let value = tail[..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                return value
+            }
+        }
+    }
+    return nil
+}
+
 func printHelp() {
     print(
         """
@@ -1182,8 +1224,10 @@ func printHelp() {
             generates a self-signed P-256 key pair for development.
 
         CLIENT OPTIONS:
-            --ca-cert <path>        Path to PEM CA certificate file
-            --skip-datagrams        Skip the datagram echo test
+            --ca-cert <path>                Path to PEM CA certificate file
+            --use-system-certificates       Use system trust store for server cert verification
+            --dump-system-root-cns          Dump CN for each loaded system root certificate
+            --skip-datagrams                Skip the datagram echo test
 
             When --ca-cert is provided, the client verifies the server's
             certificate against the trusted CA (production mode). Otherwise,
@@ -1309,6 +1353,7 @@ case .client:
             port: arguments.port,
             caCertPath: arguments.caCertPath,
             useSystemCertificates: arguments.useSystemCertificates,
+            dumpSystemRootCNs: arguments.dumpSystemRootCNs,
             skipDatagrams: arguments.skipDatagrams
         )
     } catch {

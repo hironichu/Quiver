@@ -159,12 +159,33 @@ public actor QUICEndpoint {
 
         if let derRoots = configuration.userTrustedCACertificatesDER, !derRoots.isEmpty {
             tlsConfig.trustedCACertificates = derRoots
+            logger.debug(
+                "TLS trust source selected: explicit DER CA roots",
+                metadata: ["rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+            )
         } else if let pemPath = configuration.userTrustedCAsPEMPath, !pemPath.isEmpty {
             let derRoots = try PEMLoader.loadCertificates(fromPath: pemPath)
             tlsConfig.trustedCACertificates = derRoots
-        } else if !configuration.useSystemTrustStore {
+            logger.debug(
+                "TLS trust source selected: PEM CA bundle",
+                metadata: ["pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+            )
+        } else if configuration.useSystemTrustStore {
+            try tlsConfig.useSystemTrustStore()
+            logger.debug(
+                "TLS trust source selected: system trust store",
+                metadata: [
+                    "rootCount": "\(tlsConfig.trustedRootCertificates?.count ?? 0)",
+                    "isClient": "\(isClient)"
+                ]
+            )
+        } else {
             // Explicitly disable system fallback by supplying empty trust anchors.
             tlsConfig.trustedRootCertificates = []
+            logger.debug(
+                "TLS trust source selected: none (system trust disabled, no custom roots)",
+                metadata: ["isClient": "\(isClient)"]
+            )
         }
 
         return TLS13Handler(configuration: tlsConfig)
@@ -222,12 +243,33 @@ public actor QUICEndpoint {
 
         if let derRoots = configuration.userTrustedCACertificatesDER, !derRoots.isEmpty {
             tlsConfig.trustedCACertificates = derRoots
+            logger.debug(
+                "TLS trust source selected: explicit DER CA roots",
+                metadata: ["rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+            )
         } else if let pemPath = configuration.userTrustedCAsPEMPath, !pemPath.isEmpty {
             let derRoots = try PEMLoader.loadCertificates(fromPath: pemPath)
             tlsConfig.trustedCACertificates = derRoots
-        } else if !configuration.useSystemTrustStore {
+            logger.debug(
+                "TLS trust source selected: PEM CA bundle",
+                metadata: ["pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+            )
+        } else if configuration.useSystemTrustStore {
+            try tlsConfig.useSystemTrustStore()
+            logger.debug(
+                "TLS trust source selected: system trust store",
+                metadata: [
+                    "rootCount": "\(tlsConfig.trustedRootCertificates?.count ?? 0)",
+                    "isClient": "\(isClient)"
+                ]
+            )
+        } else {
             // Explicitly disable system fallback by supplying empty trust anchors.
             tlsConfig.trustedRootCertificates = []
+            logger.debug(
+                "TLS trust source selected: none (system trust disabled, no custom roots)",
+                metadata: ["isClient": "\(isClient)"]
+            )
         }
 
         return TLS13Handler(configuration: tlsConfig)
