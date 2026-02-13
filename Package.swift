@@ -370,10 +370,7 @@ let package = Package(
                 "QUIC",
                 "QUICCore",
                 "QUICCrypto",
-                "QUICTransport",
                 "HTTP3",
-                "QPACK",
-                "NIOUDPTransport",
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/HTTP3Demo"
