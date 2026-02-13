@@ -362,14 +362,14 @@ public struct QUICConfiguration: Sendable {
     /// `serve(host:port:)` or `dial(address:)`.  Has no effect when
     /// a pre-built socket is supplied directly.
     ///
-    /// - Default: ``SocketConfiguration()``
+    /// - Default: `SocketConfiguration()`
     public var socketConfiguration: SocketConfiguration
 
     // MARK: - Initialization
 
     /// Creates a default configuration.
     ///
-    /// All sizes derive from ``ProtocolLimits`` so that no bare `1200`
+    /// All sizes derive from `ProtocolLimits` so that no bare `1200`
     /// literals exist in the configuration layer.
     ///
     /// - Note: Use `TLSConfiguration` for all TLS settings, and prefer

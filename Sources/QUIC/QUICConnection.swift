@@ -75,7 +75,9 @@ public protocol QUICConnectionProtocol: Sendable {
     /// any stream. Both endpoints must have negotiated datagram support
     /// via the `max_datagram_frame_size` transport parameter.
     ///
-    /// - Parameter data: The datagram payload to send
+    /// - Parameters:
+    ///   - data: The datagram payload to send.
+    ///   - strategy: The enqueueing/sending strategy used for datagram delivery.
     /// - Throws: If datagrams are not supported or the payload exceeds
     ///   the peer's `max_datagram_frame_size`
     ///

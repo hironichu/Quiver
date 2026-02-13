@@ -200,6 +200,7 @@ let package = Package(
                 "QUIC",
                 "QPACK",
                 "QUICCore",
+                "QUICCrypto",
                 "QUICStream",
                 .product(name: "Logging", package: "swift-log"),
             ],

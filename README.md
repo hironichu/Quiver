@@ -225,26 +225,77 @@ await connection.shutdown()
 
 ### HTTP/3 Server
 
+The simplest way to run an HTTP/3 server uses `HTTP3ServerOptions`, which
+wires up TLS certificates, QUIC transport, and HTTP/3 settings internally:
+
 ```swift
 import HTTP3
 
+let options = HTTP3ServerOptions(
+    host: "0.0.0.0",
+    port: 4433,
+    certificatePath: "/path/to/cert.pem",
+    privateKeyPath: "/path/to/key.pem"
+)
+
+let server = HTTP3Server(options: options)
+
+await server.onRequest { context in
+    switch context.request.path {
+    case "/":
+        try await context.respond(
+            status: 200,
+            headers: [("content-type", "text/plain")],
+            Data("Hello, HTTP/3!".utf8)
+        )
+    case "/json":
+        let json = Data(#"{"message": "quiver"}"#.utf8)
+        try await context.respond(
+            status: 200,
+            headers: [("content-type", "application/json")],
+            json
+        )
+    default:
+        try await context.respond(status: 404)
+    }
+}
+
+// Blocks until stop() is called
+try await server.listen()
+```
+
+For full control over TLS and QUIC configuration, use the advanced API:
+
+```swift
+import HTTP3
+import QUICCrypto
+import QUIC
+
+var tlsConfig = try TLSConfiguration.server(
+    certificatePath: "/path/to/cert.pem",
+    privateKeyPath: "/path/to/key.pem",
+    alpnProtocols: ["h3"]
+)
+tlsConfig.verifyPeer = true
+try tlsConfig.addSystemTrustStore()
+
+var quicConfig = QUICConfiguration()
+quicConfig.alpn = ["h3"]
+quicConfig.securityMode = .production {
+    TLS13Handler(configuration: tlsConfig)
+}
+
 let server = HTTP3Server()
 
-// Register routes
-server.route("GET", "/") { request, context in
-    return HTTP3Response(status: 200, body: Data("Hello, HTTP/3!".utf8))
+await server.onRequest { context in
+    try await context.respond(status: 200, Data("OK".utf8))
 }
 
-server.route("GET", "/json") { request, context in
-    let json = Data(#"{"message": "quiver"}"#.utf8)
-    return HTTP3Response(
-        status: 200,
-        headers: [("content-type", "application/json")],
-        body: json
-    )
-}
-
-try await server.listen(host: "0.0.0.0", port: 4433)
+try await server.listen(
+    host: "0.0.0.0",
+    port: 4433,
+    quicConfiguration: quicConfig
+)
 ```
 
 ### HTTP/3 Client

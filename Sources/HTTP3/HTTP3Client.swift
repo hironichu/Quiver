@@ -131,8 +131,10 @@ public actor HTTP3Client {
 
     /// Creates an HTTP/3 client with default configuration.
     ///
-    /// - Parameter connectionFactory: Optional factory for creating QUIC connections.
-    ///   If nil, the client requires connections to be provided via `setConnection(_:for:)`.
+    /// - Parameters:
+    ///   - configuration: Client configuration for connection reuse, pooling limits, and request behavior.
+    ///   - connectionFactory: Optional factory for creating QUIC connections.
+    ///     If nil, the client requires connections to be provided via `setConnection(_:for:)`.
     public init(
         configuration: Configuration = .default,
         connectionFactory: (@Sendable (String, UInt16) async throws -> any QUICConnectionProtocol)? = nil
@@ -439,7 +441,9 @@ public actor HTTP3Client {
 extension HTTP3Client {
     /// Creates a client with a custom configuration using a builder pattern.
     ///
-    /// - Parameter configure: A closure that modifies the configuration
+    /// - Parameters:
+    ///   - connectionFactory: Optional factory for creating QUIC connections used by this client.
+    ///   - configure: A closure that modifies the configuration.
     /// - Returns: A configured HTTP3Client
     public static func build(
         connectionFactory: (@Sendable (String, UInt16) async throws -> any QUICConnectionProtocol)? = nil,

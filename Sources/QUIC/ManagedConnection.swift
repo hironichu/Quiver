@@ -137,6 +137,8 @@ public final class ManagedConnection: Sendable {
     ///   - tlsProvider: TLS 1.3 provider
     ///   - localAddress: Local socket address (optional)
     ///   - remoteAddress: Remote socket address
+    ///   - maxDatagramSize: Configured maximum UDP payload size for packet
+    ///     processing and path MTU behavior.
     public convenience init(
         role: ConnectionRole,
         version: QUICVersion,

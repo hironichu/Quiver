@@ -103,7 +103,7 @@ public actor MOQSession: MOQTrackDelegate, Hashable {
     ///   - id: The unique track identifier (e.g. 0 for video, 1 for audio).
     ///   - alias: The wire alias (usually same as ID for simple cases).
     ///   - priority: The default priority for objects in this track.
-    ///   - ttl: The default TTL for objects in this track.
+    ///   - defaultTTL: The default TTL for objects in this track.
     /// - Returns: A `MOQTrack` instance to push media to.
     public func createTrack(
         id: UInt64,

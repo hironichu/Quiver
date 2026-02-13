@@ -138,7 +138,9 @@ public enum FrameSize {
     /// - Length (1-8 bytes): varint
     /// - Data (variable): the actual data
     ///
-    /// - Parameter frame: The CRYPTO frame
+    /// - Parameters:
+    ///   - offset: Byte offset of this CRYPTO frame in the TLS stream.
+    ///   - dataLength: Number of payload bytes carried by the frame.
     /// - Returns: Total encoded size in bytes
     @inlinable
     public static func cryptoFrame(offset: UInt64, dataLength: Int) -> Int {

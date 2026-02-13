@@ -251,9 +251,11 @@ public actor WebTransportSession {
     /// transition to `.established` and begin processing capsules.
     ///
     /// - Parameters:
-    ///   - connectStream: The QUIC stream of the Extended CONNECT request
-    ///   - connection: The HTTP/3 connection this session belongs to
-    ///   - role: The endpoint role (client or server)
+    ///   - connectStream: The QUIC stream of the Extended CONNECT request.
+    ///   - connection: The HTTP/3 connection this session belongs to.
+    ///   - role: The endpoint role (client or server).
+    ///   - path: The request path associated with the session (client-provided for outgoing sessions).
+    ///   - authority: The request authority associated with the session (host or host:port).
     public init(
         connectStream: any QUICStreamProtocol,
         connection: HTTP3Connection,
@@ -575,7 +577,9 @@ public actor WebTransportSession {
     /// quarter stream ID prefix (RFC 9297). Datagrams are unreliable
     /// and may be dropped by the network.
     ///
-    /// - Parameter strategy: The sending strategy (priority, expiry). Defaults to .fifo.
+    /// - Parameters:
+    ///   - data: The application payload to send as a WebTransport datagram.
+    ///   - strategy: The sending strategy (priority, expiry). Defaults to `.fifo`.
     /// - Throws: `WebTransportError` if the session is not established
     ///   or datagrams are not supported
     ///

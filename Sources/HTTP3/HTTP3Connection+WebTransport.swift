@@ -156,10 +156,12 @@ extension HTTP3Connection {
     /// Extended CONNECT.
     ///
     /// - Parameters:
-    ///   - connectStream: The QUIC stream from the Extended CONNECT
-    ///   - response: The HTTP/3 response (should be 200)
-    /// - Returns: The started `WebTransportSession`
-    /// - Throws: `WebTransportError` if the response is not 200 or setup fails
+    ///   - connectStream: The QUIC stream from the Extended CONNECT.
+    ///   - response: The HTTP/3 response head (must be a success status).
+    ///   - path: The request path associated with the WebTransport session.
+    ///   - authority: The request authority associated with the WebTransport session.
+    /// - Returns: The started `WebTransportSession`.
+    /// - Throws: `WebTransportError` if the response is not successful or setup fails.
     public func createClientWebTransportSession(
         connectStream: any QUICStreamProtocol,
         response: borrowing HTTP3ResponseHead,
