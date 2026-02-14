@@ -6,7 +6,7 @@
 /// - `connectWith0RTT` — connects with 0-RTT early data
 /// - `connectWithSession` — connects using a cached TLS session
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICCrypto
 import QUICConnection

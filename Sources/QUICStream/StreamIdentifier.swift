@@ -17,7 +17,7 @@
 /// Future work will migrate call sites from `UInt64` + `StreamID.isBidirectional(_:)`
 /// to `StreamIdentifier` + `.isBidirectional`.
 
-import Foundation
+import FoundationEssentials
 
 /// A type-safe QUIC stream identifier.
 ///

@@ -11,10 +11,10 @@
 ///   `UInt64`-based methods. Prefer the typed overloads in new code.
 /// - Use `.rawValue` at module boundaries where `UInt64` is still expected.
 
-import Foundation
+import FoundationEssentials
 import Logging
-import Synchronization
 import QUICCore
+import Synchronization
 
 /// Error types for StreamManager operations
 public enum StreamManagerError: Error, Sendable {
@@ -30,6 +30,8 @@ public enum StreamManagerError: Error, Sendable {
     case connectionFlowControlViolation
     /// Stream error
     case streamError(StreamError)
+    /// Frame encoding error
+    case frameEncodingError(String)
 }
 
 /// Manages all streams for a QUIC connection
@@ -114,18 +116,19 @@ public final class StreamManager: Sendable {
             peerMaxStreamsUni: peerInitialMaxStreamsUni
         )
 
-        self.state = Mutex(StreamManagerState(
-            streams: [:],
-            flowController: flowController,
-            scheduler: StreamScheduler(),
-            nextLocalBidiStreamIndex: 0,
-            nextLocalUniStreamIndex: 0,
-            isClient: isClient,
-            initialSendMaxDataBidiLocal: peerInitialMaxStreamDataBidiLocal,
-            initialSendMaxDataBidiRemote: peerInitialMaxStreamDataBidiRemote,
-            initialSendMaxDataUni: peerInitialMaxStreamDataUni,
-            maxBufferSize: maxBufferSize
-        ))
+        self.state = Mutex(
+            StreamManagerState(
+                streams: [:],
+                flowController: flowController,
+                scheduler: StreamScheduler(),
+                nextLocalBidiStreamIndex: 0,
+                nextLocalUniStreamIndex: 0,
+                isClient: isClient,
+                initialSendMaxDataBidiLocal: peerInitialMaxStreamDataBidiLocal,
+                initialSendMaxDataBidiRemote: peerInitialMaxStreamDataBidiRemote,
+                initialSendMaxDataUni: peerInitialMaxStreamDataUni,
+                maxBufferSize: maxBufferSize
+            ))
     }
 
     // MARK: - Stream Lifecycle
@@ -136,7 +139,9 @@ public final class StreamManager: Sendable {
     ///   - priority: Initial stream priority (default: .default)
     /// - Returns: The new stream identifier
     /// - Throws: StreamManagerError if stream limit reached
-    public func openTypedStream(bidirectional: Bool, priority: StreamPriority = .default) throws -> StreamIdentifier {
+    public func openTypedStream(bidirectional: Bool, priority: StreamPriority = .default) throws
+        -> StreamIdentifier
+    {
         let rawID = try openStream(bidirectional: bidirectional, priority: priority)
         return StreamIdentifier(rawValue: rawID)
     }
@@ -147,7 +152,9 @@ public final class StreamManager: Sendable {
     ///   - priority: Initial stream priority (default: .default)
     /// - Returns: The new stream ID
     /// - Throws: StreamManagerError if stream limit reached
-    public func openStream(bidirectional: Bool, priority: StreamPriority = .default) throws -> UInt64 {
+    public func openStream(bidirectional: Bool, priority: StreamPriority = .default) throws
+        -> UInt64
+    {
         try state.withLock { state in
             // Check stream limit
             guard state.flowController.canOpenStream(bidirectional: bidirectional) else {
@@ -176,7 +183,8 @@ public final class StreamManager: Sendable {
             let sendLimit = getSendLimit(for: streamID, state: state)
             let recvLimit = getRecvLimit(for: streamID, state: state)
 
-            Self.logger.debug("Opening stream \(streamID): sendLimit=\(sendLimit), recvLimit=\(recvLimit)")
+            Self.logger.debug(
+                "Opening stream \(streamID): sendLimit=\(sendLimit), recvLimit=\(recvLimit)")
 
             let stream = DataStream(
                 id: streamID,
@@ -313,7 +321,13 @@ public final class StreamManager: Sendable {
             }
 
             // Calculate end offset for flow control
-            let endOffset = frame.offset + UInt64(frame.data.count)
+            let longCount = UInt64(frame.data.count)
+            // RFC 9000 Section 19.8: Largest offset cannot exceed 2^62-1
+            guard frame.offset <= Varint.maxValue - longCount else {
+                throw StreamManagerError.frameEncodingError(
+                    "Stream offset overflow: \(frame.offset) + \(longCount) > 2^62-1")
+            }
+            let endOffset = frame.offset + longCount
 
             // Calculate new bytes (not previously counted) for connection-level flow control
             // This correctly handles out-of-order data by counting only the actual new bytes,
@@ -343,7 +357,8 @@ public final class StreamManager: Sendable {
             }
 
             // Record only new bytes at connection level (avoids double-counting retransmissions)
-            let actualNewBytes = state.flowController.recordStreamBytesReceived(frame.streamID, endOffset: endOffset)
+            let actualNewBytes = state.flowController.recordStreamBytesReceived(
+                frame.streamID, endOffset: endOffset)
             if actualNewBytes > 0 {
                 state.flowController.recordBytesReceived(actualNewBytes)
             }
@@ -365,7 +380,8 @@ public final class StreamManager: Sendable {
             }
 
             // DataStream validates final size against stream-level flow control
-            try stream.handleResetStream(errorCode: frame.applicationErrorCode, finalSize: frame.finalSize)
+            try stream.handleResetStream(
+                errorCode: frame.applicationErrorCode, finalSize: frame.finalSize)
 
             // Update connection-level flow control with final size
             // Count any new bytes up to the final size
@@ -373,7 +389,8 @@ public final class StreamManager: Sendable {
             if frame.finalSize > currentHighest {
                 let newBytes = frame.finalSize - currentHighest
                 state.flowController.recordBytesReceived(newBytes)
-                state.flowController.recordStreamBytesReceived(frame.streamID, endOffset: frame.finalSize)
+                state.flowController.recordStreamBytesReceived(
+                    frame.streamID, endOffset: frame.finalSize)
             }
         }
     }
@@ -408,7 +425,8 @@ public final class StreamManager: Sendable {
     /// - Parameter frame: The received MAX_STREAMS frame
     public func handleMaxStreams(_ frame: MaxStreamsFrame) {
         state.withLock { state in
-            state.flowController.updateRemoteStreamLimit(frame.maxStreams, bidirectional: frame.isBidirectional)
+            state.flowController.updateRemoteStreamLimit(
+                frame.maxStreams, bidirectional: frame.isBidirectional)
         }
     }
 
@@ -423,7 +441,9 @@ public final class StreamManager: Sendable {
         uni: UInt64
     ) {
         state.withLock { state in
-            Self.logger.debug("Updating peer stream data limits: bidiLocal=\(bidiLocal), bidiRemote=\(bidiRemote), uni=\(uni)")
+            Self.logger.debug(
+                "Updating peer stream data limits: bidiLocal=\(bidiLocal), bidiRemote=\(bidiRemote), uni=\(uni)"
+            )
             Self.logger.debug("Existing streams before update: \(state.streams.keys.sorted())")
             // Update initial values for new streams
             state.initialSendMaxDataBidiLocal = bidiLocal
@@ -534,7 +554,8 @@ public final class StreamManager: Sendable {
                 // Advance cursor for fairness within this priority level
                 if !streamFrames.isEmpty {
                     let urgency = stream.priority.urgency
-                    let groupSize = orderedStreams.filter { $0.stream.priority.urgency == urgency }.count
+                    let groupSize = orderedStreams.filter { $0.stream.priority.urgency == urgency }
+                        .count
                     state.scheduler.advanceCursor(for: urgency, groupSize: groupSize)
                 }
 
@@ -590,8 +611,9 @@ public final class StreamManager: Sendable {
             for (_, stream) in state.streams {
                 // Check if this stream received STOP_SENDING and hasn't sent RESET_STREAM yet
                 if stream.needsResetStream,
-                   let errorCode = stream.stopSendingErrorCode,
-                   let frame = stream.generateResetStream(errorCode: errorCode) {
+                    let errorCode = stream.stopSendingErrorCode,
+                    let frame = stream.generateResetStream(errorCode: errorCode)
+                {
                     frames.append(frame)
                 }
             }
@@ -753,7 +775,9 @@ public final class StreamManager: Sendable {
     }
 
     /// Set priority for a stream (type-safe variant).
-    public func setPriority(_ priority: StreamPriority, forStream streamIdentifier: StreamIdentifier) throws {
+    public func setPriority(
+        _ priority: StreamPriority, forStream streamIdentifier: StreamIdentifier
+    ) throws {
         try setPriority(priority, for: streamIdentifier.rawValue)
     }
 
@@ -770,7 +794,9 @@ public final class StreamManager: Sendable {
 
     // MARK: - Internal Helpers
 
-    private func getOrCreateStreamInternal(_ streamID: UInt64, state: inout StreamManagerState) throws -> UInt64 {
+    private func getOrCreateStreamInternal(_ streamID: UInt64, state: inout StreamManagerState)
+        throws -> UInt64
+    {
         if state.streams[streamID] != nil {
             return streamID
         }

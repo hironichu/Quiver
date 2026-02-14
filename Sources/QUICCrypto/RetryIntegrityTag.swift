@@ -3,7 +3,7 @@
 /// Provides cryptographic integrity protection for Retry packets.
 /// Uses AES-128-GCM with version-specific fixed keys.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import QUICCore
 

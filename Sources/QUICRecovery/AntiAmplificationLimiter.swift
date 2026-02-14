@@ -27,7 +27,7 @@
 /// limiter.confirmHandshake()
 /// ```
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 
 /// Manages the anti-amplification limit for QUIC connections

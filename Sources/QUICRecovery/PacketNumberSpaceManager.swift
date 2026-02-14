@@ -2,7 +2,7 @@
 ///
 /// Coordinates loss detection and ACK management across all encryption levels.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 

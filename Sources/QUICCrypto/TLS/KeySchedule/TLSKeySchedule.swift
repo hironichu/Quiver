@@ -47,7 +47,7 @@
 ///                                   = resumption_master_secret
 /// ```
 
-import Foundation
+import FoundationEssentials
 import Crypto
 
 // MARK: - Pre-computed HkdfLabel Cache

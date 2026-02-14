@@ -36,7 +36,7 @@
 /// - [RFC 9114: HTTP/3](https://www.rfc-editor.org/rfc/rfc9114.html)
 /// - [RFC 9001: Using TLS to Secure QUIC](https://www.rfc-editor.org/rfc/rfc9001.html)
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 import QUICCrypto
@@ -226,6 +226,36 @@ public struct HTTP3ServerOptions: Sendable {
     /// - Default: `false`
     public var developmentMode: Bool
 
+    // MARK: - Alt-Svc Gateway (HTTP/1.1 + HTTP/2 -> HTTP/3 Upgrade)
+
+    /// Plain HTTP port for the Alt-Svc gateway (301 redirect to HTTPS).
+    ///
+    /// When non-nil, `listenAll()` starts a TCP listener on this port
+    /// that redirects all requests to the HTTPS gateway port.
+    ///
+    /// - Default: `nil` (gateway disabled)
+    public var gatewayHTTPPort: UInt16?
+
+    /// HTTPS port for the Alt-Svc gateway (serves `Alt-Svc: h3` header).
+    ///
+    /// When non-nil, `listenAll()` starts a TLS-terminated TCP listener
+    /// on this port that responds with the `Alt-Svc` header pointing
+    /// browsers to the HTTP/3 QUIC port.
+    ///
+    /// Requires `certificatePath` and `privateKeyPath` to be set (the
+    /// same PEM files are reused for TCP TLS via NIOSSL).
+    ///
+    /// - Default: `nil` (gateway disabled)
+    public var gatewayHTTPSPort: UInt16?
+
+    /// `max-age` value (seconds) for the `Alt-Svc` header.
+    ///
+    /// Controls how long browsers cache the HTTP/3 alternative service
+    /// advertisement before re-checking via TCP.
+    ///
+    /// - Default: `86400` (24 hours)
+    public var altSvcMaxAge: UInt32
+
     // MARK: - Initialization (File Paths)
 
     /// Creates server options with certificate file paths.
@@ -262,7 +292,10 @@ public struct HTTP3ServerOptions: Sendable {
         webtransportMaxSessions: UInt64? = nil,
         qpackMaxTableCapacity: Int = 0,
         qpackBlockedStreams: Int = 0,
-        developmentMode: Bool = false
+        developmentMode: Bool = false,
+        gatewayHTTPPort: UInt16? = nil,
+        gatewayHTTPSPort: UInt16? = nil,
+        altSvcMaxAge: UInt32 = 86400
     ) {
         self.host = host
         self.port = port
@@ -288,6 +321,9 @@ public struct HTTP3ServerOptions: Sendable {
         self.qpackMaxTableCapacity = qpackMaxTableCapacity
         self.qpackBlockedStreams = qpackBlockedStreams
         self.developmentMode = developmentMode
+        self.gatewayHTTPPort = gatewayHTTPPort
+        self.gatewayHTTPSPort = gatewayHTTPSPort
+        self.altSvcMaxAge = altSvcMaxAge
     }
 
     // MARK: - Initialization (In-Memory)
@@ -326,7 +362,10 @@ public struct HTTP3ServerOptions: Sendable {
         webtransportMaxSessions: UInt64? = nil,
         qpackMaxTableCapacity: Int = 0,
         qpackBlockedStreams: Int = 0,
-        developmentMode: Bool = false
+        developmentMode: Bool = false,
+        gatewayHTTPPort: UInt16? = nil,
+        gatewayHTTPSPort: UInt16? = nil,
+        altSvcMaxAge: UInt32 = 86400
     ) {
         self.host = host
         self.port = port
@@ -352,6 +391,9 @@ public struct HTTP3ServerOptions: Sendable {
         self.qpackMaxTableCapacity = qpackMaxTableCapacity
         self.qpackBlockedStreams = qpackBlockedStreams
         self.developmentMode = developmentMode
+        self.gatewayHTTPPort = gatewayHTTPPort
+        self.gatewayHTTPSPort = gatewayHTTPSPort
+        self.altSvcMaxAge = altSvcMaxAge
     }
 
     // MARK: - Initialization (Signing Key)
@@ -385,7 +427,10 @@ public struct HTTP3ServerOptions: Sendable {
         webtransportMaxSessions: UInt64? = nil,
         qpackMaxTableCapacity: Int = 0,
         qpackBlockedStreams: Int = 0,
-        developmentMode: Bool = false
+        developmentMode: Bool = false,
+        gatewayHTTPPort: UInt16? = nil,
+        gatewayHTTPSPort: UInt16? = nil,
+        altSvcMaxAge: UInt32 = 86400
     ) {
         self.host = host
         self.port = port
@@ -411,6 +456,9 @@ public struct HTTP3ServerOptions: Sendable {
         self.qpackMaxTableCapacity = qpackMaxTableCapacity
         self.qpackBlockedStreams = qpackBlockedStreams
         self.developmentMode = developmentMode
+        self.gatewayHTTPPort = gatewayHTTPPort
+        self.gatewayHTTPSPort = gatewayHTTPSPort
+        self.altSvcMaxAge = altSvcMaxAge
     }
 
     // MARK: - Build Methods
@@ -518,6 +566,26 @@ public struct HTTP3ServerOptions: Sendable {
         return settings
     }
 
+    /// Builds an `AltSvcGatewayConfiguration` from the options, if the
+    /// gateway is enabled (at least one of `gatewayHTTPPort` or
+    /// `gatewayHTTPSPort` is non-nil).
+    ///
+    /// - Returns: Configuration for the gateway, or `nil` when disabled.
+    public func buildGatewayConfiguration() -> AltSvcGatewayConfiguration? {
+        guard gatewayHTTPPort != nil || gatewayHTTPSPort != nil else {
+            return nil
+        }
+        return AltSvcGatewayConfiguration(
+            host: host,
+            httpPort: gatewayHTTPPort,
+            httpsPort: gatewayHTTPSPort,
+            h3Port: port,
+            altSvcMaxAge: altSvcMaxAge,
+            certificatePath: certificatePath,
+            privateKeyPath: privateKeyPath
+        )
+    }
+
     // MARK: - Validation
 
     /// Validation errors for server options.
@@ -537,6 +605,12 @@ public struct HTTP3ServerOptions: Sendable {
         /// The port number is 0.
         case invalidPort
 
+        /// Gateway HTTPS port enabled but no PEM certificate path set.
+        case gatewayMissingCertificatePath
+
+        /// Gateway HTTPS port enabled but no PEM private key path set.
+        case gatewayMissingPrivateKeyPath
+
         public var description: String {
             switch self {
             case .noCertificate:
@@ -549,6 +623,10 @@ public struct HTTP3ServerOptions: Sendable {
                 return "Both privateKeyPath and privateKey are set — use one or the other"
             case .invalidPort:
                 return "Port must be non-zero"
+            case .gatewayMissingCertificatePath:
+                return "gatewayHTTPSPort is set but certificatePath is nil — NIOSSL requires PEM file paths"
+            case .gatewayMissingPrivateKeyPath:
+                return "gatewayHTTPSPort is set but privateKeyPath is nil — NIOSSL requires PEM file paths"
             }
         }
     }
@@ -576,6 +654,16 @@ public struct HTTP3ServerOptions: Sendable {
         // Port
         if port == 0 {
             throw ValidationError.invalidPort
+        }
+
+        // Gateway: HTTPS listener requires PEM file paths (NIOSSL)
+        if gatewayHTTPSPort != nil {
+            if certificatePath == nil {
+                throw ValidationError.gatewayMissingCertificatePath
+            }
+            if privateKeyPath == nil {
+                throw ValidationError.gatewayMissingPrivateKeyPath
+            }
         }
     }
 }

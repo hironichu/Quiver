@@ -2,7 +2,7 @@
 ///
 /// Manages CRYPTO streams for all encryption levels.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 

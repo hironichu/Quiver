@@ -21,7 +21,7 @@
 /// Error codes of the form `0x1f * N + 0x21` are reserved for GREASE
 /// and MUST NOT be treated as unknown errors by implementations.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - HTTP/3 Error Codes
 

@@ -23,7 +23,7 @@
 /// 0-RTT QUIC packets. The max_early_data_size in NewSessionTicket
 /// is set to 0xFFFFFFFF to indicate unlimited.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Early Data Extension
 

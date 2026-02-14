@@ -2,7 +2,7 @@
 ///
 /// Identifiers for transport parameters exchanged during the TLS handshake.
 
-import Foundation
+import FoundationEssentials
 
 /// QUIC Transport Parameter IDs (RFC 9000 Section 18.2)
 public enum TransportParameterID: UInt64, Sendable, CaseIterable {

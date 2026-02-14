@@ -2,7 +2,7 @@
 ///
 /// Tracks sent packets for loss detection and acknowledgment management.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 
 /// Tracks a sent packet for loss detection (RFC 9002 Appendix A.1.1)

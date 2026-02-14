@@ -2,7 +2,7 @@
 ///
 /// Internal stream read/write/finish/reset helpers used by ManagedStream.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICConnection
 

@@ -11,7 +11,7 @@
 /// } ServerHello;
 /// ```
 
-import Foundation
+import FoundationEssentials
 import Crypto
 /// TLS 1.3 ServerHello message
 public struct ServerHello: Sendable {

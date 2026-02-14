@@ -2,7 +2,7 @@
 ///
 /// Manages connection-level and stream-level flow control.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 
 /// Connection and stream-level flow control

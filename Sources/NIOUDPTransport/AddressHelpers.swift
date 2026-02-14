@@ -2,7 +2,7 @@
 ///
 /// Utility extensions for working with socket addresses.
 
-import Foundation
+import FoundationEssentials
 import NIOCore
 import Synchronization
 

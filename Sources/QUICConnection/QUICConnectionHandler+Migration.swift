@@ -5,7 +5,7 @@
 /// - Connection ID lifecycle management
 /// - Stateless reset handling
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICCrypto
 

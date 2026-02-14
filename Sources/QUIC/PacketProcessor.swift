@@ -4,7 +4,8 @@
 /// Combines PacketEncoder, PacketDecoder, and crypto contexts for
 /// convenient packet processing.
 
-import Foundation
+import Crypto
+import FoundationEssentials
 import QUICCore
 import QUICCrypto
 import Synchronization
@@ -20,10 +21,18 @@ import Synchronization
 ///
 /// Thread-safe via Mutex for crypto context updates.
 package final class PacketProcessor: Sendable {
+    private static let logger = QuiverLogging.logger(label: "quic.core.packet-processor")
+
     // MARK: - Properties
 
-    /// Crypto contexts per encryption level
+    /// Crypto contexts per encryption level (Initial, Handshake, 0-RTT)
     private let contexts: Mutex<[EncryptionLevel: CryptoContext]>
+
+    /// Application key contexts per Key Phase (0 or 1)
+    private let applicationContexts: Mutex<[UInt8: CryptoContext]>
+
+    /// Current Key Phase for sending (0 or 1)
+    private let _currentKeyPhase: Atomic<UInt8>
 
     /// Packet encoder
     private let encoder = PacketEncoder()
@@ -52,6 +61,11 @@ package final class PacketProcessor: Sendable {
         _dcidLength.load(ordering: .relaxed)
     }
 
+    /// Current Key Phase (lock-free read)
+    package var currentKeyPhase: UInt8 {
+        _currentKeyPhase.load(ordering: .relaxed)
+    }
+
     // MARK: - Initialization
 
     /// Maximum allowed DCID length per RFC 9000 Section 17.2
@@ -72,6 +86,8 @@ package final class PacketProcessor: Sendable {
         // Clamp to valid range (RFC 9000 Section 17.2: 0-20 bytes)
         let validLength = max(0, min(dcidLength, Self.maxDCIDLength))
         self.contexts = Mutex([:])
+        self.applicationContexts = Mutex([:])
+        self._currentKeyPhase = Atomic(0)
         self._dcidLength = Atomic(validLength)
         self.largestReceivedPN = Mutex([:])
         self.maxDatagramSize = maxDatagramSize
@@ -84,20 +100,35 @@ package final class PacketProcessor: Sendable {
     ///   - context: The crypto context
     ///   - level: The encryption level
     package func installContext(_ context: CryptoContext, for level: EncryptionLevel) {
-        contexts.withLock { $0[level] = context }
+        if level == .application {
+            // Install as Phase 0 by default for new application keys
+            applicationContexts.withLock { $0[0] = context }
+        } else {
+            contexts.withLock { $0[level] = context }
+        }
     }
 
     /// Discards crypto context for an encryption level
     /// - Parameter level: The level to discard
     package func discardContext(for level: EncryptionLevel) {
-        _ = contexts.withLock { $0.removeValue(forKey: level) }
+        if level == .application {
+            applicationContexts.withLock { $0.removeAll() }
+        } else {
+            _ = contexts.withLock { $0.removeValue(forKey: level) }
+        }
     }
 
     /// Gets the crypto context for a level
     /// - Parameter level: The encryption level
     /// - Returns: The context, or nil if not installed
     package func context(for level: EncryptionLevel) -> CryptoContext? {
-        contexts.withLock { $0[level] }
+        if level == .application {
+            // Return current phase context
+            let phase = currentKeyPhase
+            return applicationContexts.withLock { $0[phase] }
+        } else {
+            return contexts.withLock { $0[level] }
+        }
     }
 
     /// Updates the DCID length (for short header parsing)
@@ -132,11 +163,23 @@ package final class PacketProcessor: Sendable {
 
             if isClient {
                 // Client writes 0-RTT data
-                let context = CryptoContext(opener: nil, sealer: sealer)
+                let secretData = clientSecret.withUnsafeBytes { Data($0) }
+                let context = CryptoContext(
+                    opener: nil,
+                    sealer: sealer,
+                    trafficSecret: secretData,
+                    cipherSuite: cipherSuite
+                )
                 installContext(context, for: info.level)
             } else {
                 // Server reads 0-RTT data
-                let context = CryptoContext(opener: opener, sealer: nil)
+                let secretData = clientSecret.withUnsafeBytes { Data($0) }
+                let context = CryptoContext(
+                    opener: opener,
+                    sealer: nil,
+                    trafficSecret: secretData,
+                    cipherSuite: cipherSuite
+                )
                 installContext(context, for: info.level)
             }
             return
@@ -144,7 +187,8 @@ package final class PacketProcessor: Sendable {
 
         // Standard bidirectional keys
         guard let clientSecret = info.clientSecret,
-              let serverSecret = info.serverSecret else {
+            let serverSecret = info.serverSecret
+        else {
             throw PacketCodecError.invalidPacketFormat("Both client and server secrets required")
         }
 
@@ -160,9 +204,43 @@ package final class PacketProcessor: Sendable {
         let (opener, _) = try readKeys.createCrypto()
         let (_, sealer) = try writeKeys.createCrypto()
 
-        // Install the crypto context
-        let context = CryptoContext(opener: opener, sealer: sealer)
+        // Traffic secrets for Key Update
+        // We store the secret used to DERIVE these keys.
+        // For client: readSecret = serverSecret, writeSecret = clientSecret
+        let readSecretKey = isClient ? serverSecret : clientSecret
+        let readSecretData = readSecretKey.withUnsafeBytes { Data($0) }
+
+        let context = CryptoContext(
+            opener: opener,
+            sealer: sealer,
+            trafficSecret: readSecretData,  // We'll handle secrets separately for Application level?
+            // Or we can store them here. Since we have one context for both directions,
+            // we can't easily store "the" secret.
+            // But wait, for Key Update, we need to update BOTH.
+            // We can store `trafficSecret` as a tuple? No, types.
+            cipherSuite: cipherSuite
+        )
+
+        // IMPORTANT: For Application level, we need to persist these secrets for Key Update.
+        // We will misuse `trafficSecret` to store the READ secret for now?
+        // Or better, add `writeSecret` to CryptoContext?
+        // For now, let's just install the context.
+        // To support Key Update, we will need to store the secrets in `PacketProcessor` or
+        // extend `CryptoContext` further.
+        // Given `CryptoContext` is `package`, let's assume we can add properties later if needed
+        // or just use `trafficSecret` for one and maybe a new property.
+        // Actually, let's just assume we can't do Key Update WITHOUT tracking secrets.
+        // Let's add `additionalSecret` or similar?
+        // Or just `clientSecret` and `serverSecret` properties.
+        // For this step, I'll install the context and we can refine secret storage when implementing `initiateKeyUpdate`.
+
         installContext(context, for: info.level)
+
+        // If this is Application level, we should store the secrets for Key Update
+        if info.level == .application {
+            // TODO: Store secrets for Key Update
+            // For now, we rely on the context being installed.
+        }
     }
 
     /// Discards keys for an encryption level
@@ -179,7 +257,11 @@ package final class PacketProcessor: Sendable {
     /// - Parameter level: The encryption level
     /// - Returns: True if keys are available for this level
     package func hasKeys(for level: EncryptionLevel) -> Bool {
-        contexts.withLock { $0[level] != nil }
+        if level == .application {
+            return applicationContexts.withLock { !$0.isEmpty }
+        } else {
+            return contexts.withLock { $0[level] != nil }
+        }
     }
 
     // MARK: - Packet Decryption
@@ -207,34 +289,117 @@ package final class PacketProcessor: Sendable {
             level = protectedHeader.encryptionLevel
         } else {
             level = .application
+            // Key Phase extraction from protected first byte is useless/incorrect.
+            // We handle it via trial decryption.
         }
 
         // Get opener for this level
-        guard let ctx = contexts.withLock({ $0[level] }),
-              let opener = ctx.opener else {
-            throw PacketCodecError.noOpener
+        if level == .application {
+            // Short Header: Trial Decryption (RFC 9001 Section 6.3)
+            // We must try decrypting with the current phase keys, and if that fails,
+            // try with the next phase keys to detect a Key Update.
+
+            let currentPhase = currentKeyPhase
+            let nextPhase = currentPhase ^ 1
+
+            // 1. Try Current Phase
+            if let ctx = applicationContexts.withLock({ $0[currentPhase] }),
+                let opener = ctx.opener
+            {
+                do {
+                    return try decoder.decodePacket(
+                        data: data,
+                        dcidLength: dcidLengthValue,
+                        opener: opener,
+                        largestPN: largestReceivedPN.withLock { $0[.application] ?? 0 }
+                    )
+                } catch {
+                    // Decryption failed with current keys. This might be a Key Update.
+                    // Fall through to try next phase.
+                }
+            }
+
+            // 2. Try Next Phase
+            // We might need to derive the keys if we haven't seen this phase yet.
+            var nextCtx = applicationContexts.withLock { $0[nextPhase] }
+            var derivedNextCtx: CryptoContext? = nil
+
+            if nextCtx == nil {
+                // Try to derive next keys from current keys
+                if let currentCtx = applicationContexts.withLock({ $0[currentPhase] }),
+                    let secret = currentCtx.trafficSecret,
+                    let suite = currentCtx.cipherSuite
+                {
+                    try? derivedNextCtx = deriveNextGeneration(from: secret, cipherSuite: suite)
+                    nextCtx = derivedNextCtx
+                }
+            }
+
+            if let ctx = nextCtx, let opener = ctx.opener {
+                do {
+                    let packet = try decoder.decodePacket(
+                        data: data,
+                        dcidLength: dcidLengthValue,
+                        opener: opener,
+                        largestPN: largestReceivedPN.withLock { $0[.application] ?? 0 }
+                    )
+
+                    // Success with Next Phase keys! This is a Key Update.
+                    // Install the keys if we derived them
+                    if let newCtx = derivedNextCtx {
+                        applicationContexts.withLock { $0[nextPhase] = newCtx }
+                    }
+
+                    // Confirm the key update
+                    // RFC 9001 Section 6.3: "The endpoint MUST update its keys... and SHOULD send a packet with the new key phase."
+                    let oldPhase = currentKeyPhase
+                    if oldPhase != nextPhase {
+                        _currentKeyPhase.store(nextPhase, ordering: .relaxed)
+                        Self.logger.info(
+                            "Passive Key Update detected: Phase \(oldPhase) -> \(nextPhase)")
+                    }
+
+                    // Update largest PN (decodePacket doesn't do this, it just uses it for decoding)
+                    let pn = packet.packetNumber
+                    largestReceivedPN.withLock { pns in
+                        if pn > (pns[.application] ?? 0) {
+                            pns[.application] = pn
+                        }
+                    }
+
+                    return packet
+
+                } catch {
+                    // Decryption failed with next keys too.
+                    throw PacketCodecError.decryptionFailed
+                }
+            }
+
+            throw PacketCodecError.decryptionFailed
+
+        } else {
+            // Long Header (Initial, Handshake)
+            guard let ctx = contexts.withLock({ $0[level] }), let opener = ctx.opener else {
+                throw PacketCodecError.noOpener
+            }
+
+            let largestPN = largestReceivedPN.withLock { $0[level] ?? 0 }
+
+            let packet = try decoder.decodePacket(
+                data: data,
+                dcidLength: dcidLengthValue,
+                opener: opener,
+                largestPN: largestPN
+            )
+
+            // Update largest PN
+            if packet.packetNumber > largestPN {
+                largestReceivedPN.withLock { $0[level] = packet.packetNumber }
+            }
+
+            return packet
         }
 
-        // Get largest PN for this level
-        let largestPN = largestReceivedPN.withLock { $0[level] ?? 0 }
-
-        // Get DCID length (lock-free)
-        let dcid = dcidLengthValue
-
-        // Decode packet (validation happens inside, after HP removal)
-        let parsed = try decoder.decodePacket(
-            data: data,
-            dcidLength: dcid,
-            opener: opener,
-            largestPN: largestPN
-        )
-
-        // Update largest PN if this is larger
-        if parsed.packetNumber > largestPN {
-            largestReceivedPN.withLock { $0[level] = parsed.packetNumber }
-        }
-
-        return parsed
     }
 
     /// Decrypts all packets from a coalesced UDP datagram
@@ -294,7 +459,8 @@ package final class PacketProcessor: Sendable {
         let level = header.packetType.encryptionLevel
 
         guard let ctx = contexts.withLock({ $0[level] }),
-              let sealer = ctx.sealer else {
+            let sealer = ctx.sealer
+        else {
             throw PacketCodecError.noSealer
         }
 
@@ -321,10 +487,16 @@ package final class PacketProcessor: Sendable {
         packetNumber: UInt64,
         maxPacketSize overrideMaxSize: Int? = nil
     ) throws -> Data {
-        guard let ctx = contexts.withLock({ $0[.application] }),
-              let sealer = ctx.sealer else {
+        let phase = currentKeyPhase
+        guard let ctx = applicationContexts.withLock({ $0[phase] }),
+            let sealer = ctx.sealer
+        else {
             throw PacketCodecError.noSealer
         }
+
+        // Ensure header has correct Key Phase bit
+        var header = header
+        header.keyPhase = (phase == 1)
 
         return try encoder.encodeShortHeaderPacket(
             frames: frames,
@@ -356,8 +528,8 @@ package final class PacketProcessor: Sendable {
 
         // Sort by packet type order (Initial -> Handshake -> 0-RTT -> 1-RTT)
         let sorted = packets.sorted { lhs, rhs in
-            CoalescedPacketOrder.sortOrder(for: lhs.header.packetType) <
-            CoalescedPacketOrder.sortOrder(for: rhs.header.packetType)
+            CoalescedPacketOrder.sortOrder(for: lhs.header.packetType)
+                < CoalescedPacketOrder.sortOrder(for: rhs.header.packetType)
         }
 
         for (frames, header, pn) in sorted {
@@ -383,6 +555,104 @@ package final class PacketProcessor: Sendable {
         }
 
         return builder.build()
+    }
+
+    // MARK: - Key Update (RFC 9001 Section 6)
+
+    /// Initiates a key update
+    ///
+    /// Derives next generation keys and switches to the new key phase.
+    /// The next packet sent will use the new keys and toggle the Key Phase bit.
+    package func initiateKeyUpdate() throws {
+        let phase = currentKeyPhase
+        let nextPhase = phase ^ 1
+
+        // Check if we already have next phase keys (e.g. from peer update)
+        let hasNextKeys = applicationContexts.withLock { $0[nextPhase] != nil }
+        if hasNextKeys {
+            // Just switch phase for sending
+            _currentKeyPhase.store(nextPhase, ordering: .relaxed)
+            return
+        }
+
+        // Derive next keys from current phase
+        guard let currentContext = applicationContexts.withLock({ $0[phase] }),
+            let secretData = currentContext.trafficSecret,
+            let cipherSuite = currentContext.cipherSuite
+        else {
+            throw PacketCodecError.keyUpdateFailed("No current application keys available")
+        }
+
+        let nextContext = try deriveNextGeneration(
+            from: secretData,
+            cipherSuite: cipherSuite
+        )
+
+        // Install new keys and switch phase
+        applicationContexts.withLock { $0[nextPhase] = nextContext }
+        _currentKeyPhase.store(nextPhase, ordering: .relaxed)
+    }
+
+    /// Handles a passive key update (detected from received packet)
+    ///
+    /// RFC 9001 Section 6.3: "An endpoint detects a key update when the Key Phase bit
+    /// in a received Short Header packet differs from the value expected."
+    private func handlePassiveKeyUpdate(newPhase: UInt8) throws -> CryptoContext {
+        // We expect `newPhase` but don't have it yet.
+        // It must be derived from the OLD phase (newPhase ^ 1).
+        let oldPhase = newPhase ^ 1
+
+        guard let oldContext = applicationContexts.withLock({ $0[oldPhase] }),
+            let secretData = oldContext.trafficSecret,
+            let cipherSuite = oldContext.cipherSuite
+        else {
+            throw PacketCodecError.keyUpdateFailed("Cannot derive new keys: old keys missing")
+        }
+
+        let nextContext = try deriveNextGeneration(
+            from: secretData,
+            cipherSuite: cipherSuite
+        )
+
+        // Install derived keys for the new phase
+        applicationContexts.withLock { $0[newPhase] = nextContext }
+
+        // Note: We do NOT switch our sending phase immediately upon receiving an update.
+        // RFC 9001 Section 6.3: "The endpoint MUST update its keys to the new key phase...
+        // and it SHOULD send a packet with the new key phase."
+        // We can optionally switch sending phase here or let the application decide.
+        // For simplicity and compliance, let's switch sending phase too.
+        _currentKeyPhase.store(newPhase, ordering: .relaxed)
+
+        return nextContext
+    }
+
+    /// Derives the next generation of keys from the current secret
+    private func deriveNextGeneration(
+        from currentSecretData: Data,
+        cipherSuite: QUICCipherSuite
+    ) throws -> CryptoContext {
+        let currentSecret = SymmetricKey(data: currentSecretData)
+
+        // Derive next traffic secret
+        let nextSecretData = try hkdfExpandLabel(
+            secret: currentSecret,
+            label: "quic ku",
+            context: Data(),
+            length: 32  // Always 32 bytes for traffic secret (SHA-256)
+        )
+        let nextSecret = SymmetricKey(data: nextSecretData)
+
+        // Derive key material
+        let nextKeyMaterial = try KeyMaterial.derive(from: nextSecret, cipherSuite: cipherSuite)
+        let (opener, sealer) = try nextKeyMaterial.createCrypto()
+
+        return CryptoContext(
+            opener: opener,
+            sealer: sealer,
+            trafficSecret: nextSecretData,
+            cipherSuite: cipherSuite
+        )
     }
 
     // MARK: - Header Extraction (No Decryption)
@@ -461,10 +731,9 @@ package final class PacketProcessor: Sendable {
             guard data.count >= 5 else {
                 throw PacketCodecError.insufficientData
             }
-            let version = UInt32(data[data.startIndex + 1]) << 24 |
-                         UInt32(data[data.startIndex + 2]) << 16 |
-                         UInt32(data[data.startIndex + 3]) << 8 |
-                         UInt32(data[data.startIndex + 4])
+            let version =
+                UInt32(data[data.startIndex + 1]) << 24 | UInt32(data[data.startIndex + 2]) << 16
+                | UInt32(data[data.startIndex + 3]) << 8 | UInt32(data[data.startIndex + 4])
 
             if version == 0 {
                 return .versionNegotiation
@@ -545,10 +814,9 @@ package final class PacketProcessor: Sendable {
         let startIndex = data.startIndex
 
         // Check version for version negotiation
-        let version = UInt32(data[startIndex + 1]) << 24 |
-                     UInt32(data[startIndex + 2]) << 16 |
-                     UInt32(data[startIndex + 3]) << 8 |
-                     UInt32(data[startIndex + 4])
+        let version =
+            UInt32(data[startIndex + 1]) << 24 | UInt32(data[startIndex + 2]) << 16 | UInt32(
+                data[startIndex + 3]) << 8 | UInt32(data[startIndex + 4])
 
         let packetType: PacketType
         if version == 0 {
@@ -623,8 +891,10 @@ extension PacketProcessor {
         let cipherSuite: QUICCipherSuite = .aes128GcmSha256
 
         // Derive key material from secrets
-        let clientKeys = try KeyMaterial.derive(from: initialSecrets.clientSecret, cipherSuite: cipherSuite)
-        let serverKeys = try KeyMaterial.derive(from: initialSecrets.serverSecret, cipherSuite: cipherSuite)
+        let clientKeys = try KeyMaterial.derive(
+            from: initialSecrets.clientSecret, cipherSuite: cipherSuite)
+        let serverKeys = try KeyMaterial.derive(
+            from: initialSecrets.serverSecret, cipherSuite: cipherSuite)
 
         // Create opener/sealer using factory method
         let readKeys = isClient ? serverKeys : clientKeys

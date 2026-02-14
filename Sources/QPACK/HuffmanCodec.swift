@@ -19,7 +19,7 @@
 /// per state for efficient byte-at-a-time decoding, falling back to
 /// bit-at-a-time decoding for correctness and simplicity.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Huffman Codec
 

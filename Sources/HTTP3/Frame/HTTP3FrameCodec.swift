@@ -23,7 +23,7 @@
 /// than rejected. This allows endpoints to receive frames defined by
 /// future extensions without error (RFC 9114 Section 4.1).
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICStream
 

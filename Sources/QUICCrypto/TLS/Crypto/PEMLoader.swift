@@ -3,7 +3,7 @@
 /// Provides utilities to load PEM-encoded certificates and private keys
 /// from files, converting them to DER format for use in TLS.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 
 // MARK: - PEM Loader

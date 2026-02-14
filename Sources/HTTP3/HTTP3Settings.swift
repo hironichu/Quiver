@@ -50,7 +50,7 @@
 /// Note: 0x08 is NOT reserved in HTTP/3. It was `SETTINGS_MAX_HEADER_LIST_SIZE`
 /// in HTTP/2 but is reassigned to `SETTINGS_ENABLE_CONNECT_PROTOCOL` (RFC 9220).
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - HTTP/3 Settings
 

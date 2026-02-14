@@ -3,8 +3,8 @@
 /// Manages cryptographic state for QUIC connections including
 /// key derivation and packet protection.
 
-import Foundation
 import Crypto
+import FoundationEssentials
 import QUICCore
 
 // MARK: - Crypto Errors
@@ -58,23 +58,45 @@ package struct CryptoContext: Sendable {
     /// The sealer for this level (encryption)
     package let sealer: (any PacketSealer)?
 
+    /// The traffic secret for this level (for key updates)
+    package let trafficSecret: Data?
+
+    /// The cipher suite used (for key updates)
+    package let cipherSuite: QUICCipherSuite?
+
     /// Creates an empty crypto context
     package init() {
         self.opener = nil
         self.sealer = nil
+        self.trafficSecret = nil
+        self.cipherSuite = nil
     }
 
     /// Creates a crypto context with opener and sealer
-    package init(opener: any PacketOpener, sealer: any PacketSealer) {
+    package init(
+        opener: any PacketOpener,
+        sealer: any PacketSealer,
+        trafficSecret: Data? = nil,
+        cipherSuite: QUICCipherSuite? = nil
+    ) {
         self.opener = opener
         self.sealer = sealer
+        self.trafficSecret = trafficSecret
+        self.cipherSuite = cipherSuite
     }
 
     /// Creates a crypto context with optional opener and/or sealer
     /// Used for 0-RTT where only one direction is available
-    package init(opener: (any PacketOpener)?, sealer: (any PacketSealer)?) {
+    package init(
+        opener: (any PacketOpener)?,
+        sealer: (any PacketSealer)?,
+        trafficSecret: Data? = nil,
+        cipherSuite: QUICCipherSuite? = nil
+    ) {
         self.opener = opener
         self.sealer = sealer
+        self.trafficSecret = trafficSecret
+        self.cipherSuite = cipherSuite
     }
 }
 

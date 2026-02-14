@@ -6,7 +6,7 @@
 /// Uses a token bucket algorithm where tokens accumulate at the
 /// pacing rate and are consumed when sending packets.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 
 // MARK: - Pacing Configuration

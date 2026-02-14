@@ -3,7 +3,7 @@
 /// Control stream, QPACK stream setup, and incoming stream routing
 /// (both unidirectional and bidirectional).
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 import QUICStream

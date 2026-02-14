@@ -7,10 +7,10 @@
 /// - `processConnectionClose` — handles CONNECTION_CLOSE frames
 /// - `processHandshakeDone` — handles HANDSHAKE_DONE frames
 
-import Foundation
+import FoundationEssentials
 import QUICCore
-import QUICRecovery
 import QUICCrypto
+import QUICRecovery
 import QUICStream
 import QUICTransport
 
@@ -49,7 +49,9 @@ extension QUICConnectionHandler {
                 try processCryptoFrame(cryptoFrame, level: level, result: &result)
 
             case .connectionClose(let closeFrame):
-                Self.logger.warning("CONNECTION_CLOSE received: errorCode=\(closeFrame.errorCode), frameType=\(String(describing: closeFrame.frameType)), reason=\(closeFrame.reasonPhrase), isAppError=\(closeFrame.isApplicationError)")
+                Self.logger.warning(
+                    "CONNECTION_CLOSE received: errorCode=\(closeFrame.errorCode), frameType=\(String(describing: closeFrame.frameType)), reason=\(closeFrame.reasonPhrase), isAppError=\(closeFrame.isApplicationError)"
+                )
                 processConnectionClose(closeFrame)
                 result.connectionClosed = true
 
@@ -62,7 +64,9 @@ extension QUICConnectionHandler {
                 // Check if this is a new peer-initiated stream
                 let isNewStream = !streamManager.hasStream(id: streamFrame.streamID)
                 let isRemote = isRemoteStream(streamFrame.streamID)
-                Self.logger.trace("STREAM frame: streamID=\(streamFrame.streamID), isNew=\(isNewStream), isRemote=\(isRemote), dataLen=\(streamFrame.data.count), fin=\(streamFrame.fin)")
+                Self.logger.trace(
+                    "STREAM frame: streamID=\(streamFrame.streamID), isNew=\(isNewStream), isRemote=\(isRemote), dataLen=\(streamFrame.data.count), fin=\(streamFrame.fin)"
+                )
 
                 try streamManager.receive(frame: streamFrame)
 
@@ -72,16 +76,19 @@ extension QUICConnectionHandler {
                         Self.logger.debug("Adding streamID=\(streamFrame.streamID) to newStreams")
                         result.newStreams.append(streamFrame.streamID)
                     } else {
-                        Self.logger.trace("Skipping streamID=\(streamFrame.streamID) - locally initiated")
+                        Self.logger.trace(
+                            "Skipping streamID=\(streamFrame.streamID) - locally initiated")
                     }
                 }
 
                 // Read available data from the stream
                 if let data = streamManager.read(streamID: streamFrame.streamID) {
-                    Self.logger.trace("Read \(data.count) bytes from stream \(streamFrame.streamID)")
+                    Self.logger.trace(
+                        "Read \(data.count) bytes from stream \(streamFrame.streamID)")
                     result.streamData.append((streamFrame.streamID, data))
                 } else {
-                    Self.logger.trace("No data available from stream \(streamFrame.streamID) after receive")
+                    Self.logger.trace(
+                        "No data available from stream \(streamFrame.streamID) after receive")
                 }
 
                 // Check if the stream's receive side is now complete (FIN
@@ -143,7 +150,9 @@ extension QUICConnectionHandler {
                 result.pathResponseData.append(data)
 
             case .newConnectionID(let frame):
-                Self.logger.debug("Received NEW_CONNECTION_ID: CID=\(frame.connectionID), seq=\(frame.sequenceNumber), retirePriorTo=\(frame.retirePriorTo)")
+                Self.logger.debug(
+                    "Received NEW_CONNECTION_ID: CID=\(frame.connectionID), seq=\(frame.sequenceNumber), retirePriorTo=\(frame.retirePriorTo)"
+                )
                 // Process using ConnectionIDManager
                 // RFC 9000 §5.1.1: Validates duplicate sequence numbers and limit
                 try connectionIDManager.handleNewConnectionID(frame)
@@ -201,7 +210,7 @@ extension QUICConnectionHandler {
                 ect1: wireECN.ect1Count,
                 ce: wireECN.ecnCECount
             )
-            let newCEMarks = ecnManager.processACKFeedback(peerCounts, level: level)
+            let newCEMarks = try ecnManager.processACKFeedback(peerCounts, level: level)
             if newCEMarks > 0 {
                 // CE marks indicate congestion on the path — signal the
                 // congestion controller the same way a packet loss would.

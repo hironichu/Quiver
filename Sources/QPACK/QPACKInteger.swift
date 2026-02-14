@@ -30,7 +30,7 @@
 /// +---+---------------------------+
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - QPACK Integer Codec
 

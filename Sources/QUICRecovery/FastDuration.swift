@@ -6,7 +6,7 @@
 /// Use `FastDuration` for internal calculations where performance is critical,
 /// then convert back to `Duration` for public APIs.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - FastDuration
 

@@ -42,7 +42,7 @@
 /// )
 /// ```
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 

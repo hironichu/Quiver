@@ -67,10 +67,18 @@ let package = Package(
             name: "QUICNetworkDemo",
             targets: ["QUICNetworkDemo"]
         ),
+        // Example: Alt-Svc Gateway Demo (HTTP/1.1 + HTTP/2 -> HTTP/3)
+        .executable(
+            name: "AltSvcDemo",
+            targets: ["AltSvcDemo"]
+        ),
     ],
     dependencies: [
         // NIO (used by NIOUDPTransport and other targets)
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
+
+        // NIO SSL (TLS over TCP for Alt-Svc gateway)
+        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.29.0"),
 
         // Cryptography
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.2.0"),
@@ -202,6 +210,10 @@ let package = Package(
                 "QUICCore",
                 "QUICCrypto",
                 "QUICStream",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/HTTP3"
@@ -403,6 +415,17 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICNetworkDemo"
+        ),
+        .executableTarget(
+            name: "AltSvcDemo",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "HTTP3",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/AltSvcDemo"
         ),
     ]
 )

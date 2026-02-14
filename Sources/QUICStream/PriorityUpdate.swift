@@ -2,7 +2,7 @@
 ///
 /// PRIORITY_UPDATE frame for dynamic stream reprioritization (RFC 9218 Section 7).
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - PRIORITY_UPDATE Frame (RFC 9218 Section 7)
 

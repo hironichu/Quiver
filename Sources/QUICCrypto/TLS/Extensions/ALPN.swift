@@ -8,7 +8,7 @@
 /// opaque ProtocolName<1..2^8-1>;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - ALPN Extension
 

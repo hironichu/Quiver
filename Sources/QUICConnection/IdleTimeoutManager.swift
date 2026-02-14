@@ -6,7 +6,7 @@
 /// - Provides keep-alive scheduling
 /// - Signals when timeout has occurred
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 

@@ -2,7 +2,7 @@
 ///
 /// Manages a single QUIC stream with send/receive buffers and state tracking.
 
-import Foundation
+import FoundationEssentials
 import Logging
 import Synchronization
 import QUICCore

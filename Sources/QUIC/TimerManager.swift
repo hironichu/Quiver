@@ -6,7 +6,7 @@
 /// - Idle timeout timers
 /// - Loss detection timers
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 

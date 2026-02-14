@@ -3,7 +3,7 @@
 /// An `MOQTrack` represents a single media track (e.g. video, audio).
 /// It manages the sequence of objects produced by the application.
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 

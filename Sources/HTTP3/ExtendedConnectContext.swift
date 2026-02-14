@@ -4,7 +4,7 @@
 /// allowing servers to accept or reject WebTransport and other
 /// tunneled protocol sessions.
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 

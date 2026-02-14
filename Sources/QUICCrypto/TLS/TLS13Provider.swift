@@ -4,10 +4,10 @@
 /// Allows swapping between different TLS backends (BoringSSL, etc.)
 /// and mocking for tests.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
-@preconcurrency import X509
 import SwiftASN1
+@preconcurrency import X509
 
 // MARK: - TLS 1.3 Provider Protocol
 
@@ -107,6 +107,11 @@ public protocol TLS13Provider: Sendable {
 
     /// Whether 0-RTT was attempted in this handshake
     var is0RTTAttempted: Bool { get }
+
+    /// Resets the TLS state for a new handshake
+    ///
+    /// Required for Version Negotiation retry.
+    func reset() async throws
 }
 
 // MARK: - Certificate Validator
@@ -398,8 +403,8 @@ public struct TLSConfiguration: Sendable {
 
     /// Whether this configuration has certificate material for server authentication
     public var hasCertificate: Bool {
-        (certificateChain != nil && signingKey != nil) ||
-        (certificatePath != nil && privateKeyPath != nil)
+        (certificateChain != nil && signingKey != nil)
+            || (certificatePath != nil && privateKeyPath != nil)
     }
 
     // MARK: - PEM Loading
@@ -412,7 +417,8 @@ public struct TLSConfiguration: Sendable {
     /// - Throws: `PEMLoader.PEMError` if loading fails
     public mutating func loadFromPaths() throws {
         guard let certPath = certificatePath,
-              let keyPath = privateKeyPath else {
+            let keyPath = privateKeyPath
+        else {
             return  // Nothing to load
         }
 

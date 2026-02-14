@@ -6,7 +6,7 @@
 /// - `cryptoContext` — retrieves the crypto context for an encryption level
 /// - `discardLevel` — discards keys and state for an encryption level
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICCrypto
 import QUICRecovery

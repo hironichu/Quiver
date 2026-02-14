@@ -2,7 +2,7 @@
 ///
 /// High-level interface for QUIC connections.
 
-import Foundation
+import FoundationEssentials
 import NIOCore
 import QUICCore
 

@@ -2,7 +2,7 @@
 ///
 /// Manages the lifecycle of individual QUIC streams.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 
 // MARK: - Stream ID

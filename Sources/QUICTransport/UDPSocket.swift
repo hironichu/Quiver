@@ -12,7 +12,7 @@
 /// Outgoing ECN marking is set via `IP_TOS` / `IPV6_TCLASS` socket
 /// options at socket creation time (see ``PlatformSocketOptions``).
 
-import Foundation
+import FoundationEssentials
 import NIOCore
 import NIOUDPTransport
 import QUICCore

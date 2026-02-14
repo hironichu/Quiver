@@ -2,7 +2,7 @@
 ///
 /// Configuration options for UDP transport.
 
-import Foundation
+import FoundationEssentials
 
 /// Configuration for UDP transport.
 public struct UDPConfiguration: Sendable {

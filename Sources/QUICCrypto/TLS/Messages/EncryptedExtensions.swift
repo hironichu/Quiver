@@ -6,7 +6,7 @@
 /// } EncryptedExtensions;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 /// TLS 1.3 EncryptedExtensions message
 public struct EncryptedExtensions: Sendable {

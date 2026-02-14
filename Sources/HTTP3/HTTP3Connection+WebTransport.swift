@@ -7,7 +7,7 @@
 /// - Unidirectional stream routing
 /// - Datagram routing
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 

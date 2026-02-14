@@ -45,7 +45,7 @@
 /// let encoded = encoder.encode(headers)
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - QPACK Encoder
 

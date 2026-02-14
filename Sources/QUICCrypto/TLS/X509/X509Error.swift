@@ -2,7 +2,7 @@
 ///
 /// Defines errors that can occur during X.509 certificate parsing and validation.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - X.509 Errors
 

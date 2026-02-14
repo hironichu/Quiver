@@ -10,14 +10,14 @@
 /// so that ECN counts are tracked per encryption level for ACK frames
 /// (RFC 9000 §13.4).
 
-import Foundation
-import Synchronization
+import FoundationEssentials
 import Logging
+import NIOUDPTransport
+import QUICConnection
 import QUICCore
 import QUICCrypto
-import QUICConnection
 @_exported import QUICTransport
-import NIOUDPTransport
+import Synchronization
 
 // MARK: - QUIC Endpoint
 
@@ -137,12 +137,12 @@ public actor QUICEndpoint {
             case .development(let factory):
                 return factory()
             #if DEBUG
-            case .testing:
-                logger.warning(
-                    "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
-                    metadata: ["isClient": "\(isClient)"]
-                )
-                return MockTLSProvider(configuration: TLSConfiguration())
+                case .testing:
+                    logger.warning(
+                        "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
+                        metadata: ["isClient": "\(isClient)"]
+                    )
+                    return MockTLSProvider(configuration: TLSConfiguration())
             #endif
             }
         }
@@ -168,7 +168,10 @@ public actor QUICEndpoint {
             tlsConfig.trustedCACertificates = derRoots
             logger.debug(
                 "TLS trust source selected: PEM CA bundle",
-                metadata: ["pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+                metadata: [
+                    "pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)",
+                    "isClient": "\(isClient)",
+                ]
             )
         } else if configuration.useSystemTrustStore {
             try tlsConfig.useSystemTrustStore()
@@ -176,7 +179,7 @@ public actor QUICEndpoint {
                 "TLS trust source selected: system trust store",
                 metadata: [
                     "rootCount": "\(tlsConfig.trustedRootCertificates?.count ?? 0)",
-                    "isClient": "\(isClient)"
+                    "isClient": "\(isClient)",
                 ]
             )
         } else {
@@ -212,17 +215,17 @@ public actor QUICEndpoint {
             case .development(let factory):
                 return factory()
             #if DEBUG
-            case .testing:
-                logger.warning(
-                    "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
-                    metadata: ["isClient": "\(isClient)"]
-                )
-                var tlsConfig = TLSConfiguration()
-                tlsConfig.sessionTicket = sessionTicket
-                if let maxSize = maxEarlyDataSize {
-                    tlsConfig.maxEarlyDataSize = maxSize
-                }
-                return MockTLSProvider(configuration: tlsConfig)
+                case .testing:
+                    logger.warning(
+                        "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
+                        metadata: ["isClient": "\(isClient)"]
+                    )
+                    var tlsConfig = TLSConfiguration()
+                    tlsConfig.sessionTicket = sessionTicket
+                    if let maxSize = maxEarlyDataSize {
+                        tlsConfig.maxEarlyDataSize = maxSize
+                    }
+                    return MockTLSProvider(configuration: tlsConfig)
             #endif
             }
         }
@@ -252,7 +255,10 @@ public actor QUICEndpoint {
             tlsConfig.trustedCACertificates = derRoots
             logger.debug(
                 "TLS trust source selected: PEM CA bundle",
-                metadata: ["pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+                metadata: [
+                    "pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)",
+                    "isClient": "\(isClient)",
+                ]
             )
         } else if configuration.useSystemTrustStore {
             try tlsConfig.useSystemTrustStore()
@@ -260,7 +266,7 @@ public actor QUICEndpoint {
                 "TLS trust source selected: system trust store",
                 metadata: [
                     "rootCount": "\(tlsConfig.trustedRootCertificates?.count ?? 0)",
-                    "isClient": "\(isClient)"
+                    "isClient": "\(isClient)",
                 ]
             )
         } else {
@@ -373,6 +379,22 @@ public actor QUICEndpoint {
             return responses
 
         case .notFound(let dcid):
+            // RFC 9000 Section 10.3: Send Stateless Reset if possible (Server only, Short Header)
+            if isServer,
+                let key = configuration.statelessResetKey,
+                let first = data.first, (first & 0x80) == 0
+            {  // Short header check
+
+                // Generate deterministic token (stateless)
+                let token = StatelessResetToken.generate(staticKey: key, connectionID: dcid)
+                // Minimum size 43 bytes to be distinguishable from valid packets
+                let packet = StatelessResetPacket(token: token, minimumSize: 43)
+                let responseData = packet.encode()
+
+                try await send(responseData, to: remoteAddress)
+                logger.debug("Sent Stateless Reset to \(remoteAddress) for DCID=\(dcid)")
+                return []
+            }
             throw QUICEndpointError.connectionNotFound(dcid)
 
         case .invalid(let error):
@@ -445,7 +467,9 @@ public actor QUICEndpoint {
     // MARK: - Send Callback
 
     /// Sets a callback for sending packets (for testing)
-    public func setSendCallback(_ callback: @escaping @Sendable (Data, SocketAddress) async throws -> Void) {
+    public func setSendCallback(
+        _ callback: @escaping @Sendable (Data, SocketAddress) async throws -> Void
+    ) {
         sendCallback = callback
     }
 

@@ -13,7 +13,7 @@
 /// } ServerNameList;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Server Name Extension
 

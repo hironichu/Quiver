@@ -3,7 +3,7 @@
 /// Server-side TLS 1.3 state machine extracted from TLS13Handler.
 /// Handles the full server handshake flow including PSK, HRR, and mTLS.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import Synchronization
 import QUICCore

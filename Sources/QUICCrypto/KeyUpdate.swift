@@ -3,7 +3,7 @@
 /// Tracks AEAD confidentiality and integrity limits to determine
 /// when key updates are required. Also manages key update state.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 
 // MARK: - AEAD Limits

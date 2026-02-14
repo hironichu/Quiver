@@ -26,6 +26,8 @@ public enum PacketCodecError: Error, Sendable {
     case packetTooLarge(size: Int, maxSize: Int)
     /// Header protection failed
     case headerProtectionFailed
+    /// Key update failed
+    case keyUpdateFailed(String)
 }
 
 // MARK: - Parsed Packet
@@ -177,7 +179,8 @@ package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
         if padToMinimum && header.packetType == .initial {
             // Estimate final packet size: header + PN + payload + AEAD tag
             let estimatedHeaderSize = estimateLongHeaderSize(header)
-            let currentSize = estimatedHeaderSize + header.packetNumberLength + payload.count + Self.aeadTagSize
+            let currentSize =
+                estimatedHeaderSize + header.packetNumberLength + payload.count + Self.aeadTagSize
 
             if currentSize < Self.initialPacketMinSize {
                 let paddingNeeded = Self.initialPacketMinSize - currentSize
@@ -218,7 +221,8 @@ package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
         let sampleOffset = pnOffset + 4
 
         guard packet.count >= sampleOffset + 16 else {
-            throw PacketCodecError.invalidPacketFormat("Packet too short for header protection sample")
+            throw PacketCodecError.invalidPacketFormat(
+                "Packet too short for header protection sample")
         }
 
         let sample = packet[sampleOffset..<(sampleOffset + 16)]
@@ -291,7 +295,8 @@ package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
         let sampleOffset = pnOffset + 4
 
         guard packet.count >= sampleOffset + 16 else {
-            throw PacketCodecError.invalidPacketFormat("Packet too short for header protection sample")
+            throw PacketCodecError.invalidPacketFormat(
+                "Packet too short for header protection sample")
         }
 
         let sample = packet[sampleOffset..<(sampleOffset + 16)]
@@ -355,9 +360,9 @@ package struct PacketEncoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
     /// Estimates the header size (without Length field) for Initial packet padding calculation
     private func estimateLongHeaderSize(_ header: LongHeader) -> Int {
         var size = 1  // First byte
-        size += 4     // Version
+        size += 4  // Version
         size += 1 + header.destinationConnectionID.length  // DCID length + DCID
-        size += 1 + header.sourceConnectionID.length       // SCID length + SCID
+        size += 1 + header.sourceConnectionID.length  // SCID length + SCID
 
         // Token (Initial packets only)
         if header.packetType == .initial {
@@ -409,11 +414,15 @@ package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
         let isLongHeader = (firstByte & 0x80) != 0
 
         if isLongHeader {
-            Self.logger.trace("Decoding Long Header packet (firstByte: 0x\(String(format: "%02X", firstByte)))")
+            Self.logger.trace(
+                "Decoding Long Header packet (firstByte: 0x\(String(format: "%02X", firstByte)))")
             return try decodeLongHeaderPacket(data: data, opener: opener, largestPN: largestPN)
         } else {
-            Self.logger.trace("Decoding Short Header packet (1-RTT) (firstByte: 0x\(String(format: "%02X", firstByte)))")
-            return try decodeShortHeaderPacket(data: data, dcidLength: dcidLength, opener: opener, largestPN: largestPN)
+            Self.logger.trace(
+                "Decoding Short Header packet (1-RTT) (firstByte: 0x\(String(format: "%02X", firstByte)))"
+            )
+            return try decodeShortHeaderPacket(
+                data: data, dcidLength: dcidLength, opener: opener, largestPN: largestPN)
         }
     }
 
@@ -427,7 +436,8 @@ package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
         let (protectedHeader, headerLength) = try ProtectedLongHeader.parse(from: data)
 
         // Handle special packets without encryption
-        if protectedHeader.packetType == .versionNegotiation || protectedHeader.packetType == .retry {
+        if protectedHeader.packetType == .versionNegotiation || protectedHeader.packetType == .retry
+        {
             // For unprotected packets, create header directly
             let actualPacketType: PacketType
             switch protectedHeader.packetType {
@@ -493,7 +503,8 @@ package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
 
         var truncatedPN: UInt64 = 0
         for i in 0..<actualPNLength {
-            truncatedPN = (truncatedPN << 8) | UInt64(unprotectedPNBytes[unprotectedPNBytes.startIndex + i])
+            truncatedPN =
+                (truncatedPN << 8) | UInt64(unprotectedPNBytes[unprotectedPNBytes.startIndex + i])
         }
         let packetNumber = PacketNumberEncoding.decode(
             truncated: truncatedPN,
@@ -569,7 +580,8 @@ package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
         }
 
         // Step 1: Parse protected header (no validation of protected bits)
-        let (protectedHeader, headerLength) = try ProtectedShortHeader.parse(from: data, dcidLength: dcidLength)
+        let (protectedHeader, headerLength) = try ProtectedShortHeader.parse(
+            from: data, dcidLength: dcidLength)
 
         guard data.count >= headerLength + 4 + 16 else {  // header + max PN (4) + sample (16)
             throw PacketCodecError.insufficientData
@@ -603,7 +615,8 @@ package struct PacketDecoder<Codec: FrameEncoder & FrameDecoder & Sendable>: Sen
 
         var truncatedPN: UInt64 = 0
         for i in 0..<actualPNLength {
-            truncatedPN = (truncatedPN << 8) | UInt64(unprotectedPNBytes[unprotectedPNBytes.startIndex + i])
+            truncatedPN =
+                (truncatedPN << 8) | UInt64(unprotectedPNBytes[unprotectedPNBytes.startIndex + i])
         }
         let packetNumber = PacketNumberEncoding.decode(
             truncated: truncatedPN,
@@ -684,7 +697,7 @@ extension PacketEncoder {
         payloadLength: Int = 0
     ) -> Int {
         var overhead = 1  // First byte
-        overhead += 4     // Version
+        overhead += 4  // Version
         overhead += 1 + dcidLength  // DCID length + DCID
         overhead += 1 + scidLength  // SCID length + SCID
 

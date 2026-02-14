@@ -7,7 +7,7 @@
 /// - `cleanupStreamPriority` — cleans up tracking for closed streams
 /// - Priority scheduling helpers for response stream ordering
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 import QUICStream

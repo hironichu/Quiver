@@ -3,7 +3,7 @@
 /// Types used by `QUICConnectionHandler` for frame processing results,
 /// outbound packet queuing, timer actions, and connection close errors.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICRecovery
 

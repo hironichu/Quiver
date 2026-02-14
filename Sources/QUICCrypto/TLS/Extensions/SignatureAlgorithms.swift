@@ -6,7 +6,7 @@
 /// } SignatureSchemeList;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Signature Algorithms Extension
 

@@ -2,7 +2,7 @@
 ///
 /// Supports X25519 and P-256 (secp256r1) key agreement.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 
 // MARK: - Key Exchange

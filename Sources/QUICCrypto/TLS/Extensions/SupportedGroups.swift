@@ -6,7 +6,7 @@
 /// } NamedGroupList;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Supported Groups Extension
 

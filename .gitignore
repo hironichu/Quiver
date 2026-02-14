@@ -67,3 +67,6 @@ docs/_build/
 *.tmp
 *.temp
 *.log
+
+certs/spark.bishop-monitor.ts.net.crt
+certs/wuse

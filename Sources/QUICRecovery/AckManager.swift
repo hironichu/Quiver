@@ -3,7 +3,7 @@
 /// Manages received packets and generates ACK frames for a single packet number space.
 /// Optimized with interval-based tracking for efficient ACK range generation.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 

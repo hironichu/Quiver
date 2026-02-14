@@ -8,7 +8,7 @@
 /// - `sendResponseStreaming` — sends HEADERS then chunked DATA via writer + FIN
 /// - `sendResponseHeadersOnly` — sends response headers without FIN (Extended CONNECT)
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUIC
 import QUICCore

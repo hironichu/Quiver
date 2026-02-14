@@ -6,7 +6,7 @@
 /// - Warning: This provider is only available in DEBUG builds.
 ///   It provides no security and must never be used in production.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import Synchronization
 import QUICCore

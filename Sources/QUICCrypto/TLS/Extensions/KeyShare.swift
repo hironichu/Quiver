@@ -22,7 +22,7 @@
 /// } KeyShareEntry;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Key Share Entry
 

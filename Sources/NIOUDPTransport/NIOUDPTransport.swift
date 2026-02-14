@@ -2,17 +2,22 @@
 ///
 /// SwiftNIO-based implementation of UDP transport.
 
-import Foundation
+import FoundationEssentials
 import NIOCore
 import NIOPosix
 import Synchronization
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
+    import Darwin
+#elseif os(Linux)
+    #if canImport(Glibc)
+        import Glibc
+    #elseif canImport(Musl)
+        import Musl
+    #endif
+#elseif os(Windows)
+    import ucrt
 #endif
-
 /// SwiftNIO-based UDP transport implementation.
 ///
 /// Provides both unicast and multicast UDP communication using SwiftNIO's

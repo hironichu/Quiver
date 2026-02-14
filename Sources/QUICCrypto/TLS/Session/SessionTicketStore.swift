@@ -3,7 +3,7 @@
 /// Server-side storage for session tickets to enable session resumption.
 /// Stores encrypted session state that can be used to derive PSKs.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import Synchronization
 

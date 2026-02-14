@@ -11,7 +11,7 @@
 /// layer (`QUICConfiguration.maxUDPPayloadSize`) and plumbed through
 /// `CongestionControllerFactory.makeCongestionController(maxDatagramSize:)`.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 
 /// RFC 9002 loss detection constants

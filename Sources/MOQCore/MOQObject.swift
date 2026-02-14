@@ -3,7 +3,7 @@
 /// Defines the core data structures for Media Over QUIC (MOQ).
 /// Based on draft-ietf-moq-transport.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 
 /// Header for a MOQ Object.

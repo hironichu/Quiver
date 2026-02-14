@@ -2,7 +2,7 @@
 ///
 /// Defines the interface for UDP communication.
 
-import Foundation
+import FoundationEssentials
 import NIOCore
 
 /// An incoming datagram with data and sender address.

@@ -9,7 +9,7 @@
 /// - Binary search for O(log n) packet lookup
 /// - Batch operations for reduced overhead
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 

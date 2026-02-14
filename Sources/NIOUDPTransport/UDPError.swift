@@ -2,7 +2,7 @@
 ///
 /// Errors that can occur during UDP transport operations.
 
-import Foundation
+import FoundationEssentials
 
 /// Errors that can occur during UDP operations.
 public enum UDPError: Error, Sendable {

@@ -2,7 +2,7 @@
 ///
 /// Configuration options for QUIC connections.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICCrypto
 import QUICRecovery
@@ -38,11 +38,11 @@ public enum QUICSecurityMode: Sendable {
     case development(tlsProviderFactory: @Sendable () -> any TLS13Provider)
 
     #if DEBUG
-    /// Testing environment: Uses MockTLSProvider
-    /// - Warning: Never use in production. This mode disables encryption.
-    /// - Note: This case is only available in DEBUG builds, matching the
-    ///   `QUICConfiguration.testing()` factory method guard.
-    case testing
+        /// Testing environment: Uses MockTLSProvider
+        /// - Warning: Never use in production. This mode disables encryption.
+        /// - Note: This case is only available in DEBUG builds, matching the
+        ///   `QUICConfiguration.testing()` factory method guard.
+        case testing
     #endif
 }
 
@@ -267,6 +267,14 @@ public struct QUICConfiguration: Sendable {
     /// Preferred connection ID length (default: 8)
     public var connectionIDLength: Int
 
+    // MARK: - Stateless Reset
+
+    /// Static key for generating deterministic Stateless Reset Tokens (RFC 9000 Section 10.3).
+    ///
+    /// If set, the server can generate valid Stateless Reset tokens for ANY connection ID,
+    /// allowing it to reset connections it has lost state for.
+    public var statelessResetKey: Data?
+
     // MARK: - Version
 
     /// QUIC version to use
@@ -387,6 +395,7 @@ public struct QUICConfiguration: Sendable {
         self.maxAckDelay = .milliseconds(25)
         self.ackDelayExponent = 3
         self.connectionIDLength = 8
+        self.statelessResetKey = nil
         self.version = .v1
         self.alpn = ["h3"]
         self.userTrustedCACertificatesDER = nil
@@ -419,7 +428,8 @@ public struct QUICConfiguration: Sendable {
             case .payloadSizeBelowMinimum(let configured, let minimum):
                 return "maxUDPPayloadSize (\(configured)) < RFC 9000 minimum (\(minimum))"
             case .socketDatagramSizeTooSmall(let socketMax, let quicPayload):
-                return "socketConfiguration.maxDatagramSize (\(socketMax)) < maxUDPPayloadSize (\(quicPayload))"
+                return
+                    "socketConfiguration.maxDatagramSize (\(socketMax)) < maxUDPPayloadSize (\(quicPayload))"
             case .connectionIDLengthOutOfRange(let length):
                 return "connectionIDLength (\(length)) outside valid range 0...20"
             }
@@ -502,27 +512,27 @@ public struct QUICConfiguration: Sendable {
     }
 
     #if DEBUG
-    /// Creates a testing configuration with MockTLSProvider.
-    ///
-    /// - Warning: **Never use in production.** This mode disables TLS encryption
-    ///   and uses a mock provider that does not provide any security.
-    ///
-    /// - Returns: A configuration with testing security mode
-    ///
-    /// ## Example
-    ///
-    /// ```swift
-    /// // Only in unit tests
-    /// let config = QUICConfiguration.testing()
-    /// ```
-    ///
-    /// - Note: This method is only available in DEBUG builds.
-    @available(*, message: "Testing mode disables TLS encryption. Never use in production.")
-    public static func testing() -> QUICConfiguration {
-        var config = QUICConfiguration()
-        config.securityMode = .testing
-        return config
-    }
+        /// Creates a testing configuration with MockTLSProvider.
+        ///
+        /// - Warning: **Never use in production.** This mode disables TLS encryption
+        ///   and uses a mock provider that does not provide any security.
+        ///
+        /// - Returns: A configuration with testing security mode
+        ///
+        /// ## Example
+        ///
+        /// ```swift
+        /// // Only in unit tests
+        /// let config = QUICConfiguration.testing()
+        /// ```
+        ///
+        /// - Note: This method is only available in DEBUG builds.
+        @available(*, message: "Testing mode disables TLS encryption. Never use in production.")
+        public static func testing() -> QUICConfiguration {
+            var config = QUICConfiguration()
+            config.securityMode = .testing
+            return config
+        }
     #endif
 }
 
@@ -541,8 +551,9 @@ extension TransportParameters {
         self.initialMaxStreamsBidi = config.initialMaxStreamsBidi
         self.initialMaxStreamsUni = config.initialMaxStreamsUni
         self.ackDelayExponent = config.ackDelayExponent
-        self.maxAckDelay = UInt64(config.maxAckDelay.components.seconds * 1000 +
-                                   config.maxAckDelay.components.attoseconds / 1_000_000_000_000_000)
+        self.maxAckDelay = UInt64(
+            config.maxAckDelay.components.seconds * 1000 + config.maxAckDelay.components.attoseconds
+                / 1_000_000_000_000_000)
         self.initialSourceConnectionID = sourceConnectionID
 
         // RFC 9221: Advertise max_datagram_frame_size when datagrams are enabled

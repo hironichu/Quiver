@@ -8,7 +8,7 @@
 /// Transcript-Hash(M1, M2, ... Mn) = Hash(M1 || M2 || ... || Mn)
 /// ```
 
-import Foundation
+import FoundationEssentials
 import Crypto
 
 // MARK: - Transcript Hash

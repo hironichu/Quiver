@@ -14,7 +14,7 @@
 /// } SupportedVersions;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Supported Versions Extension (wrapper)
 

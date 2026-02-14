@@ -17,7 +17,7 @@
 /// } Alert;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Alert Level
 

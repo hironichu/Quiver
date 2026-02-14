@@ -17,7 +17,7 @@
 /// } CertificateEntry;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Certificate Entry
 

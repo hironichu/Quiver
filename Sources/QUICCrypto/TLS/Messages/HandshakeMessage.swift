@@ -9,7 +9,7 @@
 /// } Handshake;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Handshake Type
 

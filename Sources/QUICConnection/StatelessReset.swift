@@ -4,7 +4,7 @@
 /// has lost state and cannot process a packet. The reset is indicated by
 /// a 16-byte token at the end of a UDP datagram.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import Crypto
 import QUICCore

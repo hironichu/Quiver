@@ -3,7 +3,7 @@
 /// Routes incoming packets to the appropriate connection based on
 /// Destination Connection ID (DCID).
 
-import Foundation
+import FoundationEssentials
 import Logging
 import Synchronization
 import QUICCore

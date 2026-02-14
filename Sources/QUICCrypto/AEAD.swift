@@ -3,7 +3,7 @@
 /// QUIC uses AES-128-GCM or ChaCha20-Poly1305 for packet protection.
 /// This implementation provides AES-128-GCM.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import QUICCore
 

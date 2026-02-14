@@ -3,7 +3,7 @@
 /// Defines priority parameters for QUIC stream scheduling.
 /// Based on the HTTP/3 Extensible Priority Scheme.
 
-import Foundation
+import FoundationEssentials
 
 /// Priority parameters for stream scheduling
 ///

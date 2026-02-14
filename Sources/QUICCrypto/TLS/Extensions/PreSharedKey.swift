@@ -26,7 +26,7 @@
 /// } PreSharedKeyExtension;
 /// ```
 
-import Foundation
+import FoundationEssentials
 import Crypto
 
 // MARK: - PSK Identity

@@ -3,7 +3,7 @@
 /// Provides protection against replay attacks for 0-RTT early data.
 /// Servers should use this to detect and reject replayed 0-RTT requests.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import Crypto
 

@@ -30,7 +30,7 @@
 ///
 /// Unknown stream types MUST be ignored for forward compatibility.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Stream Type Identifiers
 

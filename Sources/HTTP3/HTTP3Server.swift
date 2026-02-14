@@ -1,5 +1,3 @@
-import Logging
-
 /// HTTP/3 Server (RFC 9114)
 ///
 /// A server that listens for incoming QUIC connections and handles
@@ -223,6 +221,11 @@ public actor HTTP3Server {
     /// `init(_:maxConnections:)` initializer.
     private let serverOptions: HTTP3ServerOptions?
 
+    /// Alt-Svc gateway (HTTP/1.1 + HTTP/2 over TCP) that advertises
+    /// HTTP/3 via the `Alt-Svc` header. Created by `listenAll()`.
+    /// Protected by `HTTP3Server` actor isolation.
+    private var gateway: AltSvcGateway?
+
     // MARK: - Initialization
 
     /// Creates an HTTP/3 server with options.
@@ -429,6 +432,13 @@ public actor HTTP3Server {
         guard state == .listening else { return }
 
         state = .stopping
+
+        // Stop the Alt-Svc gateway first (TCP listeners)
+        if let gw = gateway {
+            await gw.stop()
+            gateway = nil
+            Self.logger.info("Alt-Svc gateway shut down")
+        }
 
         // Cancel the listener task if running
         listenerTask?.cancel()
@@ -684,6 +694,77 @@ public actor HTTP3Server {
             port: options.port,
             quicConfiguration: quicConfig
         )
+    }
+
+    /// Starts both the Alt-Svc gateway (TCP) and the HTTP/3 server (QUIC).
+    ///
+    /// 1. Validates options.
+    /// 2. If `gatewayHTTPPort` or `gatewayHTTPSPort` is set, starts the
+    ///    `AltSvcGateway` on those TCP ports.
+    /// 3. Starts the QUIC HTTP/3 server via `listen()`.
+    ///
+    /// The gateway advertises `Alt-Svc: h3=":PORT"` on the HTTPS
+    /// listener so browsers discover HTTP/3 automatically.
+    ///
+    /// Only usable when the server was created with `init(options:)`.
+    ///
+    /// - Throws: `HTTP3ServerOptions.ValidationError`, `AltSvcGatewayError`,
+    ///   or any TLS/QUIC/socket error
+    ///
+    /// ## Usage
+    ///
+    /// ```swift
+    /// let options = HTTP3ServerOptions(
+    ///     certificatePath: "cert.pem",
+    ///     privateKeyPath: "key.pem",
+    ///     gatewayHTTPPort: 80,
+    ///     gatewayHTTPSPort: 443
+    /// )
+    /// let server = HTTP3Server(options: options)
+    ///
+    /// await server.onRequest { context in
+    ///     try await context.respond(status: 200, Data("OK".utf8))
+    /// }
+    ///
+    /// try await server.listenAll()
+    /// ```
+    public func listenAll() async throws {
+        guard let options = serverOptions else {
+            throw HTTP3Error(
+                code: .internalError,
+                reason: "listenAll() requires HTTP3ServerOptions. "
+                    + "Use init(options:) or call listen(host:port:quicConfiguration:) instead."
+            )
+        }
+
+        try options.validate()
+
+        // Start the Alt-Svc gateway if configured
+        if let gatewayConfig = options.buildGatewayConfiguration() {
+            let gw = AltSvcGateway(configuration: gatewayConfig)
+            try await gw.start()
+            self.gateway = gw
+            Self.logger.info(
+                "Alt-Svc gateway started",
+                metadata: [
+                    "httpPort": "\(gatewayConfig.httpPort.map(String.init) ?? "disabled")",
+                    "httpsPort": "\(gatewayConfig.httpsPort.map(String.init) ?? "disabled")",
+                    "h3Port": "\(gatewayConfig.h3Port)",
+                ]
+            )
+        }
+
+        // Start the QUIC HTTP/3 server (blocks until stop())
+        do {
+            try await listen()
+        } catch {
+            // Tear down gateway on QUIC startup failure
+            if let gw = gateway {
+                await gw.stop()
+                gateway = nil
+            }
+            throw error
+        }
     }
 
     /// Starts the HTTP/3 server (advanced).

@@ -3,7 +3,7 @@
 /// Manages key derivation for QUIC connections across all encryption levels.
 /// Handles initial, handshake, application, and key update secrets.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import QUICCore
 

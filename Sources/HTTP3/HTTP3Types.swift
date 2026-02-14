@@ -24,7 +24,7 @@
 /// Pseudo-headers MUST appear before regular headers and
 /// MUST NOT appear in trailers (RFC 9114 Section 4.1.2).
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Trailer Validation
 

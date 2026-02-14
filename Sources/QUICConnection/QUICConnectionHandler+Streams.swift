@@ -5,7 +5,7 @@
 /// - Stream state queries (isReceiveComplete, isResetByPeer, hasData, etc.)
 /// - Datagram support (RFC 9221)
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 import QUICStream
 

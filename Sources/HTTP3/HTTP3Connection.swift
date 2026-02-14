@@ -41,7 +41,7 @@
 /// accessed serially. This is consistent with Swift 6 concurrency
 /// requirements and the project's design principles.
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 import QUICStream

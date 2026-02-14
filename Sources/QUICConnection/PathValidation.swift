@@ -4,7 +4,7 @@
 /// An endpoint validates a path by sending a PATH_CHALLENGE frame and receiving
 /// a PATH_RESPONSE frame containing the same data.
 
-import Foundation
+import FoundationEssentials
 import Synchronization
 import QUICCore
 import Crypto

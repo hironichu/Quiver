@@ -39,7 +39,7 @@
 /// }
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - QPACK Decoder
 

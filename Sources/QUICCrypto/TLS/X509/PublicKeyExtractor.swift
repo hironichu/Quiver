@@ -3,7 +3,7 @@
 /// Extracts public keys from X.509 certificates and converts them to VerificationKey
 /// for signature verification.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 @preconcurrency import X509
 import SwiftASN1

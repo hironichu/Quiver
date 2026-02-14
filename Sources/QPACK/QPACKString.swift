@@ -21,7 +21,7 @@
 /// strings for simplicity. Decoding supports both raw and Huffman-encoded
 /// strings.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - QPACK String Codec
 

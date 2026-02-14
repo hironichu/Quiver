@@ -3,7 +3,7 @@
 /// Parser for the RFC 9218 Priority header field value.
 /// Extracted from StreamScheduler.swift for file size reduction.
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - RFC 9218 Priority Header Parsing
 

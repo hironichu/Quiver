@@ -25,7 +25,7 @@
 /// }
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Static Table Entry
 

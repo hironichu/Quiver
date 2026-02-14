@@ -4,7 +4,7 @@
 /// Handles packet processing, loss detection, ACK generation,
 /// and TLS handshake coordination.
 
-import Foundation
+import FoundationEssentials
 import Logging
 import QUICCore
 import QUICCrypto
@@ -49,10 +49,10 @@ package final class QUICConnectionHandler: Sendable {
     package let maxDatagramSize: Int
 
     /// Connection state
-    let connectionState: Mutex<ConnectionState>
+    package let connectionState: Mutex<ConnectionState>
 
     /// Packet number space manager (loss detection + ACK management)
-    let pnSpaceManager: PacketNumberSpaceManager
+    package let pnSpaceManager: PacketNumberSpaceManager
 
     /// Congestion controller
     let congestionController: any CongestionController
@@ -96,7 +96,7 @@ package final class QUICConnectionHandler: Sendable {
     let connectionIDManager: ConnectionIDManager
 
     /// Stateless reset manager
-    let statelessResetManager: StatelessResetManager
+    package let statelessResetManager: StatelessResetManager
 
     /// ECN manager for tracking congestion signals (RFC 9000 §13.4).
     ///

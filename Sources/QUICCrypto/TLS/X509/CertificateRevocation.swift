@@ -3,7 +3,7 @@
 /// Provides OCSP and CRL-based certificate revocation checking.
 /// Designed for QUIC/TLS where online checking may impact handshake latency.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 @preconcurrency import X509
 import SwiftASN1

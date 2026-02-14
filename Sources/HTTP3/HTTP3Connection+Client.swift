@@ -7,7 +7,7 @@
 /// - `readResponseStreaming` — reads response HEADERS, returns body as AsyncStream
 /// - `readExtendedConnectResponse` — reads only the response HEADERS (no FIN wait)
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 import QPACK

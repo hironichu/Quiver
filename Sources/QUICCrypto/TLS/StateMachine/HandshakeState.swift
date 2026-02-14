@@ -2,7 +2,7 @@
 ///
 /// Defines the state machine for TLS 1.3 handshake.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 
 // MARK: - Client Handshake State

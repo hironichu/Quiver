@@ -161,6 +161,9 @@ public enum QUICError: Error, Sendable {
 
     /// Already connected
     case alreadyConnected
+
+    /// Protocol violation
+    case protocolViolation(String)
 }
 
 // MARK: - CustomStringConvertible
@@ -169,7 +172,8 @@ extension QUICError: CustomStringConvertible {
     public var description: String {
         switch self {
         case .connectionClosed(let errorCode, let reason):
-            return "Connection closed (error: 0x\(String(format: "%x", errorCode)), reason: \(reason))"
+            return
+                "Connection closed (error: 0x\(String(format: "%x", errorCode)), reason: \(reason))"
         case .connectionTimeout:
             return "Connection timed out"
         case .connectionRefused:
@@ -180,7 +184,8 @@ extension QUICError: CustomStringConvertible {
             }
             return "Handshake failed"
         case .versionNegotiation(let supported):
-            return "Version negotiation required, supported: \(supported.map { "0x\(String(format: "%x", $0))" })"
+            return
+                "Version negotiation required, supported: \(supported.map { "0x\(String(format: "%x", $0))" })"
         case .invalidToken:
             return "Invalid token"
         case .streamReset(let streamID, let errorCode):
@@ -208,7 +213,8 @@ extension QUICError: CustomStringConvertible {
         case .invalidFrame(let msg):
             return "Invalid frame: \(msg)"
         case .frameNotAllowed(let frameType, let packetType):
-            return "Frame type 0x\(String(format: "%x", frameType)) not allowed in \(packetType) packet"
+            return
+                "Frame type 0x\(String(format: "%x", frameType)) not allowed in \(packetType) packet"
         case .tlsError(let msg):
             return "TLS error: \(msg)"
         case .certificateError(let msg):
@@ -225,6 +231,8 @@ extension QUICError: CustomStringConvertible {
             return "Not connected"
         case .alreadyConnected:
             return "Already connected"
+        case .protocolViolation(let msg):
+            return "Protocol violation: \(msg)"
         }
     }
 }
@@ -263,6 +271,8 @@ extension QUICError {
             return .internalError
         case .wouldBlock, .notConnected, .alreadyConnected:
             return .internalError
+        case .protocolViolation:
+            return .protocolViolation
         }
     }
 }

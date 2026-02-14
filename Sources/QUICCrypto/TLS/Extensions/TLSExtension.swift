@@ -8,7 +8,7 @@
 /// } Extension;
 /// ```
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - Extension Type
 

@@ -2,7 +2,7 @@
 ///
 /// Ordered buffer for reassembling out-of-order CRYPTO frame data.
 
-import Foundation
+import FoundationEssentials
 
 /// Internal buffer for ordered CRYPTO data reassembly
 struct CryptoBuffer: Sendable {

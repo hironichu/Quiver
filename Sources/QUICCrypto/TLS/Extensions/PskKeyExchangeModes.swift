@@ -15,7 +15,7 @@
 ///
 /// TLS 1.3 MUST use psk_dhe_ke for QUIC (RFC 9001 Section 4.4).
 
-import Foundation
+import FoundationEssentials
 
 // MARK: - PSK Key Exchange Mode
 

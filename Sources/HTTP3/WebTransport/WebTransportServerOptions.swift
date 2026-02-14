@@ -22,7 +22,7 @@
 /// - [draft-ietf-webtrans-http3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
 /// - [RFC 9220: Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html)
 
-import Foundation
+import FoundationEssentials
 import QUIC
 import QUICCore
 

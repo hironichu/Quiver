@@ -3,7 +3,7 @@
 /// Client-side storage for session tickets to enable session resumption
 /// and 0-RTT early data.
 
-import Foundation
+import FoundationEssentials
 import Crypto
 import Synchronization
 

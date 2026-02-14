@@ -11,12 +11,13 @@
 /// - ECN: state machine transitions, IncomingPacket plumbing
 /// - QUICConfiguration.validate(): boundary violations
 
-import Testing
 import Foundation
+import Testing
+
 @testable import QUIC
+@testable import QUICConnection
 @testable import QUICCore
 @testable import QUICCrypto
-@testable import QUICConnection
 @testable import QUICTransport
 
 // ============================================================
@@ -80,8 +81,9 @@ struct PlatformSocketTests {
     func ecnFromTOS_exhaustive() {
         for tos: UInt8 in 0...255 {
             let ecn = ecnFromTOS(tos)
-            #expect(ecn == tos & 0x03,
-                    "ecnFromTOS(\(tos)) = \(ecn), expected \(tos & 0x03)")
+            #expect(
+                ecn == tos & 0x03,
+                "ecnFromTOS(\(tos)) = \(ecn), expected \(tos & 0x03)")
         }
     }
 
@@ -92,10 +94,12 @@ struct PlatformSocketTests {
         for dscp: UInt8 in stride(from: 0, through: 252, by: 4) {
             for ecn: UInt8 in 0...3 {
                 let composed = tosWithECN(dscp: dscp, ecn: ecn)
-                #expect(composed & 0xFC == dscp,
-                        "DSCP corruption: dscp=\(dscp) ecn=\(ecn) -> \(composed)")
-                #expect(composed & 0x03 == ecn,
-                        "ECN corruption: dscp=\(dscp) ecn=\(ecn) -> \(composed)")
+                #expect(
+                    composed & 0xFC == dscp,
+                    "DSCP corruption: dscp=\(dscp) ecn=\(ecn) -> \(composed)")
+                #expect(
+                    composed & 0x03 == ecn,
+                    "ECN corruption: dscp=\(dscp) ecn=\(ecn) -> \(composed)")
             }
         }
     }
@@ -120,10 +124,12 @@ struct PlatformSocketTests {
 
         // IPPROTO_IP is legitimately 0, so only check option *names* > 0.
         // The level for IPv4 (IPPROTO_IP == 0) is valid; IPv6 level > 0.
-        #expect(PlatformSocketConstants.ipv4DFOption > 0,
-                "IPv4 DF option name must be a real setsockopt constant")
-        #expect(PlatformSocketConstants.ipv6DFLevel > 0,
-                "IPv6 DF level (IPPROTO_IPV6) must be > 0")
+        #expect(
+            PlatformSocketConstants.ipv4DFOption > 0,
+            "IPv4 DF option name must be a real setsockopt constant")
+        #expect(
+            PlatformSocketConstants.ipv6DFLevel > 0,
+            "IPv6 DF level (IPPROTO_IPV6) must be > 0")
         #expect(PlatformSocketConstants.ipv6DFOption > 0)
 
         // ECN option names (not levels — ipv4ECNLevel == IPPROTO_IP == 0)
@@ -131,8 +137,9 @@ struct PlatformSocketTests {
         #expect(PlatformSocketConstants.ipv4TOS > 0)
         #expect(PlatformSocketConstants.ipv6RecvTClass > 0)
         #expect(PlatformSocketConstants.ipv6TClass > 0)
-        #expect(PlatformSocketConstants.ipv6ECNLevel > 0,
-                "IPv6 ECN level (IPPROTO_IPV6) must be > 0")
+        #expect(
+            PlatformSocketConstants.ipv6ECNLevel > 0,
+            "IPv6 ECN level (IPPROTO_IPV6) must be > 0")
     }
 
     @Test("PlatformSocketOptions builder produces correct option count")
@@ -141,8 +148,9 @@ struct PlatformSocketTests {
             addressFamily: .ipv4, enableECN: true, enableDF: true
         )
         // DF(1) + RECVTOS(1) + TOS(1) = 3 options
-        #expect(ipv4.options.count == 3,
-                "IPv4 with ECN+DF should produce 3 options, got \(ipv4.options.count)")
+        #expect(
+            ipv4.options.count == 3,
+            "IPv4 with ECN+DF should produce 3 options, got \(ipv4.options.count)")
         #expect(ipv4.dfEnabled == true)
         #expect(ipv4.ecnEnabled == true)
 
@@ -228,15 +236,18 @@ struct PMTUDiscoveryTests {
             }
         }
 
-        #expect(mgr.state == .searchComplete,
-                "Search must converge within \(maxIterations) iterations")
+        #expect(
+            mgr.state == .searchComplete,
+            "Search must converge within \(maxIterations) iterations")
 
         // Converged MTU must be within searchGranularity of the real path MTU
         let discovered = mgr.currentPLPMTU
-        #expect(discovered <= pathMTU,
-                "Discovered MTU \(discovered) must be <= path MTU \(pathMTU)")
-        #expect(discovered >= pathMTU - config.searchGranularity,
-                "Discovered MTU \(discovered) too far below path MTU \(pathMTU)")
+        #expect(
+            discovered <= pathMTU,
+            "Discovered MTU \(discovered) must be <= path MTU \(pathMTU)")
+        #expect(
+            discovered >= pathMTU - config.searchGranularity,
+            "Discovered MTU \(discovered) too far below path MTU \(pathMTU)")
     }
 
     // ----------------------------------------------------------
@@ -382,8 +393,10 @@ struct PMTUDiscoveryTests {
         if mgr.state == .searching {
             let probe3 = mgr.generateProbe()
             if let p3 = probe3 {
-                #expect(p3.packetSize < firstProbeSize,
-                        "After timeout, next probe \(p3.packetSize) must be < failed size \(firstProbeSize)")
+                #expect(
+                    p3.packetSize < firstProbeSize,
+                    "After timeout, next probe \(p3.packetSize) must be < failed size \(firstProbeSize)"
+                )
             }
         }
     }
@@ -439,8 +452,9 @@ struct PMTUDiscoveryTests {
         // Simulate path change
         mgr.resetForPathChange()
         #expect(mgr.state == .base)
-        #expect(mgr.currentPLPMTU == 1200,
-                "Path change must revert to base MTU")
+        #expect(
+            mgr.currentPLPMTU == 1200,
+            "Path change must revert to base MTU")
         #expect(mgr.isProbing == false)
     }
 
@@ -460,8 +474,9 @@ struct PMTUDiscoveryTests {
 
         // Second enable must be ignored (guard checks phase != .disabled)
         mgr.enable()
-        #expect(mgr.currentPLPMTU == mtu,
-                "Double enable must not reset discovered MTU")
+        #expect(
+            mgr.currentPLPMTU == mtu,
+            "Double enable must not reset discovered MTU")
     }
 
     // ----------------------------------------------------------
@@ -528,37 +543,45 @@ struct ECNIntegrationTests {
     }
 
     @Test("ECN validation fails when peer ECN counts decrease (RFC 9000 §13.4.2.1)")
-    func ecnValidationFailsOnDecreasingCounts() {
+    func ecnValidationFailsOnDecreasingCounts() throws {
         let mgr = ECNManager()
         mgr.enableECN()
 
         // First ACK with valid counts
         let initial = ECNCountState(ect0: 10, ect1: 0, ce: 1)
-        _ = mgr.processACKFeedback(initial, level: .application)
+        _ = try mgr.processACKFeedback(initial, level: .application)
 
         // Second ACK with ect0 decreased — MUST fail
         let decreased = ECNCountState(ect0: 9, ect1: 0, ce: 1)
-        let newCE = mgr.processACKFeedback(decreased, level: .application)
-        #expect(newCE == 0, "Decreased counts must not report new CE marks")
-        #expect(mgr.validationState == .failed,
-                "ECN validation must fail when counts decrease")
-        #expect(mgr.isEnabled == false,
-                "ECN must be disabled after validation failure")
+
+        #expect {
+            try mgr.processACKFeedback(decreased, level: .application)
+        } throws: { error in
+            if case QUICError.protocolViolation = error {
+                return true
+            }
+            return false
+        }
+
+        #expect(
+            mgr.isEnabled == false,
+            "ECN must be disabled after validation failure")
     }
 
     @Test("ECN validation succeeds after 10 acknowledged ECT packets")
-    func ecnValidationSuccess() {
+    func ecnValidationSuccess() throws {
         let mgr = ECNManager()
         mgr.enableECN()
 
         // Send feedback incrementally
         for i: UInt64 in 1...12 {
             let counts = ECNCountState(ect0: i, ect1: 0, ce: 0)
-            _ = mgr.processACKFeedback(counts, level: .application)
+            _ = try mgr.processACKFeedback(counts, level: .application)
         }
 
-        #expect(mgr.validationState == .capable,
-                "ECN must be validated after >= 10 acked ECT packets")
+        #expect(
+            mgr.validationState == .capable,
+            "ECN must be validated after >= 10 acked ECT packets")
     }
 
     @Test("IncomingPacket carries ECN codepoint correctly")

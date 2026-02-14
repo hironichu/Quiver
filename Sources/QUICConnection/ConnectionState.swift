@@ -2,7 +2,7 @@
 ///
 /// Manages the lifecycle of a QUIC connection.
 
-import Foundation
+import FoundationEssentials
 import QUICCore
 
 // MARK: - Connection State
