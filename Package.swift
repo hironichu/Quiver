@@ -92,6 +92,8 @@ let package = Package(
 
         // Documentation
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
+
+        .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
     ],
     targets: [
         // MARK: - Core Types (No I/O)
@@ -125,6 +127,7 @@ let package = Package(
             dependencies: [
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/NIOUDPTransport"
         ),
@@ -172,6 +175,7 @@ let package = Package(
             dependencies: [
                 "QUICCore",
                 "NIOUDPTransport",
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/QUICTransport"
         ),

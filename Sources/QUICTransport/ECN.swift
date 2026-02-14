@@ -3,17 +3,14 @@
 /// ECN allows routers to signal congestion without dropping packets.
 /// QUIC endpoints track ECN counts and report them in ACK frames.
 
-#if canImport(FoundationEssentials)
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
-#else
-import Foundation
-#endif
 import QUICCore
 import Synchronization
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - ECN Codepoint
 

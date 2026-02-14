@@ -12,15 +12,17 @@
 /// Outgoing ECN marking is set via `IP_TOS` / `IPV6_TCLASS` socket
 /// options at socket creation time (see ``PlatformSocketOptions``).
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
 import NIOCore
 import NIOUDPTransport
 import QUICCore
 import Synchronization
+import SystemPackage
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - QUIC Socket
 
@@ -256,7 +258,9 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
     private func applyPlatformOptions(_ opts: PlatformSocketOptions) async {
         guard let provider = transport.socketOptionProvider else {
             #if DEBUG
-            print("[NIOQUICSocket] socketOptionProvider unavailable — channel not started or not a SocketOptionProvider")
+                print(
+                    "[NIOQUICSocket] socketOptionProvider unavailable — channel not started or not a SocketOptionProvider"
+                )
             #endif
             return
         }
@@ -271,11 +275,11 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
                     value: opt.value
                 ).get()
                 #if DEBUG
-                print("[NIOQUICSocket] Applied \(opt.description)")
+                    print("[NIOQUICSocket] Applied \(opt.description)")
                 #endif
             } catch {
                 #if DEBUG
-                print("[NIOQUICSocket] Failed to apply \(opt.description): \(error)")
+                    print("[NIOQUICSocket] Failed to apply \(opt.description): \(error)")
                 #endif
             }
         }

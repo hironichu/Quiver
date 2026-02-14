@@ -33,7 +33,14 @@ import Foundation
 #elseif os(Windows)
     import ucrt
 #endif
+#if os(Android)
+    import Android
 
+// Values pulled directly from Android NDK /usr/include/netinet/in.h
+// internal let IPPROTO_IP: Int32 = 0
+// internal let IPPROTO_IPV6: Int32 = 41
+// internal let IPPROTO_UDP: Int32 = 17
+#endif
 // MARK: - Platform Socket Option Constants
 
 /// Platform-resolved socket option constants for QUIC network integration.
@@ -387,9 +394,9 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
 
         #if os(Linux)
             #if canImport(Glibc)
-            let fd = socket(AF_INET, Int32(Glibc.SOCK_DGRAM.rawValue), 0)
+                let fd = socket(AF_INET, Int32(Glibc.SOCK_DGRAM.rawValue), 0)
             #else
-            let fd = socket(AF_INET, SOCK_DGRAM, 0)
+                let fd = socket(AF_INET, SOCK_DGRAM, 0)
             #endif
         #else
             let fd = socket(AF_INET, SOCK_DGRAM, 0)
@@ -445,47 +452,47 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
 /// name is known.
 public func queryDefaultInterfaceMTU() -> Int? {
     #if os(Linux) || canImport(Darwin)
-    var addrs: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
-    defer { freeifaddrs(addrs) }
+        var addrs: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
+        defer { freeifaddrs(addrs) }
 
-    var seen = Set<String>()
-    var inetCandidates: [String] = []
-    var fallbackCandidates: [String] = []
+        var seen = Set<String>()
+        var inetCandidates: [String] = []
+        var fallbackCandidates: [String] = []
 
-    var current: UnsafeMutablePointer<ifaddrs>? = first
-    while let entry = current {
-        let flags = UInt32(entry.pointee.ifa_flags)
-        let isUp = (flags & UInt32(IFF_UP)) != 0
-        let isRunning = (flags & UInt32(IFF_RUNNING)) != 0
-        let isLoopback = (flags & UInt32(IFF_LOOPBACK)) != 0
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let entry = current {
+            let flags = UInt32(entry.pointee.ifa_flags)
+            let isUp = (flags & UInt32(IFF_UP)) != 0
+            let isRunning = (flags & UInt32(IFF_RUNNING)) != 0
+            let isLoopback = (flags & UInt32(IFF_LOOPBACK)) != 0
 
-        guard isUp, isRunning, !isLoopback else {
+            guard isUp, isRunning, !isLoopback else {
+                current = entry.pointee.ifa_next
+                continue
+            }
+
+            let name = String(cString: entry.pointee.ifa_name)
+            if seen.insert(name).inserted {
+                let family = entry.pointee.ifa_addr?.pointee.sa_family ?? 0
+                if Int32(family) == AF_INET || Int32(family) == AF_INET6 {
+                    inetCandidates.append(name)
+                } else {
+                    fallbackCandidates.append(name)
+                }
+            }
+
             current = entry.pointee.ifa_next
-            continue
         }
 
-        let name = String(cString: entry.pointee.ifa_name)
-        if seen.insert(name).inserted {
-            let family = entry.pointee.ifa_addr?.pointee.sa_family ?? 0
-            if Int32(family) == AF_INET || Int32(family) == AF_INET6 {
-                inetCandidates.append(name)
-            } else {
-                fallbackCandidates.append(name)
+        for name in inetCandidates + fallbackCandidates {
+            if let mtu = queryInterfaceMTU(name) {
+                return mtu
             }
         }
-
-        current = entry.pointee.ifa_next
-    }
-
-    for name in inetCandidates + fallbackCandidates {
-        if let mtu = queryInterfaceMTU(name) {
-            return mtu
-        }
-    }
-    return nil
+        return nil
     #else
-    return nil
+        return nil
     #endif
 }
 
