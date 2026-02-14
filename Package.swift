@@ -48,30 +48,30 @@ let package = Package(
             targets: ["MOQClient"]
         ),
         // Example: QUIC Echo Server/Client
-        .executable(
-            name: "QUICEchoServer",
-            targets: ["QUICEchoServer"]
-        ),
-        // Example: HTTP/3 Demo Server/Client
-        .executable(
-            name: "HTTP3Demo",
-            targets: ["HTTP3Demo"]
-        ),
-        // Example: WebTransport Echo Server/Client
-        .executable(
-            name: "WebTransportDemo",
-            targets: ["WebTransportDemo"]
-        ),
-        // Example: QUIC Network Configuration Demo (ECN / PMTUD)
-        .executable(
-            name: "QUICNetworkDemo",
-            targets: ["QUICNetworkDemo"]
-        ),
-        // Example: Alt-Svc Gateway Demo (HTTP/1.1 + HTTP/2 -> HTTP/3)
-        .executable(
-            name: "AltSvcDemo",
-            targets: ["AltSvcDemo"]
-        ),
+        // .executable(
+        //     name: "QUICEchoServer",
+        //     targets: ["QUICEchoServer"]
+        // ),
+        // // Example: HTTP/3 Demo Server/Client
+        // .executable(
+        //     name: "HTTP3Demo",
+        //     targets: ["HTTP3Demo"]
+        // ),
+        // // Example: WebTransport Echo Server/Client
+        // .executable(
+        //     name: "WebTransportDemo",
+        //     targets: ["WebTransportDemo"]
+        // ),
+        // // Example: QUIC Network Configuration Demo (ECN / PMTUD)
+        // .executable(
+        //     name: "QUICNetworkDemo",
+        //     targets: ["QUICNetworkDemo"]
+        // ),
+        // // Example: Alt-Svc Gateway Demo (HTTP/1.1 + HTTP/2 -> HTTP/3)
+        // .executable(
+        //     name: "AltSvcDemo",
+        //     targets: ["AltSvcDemo"]
+        // ),
     ],
     dependencies: [
         // NIO (used by NIOUDPTransport and other targets)
@@ -92,6 +92,8 @@ let package = Package(
 
         // Documentation
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
+
+        .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
     ],
     targets: [
         // MARK: - Core Types (No I/O)
@@ -125,6 +127,7 @@ let package = Package(
             dependencies: [
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/NIOUDPTransport"
         ),
@@ -172,6 +175,7 @@ let package = Package(
             dependencies: [
                 "QUICCore",
                 "NIOUDPTransport",
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/QUICTransport"
         ),
@@ -363,69 +367,69 @@ let package = Package(
 
         // MARK: - Examples
 
-        .executableTarget(
-            name: "QUICEchoServer",
-            dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICTransport",
-                "NIOUDPTransport",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Examples/QUICEchoServer"
-        ),
+        // .executableTarget(
+        //     name: "QUICEchoServer",
+        //     dependencies: [
+        //         "QUIC",
+        //         "QUICCore",
+        //         "QUICCrypto",
+        //         "QUICTransport",
+        //         "NIOUDPTransport",
+        //         .product(name: "Logging", package: "swift-log"),
+        //     ],
+        //     path: "Examples/QUICEchoServer"
+        // ),
 
-        .executableTarget(
-            name: "HTTP3Demo",
-            dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "HTTP3",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Examples/HTTP3Demo"
-        ),
+        // .executableTarget(
+        //     name: "HTTP3Demo",
+        //     dependencies: [
+        //         "QUIC",
+        //         "QUICCore",
+        //         "QUICCrypto",
+        //         "HTTP3",
+        //         .product(name: "Logging", package: "swift-log"),
+        //     ],
+        //     path: "Examples/HTTP3Demo"
+        // ),
 
-        .executableTarget(
-            name: "WebTransportDemo",
-            dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICTransport",
-                "HTTP3",
-                "QPACK",
-                "NIOUDPTransport",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Examples/WebTransportDemo"
-        ),
+        // .executableTarget(
+        //     name: "WebTransportDemo",
+        //     dependencies: [
+        //         "QUIC",
+        //         "QUICCore",
+        //         "QUICCrypto",
+        //         "QUICTransport",
+        //         "HTTP3",
+        //         "QPACK",
+        //         "NIOUDPTransport",
+        //         .product(name: "Logging", package: "swift-log"),
+        //     ],
+        //     path: "Examples/WebTransportDemo"
+        // ),
 
-        .executableTarget(
-            name: "QUICNetworkDemo",
-            dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICConnection",
-                "QUICTransport",
-                "NIOUDPTransport",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Examples/QUICNetworkDemo"
-        ),
-        .executableTarget(
-            name: "AltSvcDemo",
-            dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "HTTP3",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Examples/AltSvcDemo"
-        ),
+        // .executableTarget(
+        //     name: "QUICNetworkDemo",
+        //     dependencies: [
+        //         "QUIC",
+        //         "QUICCore",
+        //         "QUICCrypto",
+        //         "QUICConnection",
+        //         "QUICTransport",
+        //         "NIOUDPTransport",
+        //         .product(name: "Logging", package: "swift-log"),
+        //     ],
+        //     path: "Examples/QUICNetworkDemo"
+        // ),
+        // .executableTarget(
+        //     name: "AltSvcDemo",
+        //     dependencies: [
+        //         "QUIC",
+        //         "QUICCore",
+        //         "QUICCrypto",
+        //         "HTTP3",
+        //         .product(name: "Logging", package: "swift-log"),
+        //     ],
+        //     path: "Examples/AltSvcDemo"
+        // ),
     ]
 )
