@@ -15,6 +15,9 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+#if canImport(Security)
+import Security
+#endif
 import Logging
 import NIOUDPTransport
 import QUICConnection
@@ -178,13 +181,30 @@ public actor QUICEndpoint {
                 ]
             )
         } else if configuration.useSystemTrustStore {
-            try tlsConfig.useSystemTrustStore()
+            #if os(macOS)
+                try tlsConfig.useSystemTrustStore()
+            #elseif os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+                if tlsConfig.certificateValidator == nil {
+                    tlsConfig.certificateValidator = { certificates in
+                        #if canImport(Security)
+                            try SecTrustValidator.validate(certificates, policy: SecPolicyCreateSSL(true, nil))
+                            return nil
+                        #else
+                            throw QUICSecurityError.certificateValidationFailed(reason: "Security framework not available")
+                        #endif
+                    }
+                }
+            #elseif os(Linux) || os(Windows)
+                try tlsConfig.useSystemTrustStore()
+            #else
+                logger.warning(
+                    "System trust store not supported on this platform. Peer verification may fail if no roots provided."
+                )
+            #endif
+            
             logger.debug(
-                "TLS trust source selected: system trust store",
-                metadata: [
-                    "rootCount": "\(tlsConfig.trustedRootCertificates?.count ?? 0)",
-                    "isClient": "\(isClient)",
-                ]
+                "TLS trust source selected: system/platform trust",
+                metadata: ["isClient": "\(isClient)"]
             )
         } else {
             // Explicitly disable system fallback by supplying empty trust anchors.
@@ -265,13 +285,30 @@ public actor QUICEndpoint {
                 ]
             )
         } else if configuration.useSystemTrustStore {
-            try tlsConfig.useSystemTrustStore()
+            #if os(macOS)
+                try tlsConfig.useSystemTrustStore()
+            #elseif os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+                if tlsConfig.certificateValidator == nil {
+                    tlsConfig.certificateValidator = { certificates in
+                        #if canImport(Security)
+                            try SecTrustValidator.validate(certificates, policy: SecPolicyCreateSSL(true, nil))
+                            return nil
+                        #else
+                            throw QUICSecurityError.certificateValidationFailed(reason: "Security framework not available")
+                        #endif
+                    }
+                }
+            #elseif os(Linux) || os(Windows)
+                try tlsConfig.useSystemTrustStore()
+            #else
+                logger.warning(
+                    "System trust store not supported on this platform. Peer verification may fail if no roots provided."
+                )
+            #endif
+            
             logger.debug(
-                "TLS trust source selected: system trust store",
-                metadata: [
-                    "rootCount": "\(tlsConfig.trustedRootCertificates?.count ?? 0)",
-                    "isClient": "\(isClient)",
-                ]
+                "TLS trust source selected: system/platform trust",
+                metadata: ["isClient": "\(isClient)"]
             )
         } else {
             // Explicitly disable system fallback by supplying empty trust anchors.
@@ -512,3 +549,39 @@ public actor QUICEndpoint {
         router.connection(for: connectionID)
     }
 }
+
+// MARK: - SecTrust Validator (Apple Platforms)
+
+#if canImport(Security)
+    enum SecTrustValidator {
+        static func validate(_ certificates: [Data], policy: SecPolicy) throws {
+            guard !certificates.isEmpty else {
+                throw QUICSecurityError.certificateValidationFailed(reason: "No certificates provided")
+            }
+
+            // Create SecCertificate objects
+            let secCerts = certificates.compactMap {
+                SecCertificateCreateWithData(nil, $0 as CFData)
+            }
+            guard secCerts.count == certificates.count else {
+                throw QUICSecurityError.certificateValidationFailed(reason: "Failed to create SecCertificate from data")
+            }
+
+            // Create trust object
+            var trust: SecTrust?
+            let status = SecTrustCreateWithCertificates(secCerts as CFArray, policy, &trust)
+            guard status == errSecSuccess, let trust = trust else {
+                throw QUICSecurityError.certificateValidationFailed(reason: "Failed to create SecTrust")
+            }
+
+            // Evaluate trust
+            var error: CFError?
+            let valid = SecTrustEvaluateWithError(trust, &error)
+
+            if !valid {
+                let reason = error?.localizedDescription ?? "Unknown trust error"
+                throw QUICSecurityError.certificateValidationFailed(reason: "SecTrust evaluation failed: \(reason)")
+            }
+        }
+    }
+#endif

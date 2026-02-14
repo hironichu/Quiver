@@ -319,6 +319,17 @@ public struct QUICConfiguration: Sendable {
     /// `TLSConfiguration.verifyPeer`.
     public var verifyPeer: Bool
 
+    /// Custom certificate validator for peer certificates.
+    ///
+    /// Called during the TLS handshake to validate the peer's certificate chain.
+    /// This allows implementing platform-specific trust evaluation (e.g. `SecTrust` on iOS)
+    /// or custom pinning logic.
+    ///
+    /// - Parameter certificates: The peer's certificate chain (DER encoded), leaf first
+    /// - Returns: Application-specific peer info, or nil if validation succeeds but no info is needed
+    /// - Throws: Any error to reject the certificate and abort the connection
+    public var certificateValidator: CertificateValidator?
+
     // MARK: - TLS Provider
 
     /// Custom TLS provider factory (legacy).
@@ -377,6 +388,7 @@ public struct QUICConfiguration: Sendable {
     /// - Default: `SocketConfiguration()`
     public var socketConfiguration: SocketConfiguration
 
+    
     // MARK: - Initialization
 
     /// Creates a default configuration.
@@ -406,6 +418,8 @@ public struct QUICConfiguration: Sendable {
         self.userTrustedCAsPEMPath = nil
         self.useSystemTrustStore = true
         self.verifyPeer = true
+        self.certificateValidator = nil
+        self.certificateValidator = nil
         self.enableDatagrams = false
         self.maxDatagramFrameSize = 65535
         self.tlsProviderFactory = nil

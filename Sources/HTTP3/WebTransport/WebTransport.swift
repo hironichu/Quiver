@@ -63,6 +63,7 @@ import Foundation
 import Logging
 import QUIC
 import QUICCore
+import QUICCrypto
 
 // MARK: - WebTransport Namespace
 
@@ -108,10 +109,56 @@ public enum WebTransport {
             quicConfig.useSystemTrustStore = false
             quicConfig.userTrustedCACertificatesDER = certs
             quicConfig.userTrustedCAsPEMPath = nil
-        case .pem(let path):
+        case .pemPath(let path):
             quicConfig.useSystemTrustStore = false
             quicConfig.userTrustedCACertificatesDER = nil
             quicConfig.userTrustedCAsPEMPath = path
+        case .pemURL(let url):
+            quicConfig.useSystemTrustStore = false
+            quicConfig.userTrustedCAsPEMPath = nil
+            
+            do {
+                let data = try Data(contentsOf: url)
+                if let pemString = String(data: data, encoding: .utf8) {
+                    let derCerts = try PEMLoader.parseCertificates(from: pemString)
+                    quicConfig.userTrustedCACertificatesDER = derCerts
+                } else {
+                     throw WebTransportError.internalError(
+                        "PEM data from URL is not valid UTF-8 string",
+                        underlying: nil
+                     )
+                }
+            } catch {
+                 throw WebTransportError.internalError(
+                    "Failed to load/parse PEM certificate from URL: \(url)",
+                    underlying: error
+                 )
+            }
+        case .pemData(let data):
+            quicConfig.useSystemTrustStore = false
+            quicConfig.userTrustedCAsPEMPath = nil
+            
+            if let pemString = String(data: data, encoding: .utf8) {
+                do {
+                    // key lines: parse PEM string to [Data] (DER)
+                    let derCerts = try PEMLoader.parseCertificates(from: pemString)
+                    quicConfig.userTrustedCACertificatesDER = derCerts
+                } catch {
+                     // If parsing fails, we log it (if logger were available in this context easily) or just throw/warn.
+                     // Since this is a config step, throwing might be aggressive if user provided partial data,
+                     // but `PEMLoader` throws on bad format.
+                     // For now, let's propagate the error by throwing it as a WebTransportError.
+                     throw WebTransportError.internalError(
+                        "Failed to parse PEM certificate data",
+                        underlying: error
+                     )
+                }
+            } else {
+                 throw WebTransportError.internalError(
+                    "PEM data is not valid UTF-8 string",
+                    underlying: nil
+                 )
+            }
         }
 
         let h3Settings = options.buildHTTP3Settings()

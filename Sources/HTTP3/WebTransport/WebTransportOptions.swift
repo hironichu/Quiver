@@ -26,6 +26,9 @@
 ///
 /// // Custom CA bundle (PEM file path)
 /// opts.caCertificates = .pem(path: "/path/to/roots.pem")
+///
+/// // Custom CA bundle (PEM URL - Android friendly)
+/// opts.caCertificates = .pem(url: bundleURL)
 /// ```
 ///
 /// For full control over QUIC and HTTP/3 parameters, use
@@ -58,7 +61,36 @@ public enum CACertificateSource: Sendable {
     case der([Data])
 
     /// Load PEM-encoded certificates from a file path.
-    case pem(path: String)
+    case pemPath(String)
+
+    /// Load PEM-encoded certificates from in-memory data.
+    ///
+    /// Useful for loading certificates from `Bundle` resources or other sources
+    /// where a file path is not available (e.g. Android assets).
+    case pemData(Data)
+
+    /// Load PEM-encoded certificates from a URL.
+    ///
+    /// The data will be loaded synchronously when the session connects.
+    /// Supports `file://` URLs and others that `Data(contentsOf:)` can handle.
+    case pemURL(URL)
+
+    // MARK: - Factory Methods
+
+    /// Use a PEM file at the specified path.
+    public static func pem(path: String) -> CACertificateSource {
+        .pemPath(path)
+    }
+
+    /// Use PEM data (e.g. loaded from Bundle).
+    public static func pem(data: Data) -> CACertificateSource {
+        .pemData(data)
+    }
+
+    /// Use a PEM file at the specified URL.
+    public static func pem(url: URL) -> CACertificateSource {
+        .pemURL(url)
+    }
 }
 
 // MARK: - WebTransport Client Options
@@ -74,9 +106,11 @@ public struct WebTransportOptions: Sendable {
 
     /// Trusted CA certificate source for peer verification.
     ///
-    /// - `.system`: use system/platform trust roots
+    /// - `.system`: use system/platform trust roots (default)
     /// - `.der([Data])`: use explicit DER-encoded roots
     /// - `.pem(path:)`: resolve PEM file at TLS provider creation layer
+    /// - `.pem(data:)`: parse PEM data into DER roots (useful for Bundle resources)
+    /// - `.pem(url:)`: load PEM data from URL
     ///
     /// - Default: `.system`
     public var caCertificates: CACertificateSource
