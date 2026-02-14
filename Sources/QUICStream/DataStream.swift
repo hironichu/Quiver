@@ -2,7 +2,11 @@
 ///
 /// Manages a single QUIC stream with send/receive buffers and state tracking.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import Synchronization
 import QUICCore

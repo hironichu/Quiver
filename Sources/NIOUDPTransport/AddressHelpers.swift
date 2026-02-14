@@ -2,7 +2,11 @@
 ///
 /// Utility extensions for working with socket addresses.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import NIOCore
 import Synchronization
 

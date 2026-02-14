@@ -12,7 +12,11 @@
 /// finished_key = HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)
 /// ```
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - Finished Message
 

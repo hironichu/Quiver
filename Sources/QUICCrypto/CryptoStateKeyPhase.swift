@@ -3,7 +3,11 @@
 /// Extends crypto state management to support 1-RTT key phase rotation.
 /// Key updates are signaled via the Key Phase bit in short header packets.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Synchronization
 import Crypto
 import QUICCore

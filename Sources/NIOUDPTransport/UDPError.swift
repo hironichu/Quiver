@@ -2,7 +2,11 @@
 ///
 /// Errors that can occur during UDP transport operations.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 /// Errors that can occur during UDP operations.
 public enum UDPError: Error, Sendable {

@@ -28,7 +28,11 @@
 /// Unknown frame types MUST be ignored for forward compatibility
 /// (RFC 9114 Section 9).
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICStream
 
 // MARK: - Frame Type Identifiers

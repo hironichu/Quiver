@@ -36,7 +36,11 @@
 /// - [RFC 9114: HTTP/3](https://www.rfc-editor.org/rfc/rfc9114.html)
 /// - [RFC 9001: Using TLS to Secure QUIC](https://www.rfc-editor.org/rfc/rfc9001.html)
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUIC
 import QUICCore
 import QUICCrypto

@@ -3,7 +3,11 @@
 /// Server-side storage for session tickets to enable session resumption.
 /// Stores encrypted session state that can be used to derive PSKs.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Crypto
 import Synchronization
 

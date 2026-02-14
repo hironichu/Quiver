@@ -5,7 +5,11 @@
 /// - Connection ID lifecycle management
 /// - Stateless reset handling
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import QUICCrypto
 

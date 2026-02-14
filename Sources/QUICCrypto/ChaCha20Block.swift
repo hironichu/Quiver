@@ -6,7 +6,11 @@
 /// Swift Crypto's ChaChaPoly does not expose the raw block function with
 /// explicit counter control, so we implement it here per RFC 8439.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - ChaCha20 Error
 

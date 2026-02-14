@@ -10,7 +10,11 @@
 /// so that ECN counts are tracked per encryption level for ACK frames
 /// (RFC 9000 §13.4).
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import NIOUDPTransport
 import QUICConnection

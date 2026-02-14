@@ -7,7 +7,11 @@
 /// - `processConnectionClose` — handles CONNECTION_CLOSE frames
 /// - `processHandshakeDone` — handles HANDSHAKE_DONE frames
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import QUICCrypto
 import QUICRecovery

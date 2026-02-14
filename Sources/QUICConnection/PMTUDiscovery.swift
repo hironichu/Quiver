@@ -48,7 +48,11 @@
 ///   must be set on the socket for probing to work.  Without DF,
 ///   routers may silently fragment and probes always "succeed".
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Synchronization
 import QUICCore
 import Crypto

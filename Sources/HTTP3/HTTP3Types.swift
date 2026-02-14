@@ -24,7 +24,11 @@
 /// Pseudo-headers MUST appear before regular headers and
 /// MUST NOT appear in trailers (RFC 9114 Section 4.1.2).
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - Trailer Validation
 

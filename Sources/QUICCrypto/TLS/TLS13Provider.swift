@@ -4,7 +4,11 @@
 /// Allows swapping between different TLS backends (BoringSSL, etc.)
 /// and mocking for tests.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import SwiftASN1
 @preconcurrency import X509

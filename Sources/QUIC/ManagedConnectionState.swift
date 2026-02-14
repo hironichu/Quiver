@@ -3,7 +3,11 @@
 /// State types, enums, and error definitions used by ManagedConnection.
 /// Extracted from ManagedConnection.swift for file size reduction.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import QUICConnection
 

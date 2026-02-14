@@ -47,7 +47,11 @@
 ///
 /// Connections are kept alive for subsequent requests to the same authority.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUIC
 import QUICCore
 import QPACK

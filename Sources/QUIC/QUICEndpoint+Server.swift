@@ -6,7 +6,11 @@
 /// - `handleNewConnection` — processes incoming Initial packets
 /// - `handleVersionNegotiationPacket` — handles VN packets (client-side)
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import NIOUDPTransport
 import QUICConnection
 import QUICCore

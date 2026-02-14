@@ -2,7 +2,11 @@
 ///
 /// Ordered buffer for reassembling out-of-order stream data with FIN tracking.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - ReceiveBuffer Protocol
 

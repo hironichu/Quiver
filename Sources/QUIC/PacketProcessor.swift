@@ -5,7 +5,11 @@
 /// convenient packet processing.
 
 import Crypto
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import QUICCrypto
 import Synchronization

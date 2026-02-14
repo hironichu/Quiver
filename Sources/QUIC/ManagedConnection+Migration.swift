@@ -3,7 +3,11 @@
 /// Extension covering connection migration (RFC 9000 Section 9),
 /// path validation, TLS provider access, and connection ID management.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import QUICConnection
 import QUICCore

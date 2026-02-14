@@ -17,7 +17,11 @@
 /// - pacing_rate = cwnd / smoothed_rtt
 /// - Initial burst tokens allow immediate sending at connection start
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Synchronization
 
 /// NewReno congestion controller with integrated pacing

@@ -3,7 +3,11 @@
 /// A relay acts as a central hub for Media Over QUIC distribution.
 /// It accepts tracks from publishers and forwards them to subscribers.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import MOQCore
 import QUICCore

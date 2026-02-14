@@ -9,7 +9,11 @@
 /// } CertificateRequest;
 /// ```
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 /// TLS 1.3 CertificateRequest message
 public struct CertificateRequest: Sendable {

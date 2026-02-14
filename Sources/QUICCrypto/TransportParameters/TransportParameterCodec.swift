@@ -2,7 +2,11 @@
 ///
 /// Encodes and decodes transport parameters for the TLS handshake extension.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 
 /// Error thrown by TransportParameterCodec

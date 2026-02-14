@@ -3,7 +3,11 @@
 /// Extension containing the UDP I/O loop, packet receive loop,
 /// outbound send loop, timer processing loop, and stop logic.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import QUICConnection
 @_exported import QUICTransport

@@ -4,7 +4,11 @@
 /// Handles packet processing, loss detection, ACK generation,
 /// and TLS handshake coordination.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import QUICCore
 import QUICCrypto

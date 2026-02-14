@@ -21,7 +21,11 @@
 /// strings for simplicity. Decoding supports both raw and Huffman-encoded
 /// strings.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - QPACK String Codec
 

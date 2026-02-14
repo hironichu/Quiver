@@ -3,7 +3,11 @@
 /// Provides the `sendSignal` AsyncStream and `signalNeedsSend()` mechanism
 /// used by QUICEndpoint to know when outbound packets need to be generated.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import Synchronization
 import QUICCore

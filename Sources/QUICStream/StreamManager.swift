@@ -11,7 +11,11 @@
 ///   `UInt64`-based methods. Prefer the typed overloads in new code.
 /// - Use `.rawValue` at module boundaries where `UInt64` is still expected.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import QUICCore
 import Synchronization

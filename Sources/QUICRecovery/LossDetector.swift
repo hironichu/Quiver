@@ -9,7 +9,11 @@
 /// - Binary search for O(log n) packet lookup
 /// - Batch operations for reduced overhead
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Synchronization
 import QUICCore
 

@@ -11,7 +11,11 @@
 /// High-level connection wrapper that orchestrates handshake, packet processing,
 /// and stream management. Implements QUICConnectionProtocol for public API.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import QUICConnection
 import QUICCore

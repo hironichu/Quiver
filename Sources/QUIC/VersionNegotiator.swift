@@ -3,7 +3,11 @@
 /// Handles Version Negotiation packet creation and processing.
 /// Used when client and server need to agree on a QUIC version.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 
 // MARK: - Version Negotiation Errors

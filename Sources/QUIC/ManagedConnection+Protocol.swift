@@ -3,7 +3,11 @@
 /// Extension providing the public QUICConnectionProtocol API including
 /// stream management, datagrams, session tickets, and shutdown.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import QUICConnection
 import QUICCore

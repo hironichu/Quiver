@@ -2,7 +2,11 @@
 ///
 /// Configuration options for QUIC connections.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import QUICCrypto
 import QUICRecovery

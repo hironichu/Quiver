@@ -2,7 +2,11 @@
 ///
 /// High-level interface for QUIC connections.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import NIOCore
 import QUICCore
 

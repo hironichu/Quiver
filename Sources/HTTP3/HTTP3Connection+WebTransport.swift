@@ -7,7 +7,11 @@
 /// - Unidirectional stream routing
 /// - Datagram routing
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUIC
 import QUICCore
 

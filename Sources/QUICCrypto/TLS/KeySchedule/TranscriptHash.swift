@@ -8,7 +8,11 @@
 /// Transcript-Hash(M1, M2, ... Mn) = Hash(M1 || M2 || ... || Mn)
 /// ```
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Crypto
 
 // MARK: - Transcript Hash

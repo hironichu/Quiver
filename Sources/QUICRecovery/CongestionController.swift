@@ -3,7 +3,11 @@
 /// Provides the protocol abstraction for congestion control algorithms.
 /// Implementations include NewReno (default) with optional CUBIC/BBR support.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - Congestion State
 

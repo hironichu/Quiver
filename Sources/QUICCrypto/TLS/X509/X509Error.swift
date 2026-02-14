@@ -2,7 +2,11 @@
 ///
 /// Defines errors that can occur during X.509 certificate parsing and validation.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // MARK: - X.509 Errors
 

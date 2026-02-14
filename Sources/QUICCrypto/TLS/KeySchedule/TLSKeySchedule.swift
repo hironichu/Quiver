@@ -47,7 +47,11 @@
 ///                                   = resumption_master_secret
 /// ```
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Crypto
 
 // MARK: - Pre-computed HkdfLabel Cache

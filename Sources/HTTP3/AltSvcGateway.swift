@@ -19,7 +19,11 @@
 /// - [RFC 7838: HTTP Alternative Services](https://www.rfc-editor.org/rfc/rfc7838.html)
 /// - [RFC 9114 Section 3: Connection Setup](https://www.rfc-editor.org/rfc/rfc9114.html#section-3)
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import Logging
 import NIOCore
 import NIOPosix

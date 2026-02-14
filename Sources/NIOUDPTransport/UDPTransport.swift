@@ -2,7 +2,11 @@
 ///
 /// Defines the interface for UDP communication.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import NIOCore
 
 /// An incoming datagram with data and sender address.

@@ -3,7 +3,11 @@
 /// This file provides convenience extensions for working with X.509 certificate extensions
 /// using the swift-certificates library.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 @preconcurrency import X509
 import SwiftASN1
 

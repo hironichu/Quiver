@@ -4,7 +4,11 @@
 /// Designed specifically for QUIC (no TLS record layer).
 
 import Crypto
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 import Synchronization
 

@@ -3,7 +3,11 @@
 /// The `MOQSession` is the central coordinator for a Media Over QUIC connection.
 /// It manages tracks, subscriptions, and the underlying transport.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 
 /// Protocol defining the transport capabilities required by MOQ.

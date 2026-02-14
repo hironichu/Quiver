@@ -2,7 +2,11 @@
 ///
 /// Reassembles out-of-order CRYPTO frames for TLS handshake data.
 
+#if canImport(FoundationEssentials)
 import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 
 /// Error thrown by CryptoStream operations
