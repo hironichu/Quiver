@@ -22,7 +22,7 @@ import FoundationEssentials
 // MARK: - Alert Level
 
 /// TLS Alert Level (RFC 8446 Section 6)
-public enum AlertLevel: UInt8, Sendable {
+@frozen public enum AlertLevel: UInt8, Sendable {
     /// Warning - connection may continue
     case warning = 1
     /// Fatal - connection must be terminated immediately
@@ -32,7 +32,7 @@ public enum AlertLevel: UInt8, Sendable {
 // MARK: - Alert Description
 
 /// TLS Alert Description codes (RFC 8446 Section 6.2)
-public enum AlertDescription: UInt8, Sendable {
+@frozen public enum AlertDescription: UInt8, Sendable {
     // Closure alerts
     /// Graceful connection closure
     case closeNotify = 0

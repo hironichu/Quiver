@@ -402,17 +402,16 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
 
         // Copy interface name into the ifreq struct.
         // The name field layout differs between Linux and Darwin.
-        let nameFits: Bool = withUnsafeMutableBytes(of: &ifr.ifr_name) { nameBuf in
-            let maxLen = nameBuf.count
-            guard nameBytes.count <= maxLen else { return false }
-
-            nameBuf.initializeMemory(as: UInt8.self, repeating: 0)
-            _ = nameBuf.withMemoryRebound(to: Int8.self) { int8Buf in
-                for (i, b) in nameBytes.enumerated() {
-                    int8Buf[i] = b
+        let nameFits: Bool = withUnsafeMutablePointer(to: &ifr) { ifrPtr in
+            ifrPtr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<ifreq>.size) { rawPtr in
+                // ifr_name is at offset 0 on both platforms; IFNAMSIZ = 16
+                let maxLen = 16
+                guard nameBytes.count <= maxLen else { return false }
+                for (i, byte) in nameBytes.enumerated() {
+                    rawPtr[i] = UInt8(bitPattern: byte)
                 }
+                return true
             }
-            return true
         }
         guard nameFits else { return nil }
 
