@@ -386,7 +386,11 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
         guard PlatformSocketConstants.isMTUQuerySupported else { return nil }
 
         #if os(Linux)
+            #if canImport(Glibc)
+            let fd = socket(AF_INET, Int32(Glibc.SOCK_DGRAM.rawValue), 0)
+            #else
             let fd = socket(AF_INET, SOCK_DGRAM, 0)
+            #endif
         #else
             let fd = socket(AF_INET, SOCK_DGRAM, 0)
         #endif
@@ -398,16 +402,17 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
 
         // Copy interface name into the ifreq struct.
         // The name field layout differs between Linux and Darwin.
-        let nameFits: Bool = withUnsafeMutablePointer(to: &ifr) { ifrPtr in
-            ifrPtr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<ifreq>.size) { rawPtr in
-                // ifr_name is at offset 0 on both platforms; IFNAMSIZ = 16
-                let maxLen = 16
-                guard nameBytes.count <= maxLen else { return false }
-                for (i, byte) in nameBytes.enumerated() {
-                    rawPtr[i] = UInt8(bitPattern: byte)
+        let nameFits: Bool = withUnsafeMutableBytes(of: &ifr.ifr_name) { nameBuf in
+            let maxLen = nameBuf.count
+            guard nameBytes.count <= maxLen else { return false }
+
+            nameBuf.initializeMemory(as: UInt8.self, repeating: 0)
+            _ = nameBuf.withMemoryRebound(to: Int8.self) { int8Buf in
+                for (i, b) in nameBytes.enumerated() {
+                    int8Buf[i] = b
                 }
-                return true
             }
+            return true
         }
         guard nameFits else { return nil }
 
@@ -441,28 +446,47 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
 /// name is known.
 public func queryDefaultInterfaceMTU() -> Int? {
     #if os(Linux) || canImport(Darwin)
-        var addrs: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
-        defer { freeifaddrs(addrs) }
+    var addrs: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
+    defer { freeifaddrs(addrs) }
 
-        var current: UnsafeMutablePointer<ifaddrs>? = first
-        while let entry = current {
-            let flags = UInt32(entry.pointee.ifa_flags)
-            let isUp = (flags & UInt32(IFF_UP)) != 0
-            let isLoopback = (flags & UInt32(IFF_LOOPBACK)) != 0
-            let family = entry.pointee.ifa_addr?.pointee.sa_family ?? 0
+    var seen = Set<String>()
+    var inetCandidates: [String] = []
+    var fallbackCandidates: [String] = []
 
-            if isUp && !isLoopback && (Int32(family) == AF_INET || Int32(family) == AF_INET6) {
-                let name = String(cString: entry.pointee.ifa_name)
-                if let mtu = queryInterfaceMTU(name) {
-                    return mtu
-                }
-            }
+    var current: UnsafeMutablePointer<ifaddrs>? = first
+    while let entry = current {
+        let flags = UInt32(entry.pointee.ifa_flags)
+        let isUp = (flags & UInt32(IFF_UP)) != 0
+        let isRunning = (flags & UInt32(IFF_RUNNING)) != 0
+        let isLoopback = (flags & UInt32(IFF_LOOPBACK)) != 0
+
+        guard isUp, isRunning, !isLoopback else {
             current = entry.pointee.ifa_next
+            continue
         }
-        return nil
+
+        let name = String(cString: entry.pointee.ifa_name)
+        if seen.insert(name).inserted {
+            let family = entry.pointee.ifa_addr?.pointee.sa_family ?? 0
+            if Int32(family) == AF_INET || Int32(family) == AF_INET6 {
+                inetCandidates.append(name)
+            } else {
+                fallbackCandidates.append(name)
+            }
+        }
+
+        current = entry.pointee.ifa_next
+    }
+
+    for name in inetCandidates + fallbackCandidates {
+        if let mtu = queryInterfaceMTU(name) {
+            return mtu
+        }
+    }
+    return nil
     #else
-        return nil
+    return nil
     #endif
 }
 
