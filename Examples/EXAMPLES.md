@@ -923,16 +923,64 @@ Client                          Server
 
 ### WebTransport API Reference
 
+<<<<<<< HEAD
 #### WebTransportOptions (Simple Client)
+=======
+#### WebTransportConfiguration
+
+Unified configuration shared by both client and server. Composes `QUICConfiguration` directly — no property duplication.
+
+```swift
+import HTTP3
+import QUIC
+
+// Minimal — just provide the QUIC config
+let config = WebTransportConfiguration(quic: myQuicConfig)
+
+// Full customization
+var config = WebTransportConfiguration(
+    quic: myQuicConfig,
+    maxSessions: 4,                          // SETTINGS_WEBTRANSPORT_MAX_SESSIONS
+    headers: [("authorization", "Bearer …")], // Client-side only; ignored on server
+    http3Settings: HTTP3Settings(),           // QPACK / HTTP/3 overrides
+    connectionReadyTimeout: .seconds(10),     // SETTINGS exchange timeout
+    connectTimeout: .seconds(10)              // Extended CONNECT timeout
+)
+
+// Modify QUIC settings directly
+config.quic.maxIdleTimeout = .seconds(60)
+config.quic.initialMaxStreamsBidi = 200
+```
+
+#### WebTransportServer
+>>>>>>> develop
 
 User-friendly client options with sensible defaults. TLS/security provider creation is the caller's responsibility when full TLS control is needed.
 
 ```swift
 import HTTP3
+<<<<<<< HEAD
+=======
+import QUIC
+
+// Create server with unified configuration + server-only options
+let config = WebTransportConfiguration(
+    quic: quicConfig,
+    maxSessions: 4
+)
+let server = WebTransportServer(
+    configuration: config,
+    serverOptions: .init(
+        maxConnections: 0,          // unlimited
+        allowedPaths: ["/echo"]     // restrict accepted paths
+    )
+)
+>>>>>>> develop
 
 // Insecure defaults for dev/testing
 let opts = WebTransportOptions.insecure()
 
+<<<<<<< HEAD
 // Full customization
 let opts = WebTransportOptions(
     caCertificates: [caCertData],
@@ -946,13 +994,40 @@ let opts = WebTransportOptions(
     initialMaxStreamsBidi: 100,
     initialMaxStreamsUni: 100,
     maxSessions: 1
+=======
+// Process incoming sessions
+Task {
+    for await session in await server.incomingSessions {
+        Task { await handleSession(session) }
+    }
+}
+
+// Start serving (blocks until stop() is called)
+// QUIC config comes from configuration.quic — no separate parameter
+try await server.listen(host: "0.0.0.0", port: 4445)
+```
+
+**Static factory (one-call):**
+
+```swift
+let server = try await WebTransportServer.listen(
+    host: "0.0.0.0",
+    port: 4445,
+    configuration: config,
+    serverOptions: .init(allowedPaths: ["/echo"])
+>>>>>>> develop
 )
+// Returns immediately — serve() runs in the background
+for await session in server.incomingSessions {
+    Task { await handleSession(session) }
+}
 ```
 
 #### WebTransportOptionsAdvanced (Power-User Client)
 
 Accepts a full `QUICConfiguration` and `HTTP3Settings` directly. `validated()` merges mandatory WebTransport flags without overriding user choices.
 
+<<<<<<< HEAD
 ```swift
 import HTTP3
 import QUIC
@@ -976,10 +1051,15 @@ let safe = opts.validated()
 
 Server actor with middleware and path-based routing:
 
+=======
+**One-call convenience (Tier 1):**
+
+>>>>>>> develop
 ```swift
 import HTTP3
 import QUIC
 
+<<<<<<< HEAD
 let serverOpts = WebTransportServerOptions(
     certificateChain: [certData],
     privateKey: keyData,
@@ -1063,6 +1143,36 @@ import QUIC
 let session = try await WebTransport.connect(
     url: "https://example.com:4445/echo",
     options: WebTransportOptionsAdvanced(quic: myQuicConfig)
+=======
+let config = WebTransportConfiguration(quic: myQuicConfig)
+let session = try await WebTransportClient.connect(
+    url: "https://example.com:4445/echo",
+    configuration: config
+)
+// session is ready — QUIC endpoint, HTTP/3, and Extended CONNECT all handled internally
+```
+
+**Bring your own QUIC connection (Tier 2):**
+
+```swift
+let quicConn = try await endpoint.dial(address: serverAddress)
+let session = try await WebTransportClient.connect(
+    authority: "example.com:4445",
+    path: "/echo",
+    over: quicConn
+    // configuration is optional — QUIC part is ignored since you provide the connection
+)
+```
+
+**Full manual control (Tier 3):**
+
+```swift
+let client = WebTransportClient(quicConnection: quicConn)
+try await client.initialize()
+let session = try await client.connect(
+    authority: "example.com:4445",
+    path: "/echo"
+>>>>>>> develop
 )
 ```
 

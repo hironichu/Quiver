@@ -35,6 +35,7 @@ import Synchronization
 /// - Stream management via QUICConnectionProtocol
 /// - Anti-amplification limit enforcement (RFC 9000 Section 8.1)
 public final class ManagedConnection: Sendable {
+
     static let logger = QuiverLogging.logger(label: "quic.connection.managed")
 
     // MARK: - Properties

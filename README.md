@@ -163,6 +163,7 @@ quiver/
 │       ├── Frame/                     # HTTP/3 frame codec
 │       ├── Stream/                    # HTTP/3 stream types
 │       └── WebTransport/             # WebTransport support
+<<<<<<< HEAD
 │           ├── WebTransport.swift             # Client entry point (connect API)
 │           ├── WebTransportOptions.swift       # Simple client options
 │           ├── WebTransportOptionsAdvanced.swift # Power-user client options
@@ -173,6 +174,14 @@ quiver/
 │           ├── WebTransportStream.swift        # Stream wrapper
 │           ├── WebTransportCapsule.swift       # Capsule codec
 │           └── WebTransportError.swift         # Error types
+=======
+│           ├── WebTransportConfiguration.swift # Unified config
+│           ├── WebTransportServer.swift
+│           ├── WebTransportClient.swift
+│           ├── WebTransportSession.swift
+│           ├── WebTransportStream.swift
+│           └── WebTransportCapsule.swift
+>>>>>>> develop
 │
 ├── Examples/
 │   ├── QUICEchoServer/          # QUIC echo demo
@@ -315,6 +324,7 @@ print("Body: \(String(data: response.body, encoding: .utf8)!)")
 import HTTP3
 import QUIC
 
+<<<<<<< HEAD
 let serverOpts = WebTransportServerOptions(
     certificateChain: [certData],
     privateKey: keyData,
@@ -337,9 +347,40 @@ await server.register(path: "/echo") { session in
     for await stream in await session.incomingBidirectionalStreams {
         let data = try await stream.read()
         try await stream.write(data) // Echo
+=======
+// Unified config — QUIC + WebTransport in one struct
+let config = WebTransportConfiguration(
+    quic: myQuicConfig,
+    maxSessions: 4
+)
+
+// One-call static factory
+let server = try await WebTransportServer.listen(
+    host: "0.0.0.0",
+    port: 4433,
+    configuration: config,
+    serverOptions: .init(allowedPaths: ["/echo"])
+)
+
+for await session in server.incomingSessions {
+    Task {
+        // Handle bidirectional streams
+        for await stream in await session.incomingBidirectionalStreams {
+            let data = try await stream.read()
+            try await stream.write(data) // Echo
+        }
+    }
+    Task {
+        // Handle datagrams
+        for await datagram in await session.incomingDatagrams {
+            try await session.sendDatagram(datagram)
+        }
+>>>>>>> develop
     }
 }
+```
 
+<<<<<<< HEAD
 // Routes can combine middleware (accept/reject gating) with a handler
 await server.register(
     path: "/chat",
@@ -367,12 +408,15 @@ for await session in await server.incomingSessions {
 }
 ```
 
+=======
+>>>>>>> develop
 ### WebTransport Client
 
 ```swift
 import HTTP3
 import QUIC
 
+<<<<<<< HEAD
 // Simple — insecure defaults for dev/testing
 let session = try await WebTransport.connect(
     url: "https://example.com:4433/echo",
@@ -383,6 +427,13 @@ let session = try await WebTransport.connect(
 let session = try await WebTransport.connect(
     url: "https://example.com:4433/echo",
     options: WebTransportOptionsAdvanced(quic: myQuicConfig)
+=======
+// One-call connect — creates QUIC endpoint, dials, sets up HTTP/3, sends Extended CONNECT
+let config = WebTransportConfiguration(quic: myQuicConfig)
+let session = try await WebTransportClient.connect(
+    url: "https://example.com:4433/echo",
+    configuration: config
+>>>>>>> develop
 )
 
 // Open a bidirectional stream
