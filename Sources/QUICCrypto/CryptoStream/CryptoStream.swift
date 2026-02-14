@@ -14,8 +14,7 @@ public enum CryptoStreamError: Error, Sendable {
 }
 
 /// Reassembles out-of-order CRYPTO frames for a single encryption level
-public struct CryptoStream: Sendable {\
-
+public struct CryptoStream: Sendable {
     /// Ordered buffer of received data
     private var buffer: CryptoBuffer
 
