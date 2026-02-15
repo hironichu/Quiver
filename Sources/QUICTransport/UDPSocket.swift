@@ -104,6 +104,7 @@ public struct IncomingPacket: Sendable {
 
 /// A QUIC socket using NIOUDPTransport
 public final class NIOQUICSocket: QUICSocket, Sendable {
+    private let logger = QuiverLogging.logger(label: "quic.nio.socket")
     private let transport: NIOUDPTransport
     private let incomingStream: AsyncStream<IncomingPacket>
     private let incomingContinuation: AsyncStream<IncomingPacket>.Continuation
@@ -256,12 +257,11 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
     /// Each option is applied independently — a failure on one does not
     /// block the others.
     private func applyPlatformOptions(_ opts: PlatformSocketOptions) async {
+
         guard let provider = transport.socketOptionProvider else {
-            #if DEBUG
-                print(
-                    "[NIOQUICSocket] socketOptionProvider unavailable — channel not started or not a SocketOptionProvider"
-                )
-            #endif
+            logger.trace(
+                "[NIOQUICSocket] socketOptionProvider unavailable — channel not started or not a SocketOptionProvider"
+            )
             return
         }
 
@@ -274,13 +274,9 @@ public final class NIOQUICSocket: QUICSocket, Sendable {
                     name: name,
                     value: opt.value
                 ).get()
-                #if DEBUG
-                    print("[NIOQUICSocket] Applied \(opt.description)")
-                #endif
+                    logger.trace("[NIOQUICSocket] Applied \(opt.description)")
             } catch {
-                #if DEBUG
-                    print("[NIOQUICSocket] Failed to apply \(opt.description): \(error)")
-                #endif
+                    logger.trace("[NIOQUICSocket] Failed to apply \(opt.description): \(error)")
             }
         }
     }

@@ -55,8 +55,9 @@ import QUICCore
 /// Resolution (for example PEM file loading) is performed by the QUIC/TLS layer.
 public enum CACertificateSource: Sendable {
     /// Use platform/system trust store.
+    #if os(macOS) || os(Linux) || os(Windows)
     case system
-
+    #endif
     /// Use explicit DER-encoded root CA certificate blobs.
     case der([Data])
 

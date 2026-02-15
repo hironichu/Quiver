@@ -54,13 +54,7 @@ struct ConnectionIDRFCTests {
 
     @Test("NEW_CONNECTION_ID with duplicate sequence number handling")
     func duplicateSequenceNumberHandling() throws {
-        // RFC 9000 §5.1.1: An endpoint that receives a NEW_CONNECTION_ID frame
-        // with a sequence number smaller than the current active_connection_id_limit
-        // MUST ignore the frame if it already has a connection ID with the same
-        // sequence number.
-
         let manager = ConnectionIDManager(activeConnectionIDLimit: 4)
-
         let cid1 = try ConnectionID(bytes: Data([0x01, 0x02, 0x03, 0x04]))
         let frame1 = try NewConnectionIDFrame(
             sequenceNumber: 1,
@@ -71,7 +65,10 @@ struct ConnectionIDRFCTests {
 
         try manager.handleNewConnectionID(frame1)
 
-        // Send duplicate with same sequence number but different CID
+        // RFC 9000: If it receives a CID with a sequence number equal to
+        // an existing CID, but with different CID or token, MUST be treated
+        // as a connection error of type PROTOCOL_VIOLATION.
+
         let cid2 = try ConnectionID(bytes: Data([0x05, 0x06, 0x07, 0x08]))
         let frame2 = try NewConnectionIDFrame(
             sequenceNumber: 1,  // Same sequence number
@@ -80,17 +77,12 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xBB, count: 16)
         )
 
-        // RFC 9000: If it receives a CID with a sequence number equal to
-        // an existing CID, but with different CID or token, MUST be treated
-        // as a connection error of type PROTOCOL_VIOLATION.
-        //
-        // TODO: handleNewConnectionID should detect and reject this
-
-        try manager.handleNewConnectionID(frame2)  // Currently does NOT validate
-
-        // The second frame should have been rejected or the original retained
-        _ = manager.availablePeerCIDs
-        // Should still have the original CID, not the duplicate
+        // This is expected to throw duplicateSequenceNumber error
+        #expect(
+            throws: ConnectionIDManager.ConnectionIDError.duplicateSequenceNumber(sequenceNumber: 1)
+        ) {
+            try manager.handleNewConnectionID(frame2)
+        }
     }
 
     @Test("active_connection_id_limit enforcement")
@@ -128,10 +120,12 @@ struct ConnectionIDRFCTests {
 
         // RFC 9000: Providing excess CIDs may cause connection error
         // The implementation should validate against the limit
-        try manager.handleNewConnectionID(excessFrame)
-
-        // Note: Current implementation doesn't enforce this strictly
-        // TODO: Add limit enforcement in handleNewConnectionID
+        #expect(
+            throws: ConnectionIDManager.ConnectionIDError.exceededConnectionIDLimit(
+                limit: 2, current: 3)
+        ) {
+            try manager.handleNewConnectionID(excessFrame)
+        }
     }
 
     // MARK: - RFC 9000 §5.1.2: RETIRE_CONNECTION_ID
