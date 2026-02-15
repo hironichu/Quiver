@@ -101,8 +101,8 @@ public struct StreamFrame: Sendable, Hashable {
     public var frameTypeByte: UInt8 {
         var byte: UInt8 = 0x08
         if offset > 0 { byte |= 0x04 }  // OFF bit
-        if hasLength { byte |= 0x02 }    // LEN bit
-        if fin { byte |= 0x01 }          // FIN bit
+        if hasLength { byte |= 0x02 }  // LEN bit
+        if fin { byte |= 0x01 }  // FIN bit
         return byte
     }
 }
@@ -284,6 +284,12 @@ public struct NewConnectionIDFrame: Sendable, Hashable {
                 expected: ProtocolLimits.statelessResetTokenLength
             )
         }
+        // RFC 9000 Section 19.15: The Retire Prior To field MUST NOT be greater than the Sequence Number field.
+        guard retirePriorTo <= sequenceNumber else {
+            throw FrameError.invalidRetirePriorTo(
+                retirePriorTo: retirePriorTo, sequenceNumber: sequenceNumber)
+        }
+
         self.sequenceNumber = sequenceNumber
         self.retirePriorTo = retirePriorTo
         self.connectionID = connectionID
@@ -299,8 +305,9 @@ public struct NewConnectionIDFrame: Sendable, Hashable {
         connectionID: ConnectionID,
         statelessResetToken: Data
     ) {
-        assert(statelessResetToken.count == ProtocolLimits.statelessResetTokenLength,
-               "Stateless reset token must be \(ProtocolLimits.statelessResetTokenLength) bytes")
+        assert(
+            statelessResetToken.count == ProtocolLimits.statelessResetTokenLength,
+            "Stateless reset token must be \(ProtocolLimits.statelessResetTokenLength) bytes")
         self.sequenceNumber = sequenceNumber
         self.retirePriorTo = retirePriorTo
         self.connectionID = connectionID
@@ -312,6 +319,8 @@ public struct NewConnectionIDFrame: Sendable, Hashable {
 public enum FrameError: Error, Sendable, Equatable {
     /// Stateless reset token has invalid length
     case invalidStatelessResetTokenLength(actual: Int, expected: Int)
+    /// Retire Prior To field is greater than Sequence Number (RFC 9000 Section 19.15)
+    case invalidRetirePriorTo(retirePriorTo: UInt64, sequenceNumber: UInt64)
 }
 
 // MARK: - CONNECTION_CLOSE Frame

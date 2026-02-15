@@ -923,6 +923,9 @@ Client                          Server
 
 ### WebTransport API Reference
 
+<<<<<<< HEAD
+#### WebTransportOptions (Simple Client)
+=======
 #### WebTransportConfiguration
 
 Unified configuration shared by both client and server. Composes `QUICConfiguration` directly — no property duplication.
@@ -950,11 +953,14 @@ config.quic.initialMaxStreamsBidi = 200
 ```
 
 #### WebTransportServer
+>>>>>>> develop
 
-The server-side convenience wrapper that handles session establishment automatically:
+User-friendly client options with sensible defaults. TLS/security provider creation is the caller's responsibility when full TLS control is needed.
 
 ```swift
 import HTTP3
+<<<<<<< HEAD
+=======
 import QUIC
 
 // Create server with unified configuration + server-only options
@@ -969,12 +975,26 @@ let server = WebTransportServer(
         allowedPaths: ["/echo"]     // restrict accepted paths
     )
 )
+>>>>>>> develop
 
-// Optionally handle regular HTTP/3 requests alongside WebTransport
-await server.onRequest { context in
-    try await context.respond(HTTP3Response(status: 200, body: Data("OK".utf8)))
-}
+// Insecure defaults for dev/testing
+let opts = WebTransportOptions.insecure()
 
+<<<<<<< HEAD
+// Full customization
+let opts = WebTransportOptions(
+    caCertificates: [caCertData],
+    verifyPeer: true,
+    alpn: ["h3"],
+    headers: [("authorization", "Bearer ...")],
+    datagramStrategy: .fifo,
+    maxIdleTimeout: .seconds(30),
+    connectionReadyTimeout: .seconds(10),
+    connectTimeout: .seconds(10),
+    initialMaxStreamsBidi: 100,
+    initialMaxStreamsUni: 100,
+    maxSessions: 1
+=======
 // Process incoming sessions
 Task {
     for await session in await server.incomingSessions {
@@ -995,6 +1015,7 @@ let server = try await WebTransportServer.listen(
     port: 4445,
     configuration: config,
     serverOptions: .init(allowedPaths: ["/echo"])
+>>>>>>> develop
 )
 // Returns immediately — serve() runs in the background
 for await session in server.incomingSessions {
@@ -1002,16 +1023,127 @@ for await session in server.incomingSessions {
 }
 ```
 
-#### WebTransportClient
+#### WebTransportOptionsAdvanced (Power-User Client)
 
-The client-side wrapper that establishes sessions via Extended CONNECT:
+Accepts a full `QUICConfiguration` and `HTTP3Settings` directly. `validated()` merges mandatory WebTransport flags without overriding user choices.
 
+<<<<<<< HEAD
+```swift
+import HTTP3
+import QUIC
+
+let opts = WebTransportOptionsAdvanced(
+    quic: myQuicConfig,
+    http3Settings: HTTP3Settings(
+        enableConnectProtocol: true,
+        enableH3Datagram: true,
+        webtransportMaxSessions: 4
+    ),
+    headers: [("authorization", "Bearer ...")],
+    connectionReadyTimeout: .seconds(10),
+    connectTimeout: .seconds(10)
+)
+// validated() ensures WT-mandatory flags are set
+let safe = opts.validated()
+```
+
+#### WebTransportServer
+
+Server actor with middleware and path-based routing:
+
+=======
 **One-call convenience (Tier 1):**
+
+>>>>>>> develop
+```swift
+import HTTP3
+import QUIC
+
+<<<<<<< HEAD
+let serverOpts = WebTransportServerOptions(
+    certificateChain: [certData],
+    privateKey: keyData,
+    maxSessions: 4,
+    maxConnections: 0  // unlimited
+)
+
+let server = WebTransportServer(
+    host: "0.0.0.0",
+    port: 4445,
+    options: serverOpts,
+    middleware: { context in
+        // Inspect context.path, context.headers, context.origin
+        return .accept  // or .reject(reason: "forbidden")
+    }
+)
+
+// Register routes with inline session handlers — like a normal HTTP router.
+// Sessions dispatched to a handler do NOT appear in incomingSessions.
+await server.register(path: "/echo") { session in
+    for await stream in await session.incomingBidirectionalStreams {
+        let data = try await stream.read()
+        try await stream.write(data) // Echo
+    }
+}
+
+// Routes can combine middleware (accept/reject gating) with a handler
+await server.register(
+    path: "/chat",
+    middleware: { ctx in
+        guard ctx.origin == "https://trusted.example.com" else {
+            return .reject(reason: "untrusted origin")
+        }
+        return .accept
+    }
+) { session in
+    for await stream in await session.incomingBidirectionalStreams {
+        // handle chat streams...
+    }
+}
+
+// Paths without a handler still work — sessions go to incomingSessions
+await server.register(path: "/monitor")
+
+// Option A: simple listen (server builds QUIC endpoint internally)
+try await server.listen()
+
+// Option B: bring your own QUIC endpoint (recommended for full TLS control)
+await server.serve(connectionSource: quicEndpoint.newConnections)
+
+// Sessions on routes without a handler (or on an open server with no
+// routes registered) fall through here. session.path is available.
+for await session in await server.incomingSessions {
+    print("Unrouted session on path: \(await session.path)")
+    Task { await handleSession(session) }
+}
+```
+
+#### WebTransport.connect (Client Entry Point)
+
+Single namespace with `connect` overloads that return a ready-to-use `WebTransportSession`:
+
+**Simple (insecure defaults for dev/testing):**
+
+```swift
+import HTTP3
+
+let session = try await WebTransport.connect(
+    url: "https://example.com:4445/echo",
+    options: .insecure()
+)
+// Session is ready -- QUIC endpoint, HTTP/3, and Extended CONNECT all handled internally
+```
+
+**Advanced (full QUIC config control):**
 
 ```swift
 import HTTP3
 import QUIC
 
+let session = try await WebTransport.connect(
+    url: "https://example.com:4445/echo",
+    options: WebTransportOptionsAdvanced(quic: myQuicConfig)
+=======
 let config = WebTransportConfiguration(quic: myQuicConfig)
 let session = try await WebTransportClient.connect(
     url: "https://example.com:4445/echo",
@@ -1040,6 +1172,7 @@ try await client.initialize()
 let session = try await client.connect(
     authority: "example.com:4445",
     path: "/echo"
+>>>>>>> develop
 )
 ```
 
@@ -1069,6 +1202,9 @@ for await stream in await session.incomingUnidirectionalStreams {
 
 // Datagrams (unreliable, unordered)
 try await session.sendDatagram(Data("ping".utf8))
+
+// Send a datagram with TTL (drops if not sent within 100ms)
+try await session.sendDatagram(Data("realtime".utf8), strategy: .ttl(.milliseconds(100)))
 for await datagram in await session.incomingDatagrams {
     print("Got: \(datagram.count) bytes")
 }

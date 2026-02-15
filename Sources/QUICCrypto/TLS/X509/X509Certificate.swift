@@ -2,7 +2,11 @@
 ///
 /// Wrapper around swift-certificates' Certificate type for QUIC/TLS integration.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 @preconcurrency import X509
 import SwiftASN1
 

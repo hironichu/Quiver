@@ -3,7 +3,11 @@
 /// Priority-based stream scheduler with fair queuing within priority levels.
 /// Implements RFC 9218 Extensible Priorities for HTTP/3 integration.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - StreamScheduling Protocol
 

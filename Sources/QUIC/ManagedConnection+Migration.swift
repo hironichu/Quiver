@@ -3,14 +3,18 @@
 /// Extension covering connection migration (RFC 9000 Section 9),
 /// path validation, TLS provider access, and connection ID management.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Logging
-import Synchronization
+import QUICConnection
 import QUICCore
 import QUICCrypto
-import QUICConnection
-import QUICStream
 import QUICRecovery
+import QUICStream
+import Synchronization
 
 // MARK: - Connection IDs
 
@@ -55,7 +59,8 @@ extension ManagedConnection {
         let id = UUID()
 
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
                 state.withLock { s in
                     // Re-check cancellation under the lock so we never
                     // park a continuation that is already doomed.
@@ -73,7 +78,8 @@ extension ManagedConnection {
                         continuation.resume(throwing: ManagedConnectionError.connectionClosed)
                     default:
                         // Handshake still in progress — park the continuation
-                        s.handshakeCompletionContinuations.append((id: id, continuation: continuation))
+                        s.handshakeCompletionContinuations.append(
+                            (id: id, continuation: continuation))
                     }
                 }
             }
@@ -143,21 +149,93 @@ extension ManagedConnection {
         get async { state.withLock { $0.hasReceivedValidPacket } }
     }
 
-    /// Retry the connection with a different QUIC version
+    /// Handles a Version Negotiation packet
+    /// - Parameter packet: The received packet data
+    /// - Returns: Initial packets with new version (if negotiated), or empty if ignored
+    public func handleVersionNegotiationPacket(_ packet: Data) async throws -> [Data] {
+        // Only clients process VN packets
+        guard role == .client else { return [] }
+
+        // RFC 9000 6.2: Discard if we have already received a valid packet
+        if await hasReceivedValidPacket { return [] }
+
+        // Parse supported versions
+        let supportedVersions = try VersionNegotiator.parseVersions(from: packet)
+
+        // Select a common version
+        // We generally support v1. In future we might support others.
+        // For compliance, we should check against our supported versions.
+        let mySupportedVersions: [QUICVersion] = [.v1]
+
+        guard
+            let selectedVersion = VersionNegotiator.selectVersion(
+                offered: mySupportedVersions,
+                supported: supportedVersions
+            )
+        else {
+            // No common version. Abort connection.
+            Self.logger.error(
+                "Version Negotiation failed: no common version found. Server supports: \(supportedVersions)"
+            )
+            state.withLock { $0.handshakeState = .closed }
+            shutdown()
+            throw QUICError.versionNegotiation(supported: supportedVersions.map { $0.rawValue })
+        }
+
+        // Use the selected version
+        return try await retryWithVersion(selectedVersion)
+    }
+
+    /// Retries connection with a new version
     ///
     /// Called when a Version Negotiation packet is received offering a version we support.
     /// This resets the connection state and restarts the handshake with the new version.
     ///
     /// - Parameter version: The new version to use
-    public func retryWithVersion(_ version: QUICVersion) async throws {
-        // This is a complex operation that requires:
-        // 1. Resetting TLS state
-        // 2. Regenerating Initial keys with the new version
-        // 3. Rebuilding and resending ClientHello
-        // For now, throw an error indicating manual reconnection is needed
-        throw QUICVersionError.versionNegotiationReceived(
-            offeredVersions: [version]
+    /// - Returns: Initial packets to send
+    public func retryWithVersion(_ version: QUICVersion) async throws -> [Data] {
+        // 1. Update version on handler
+        handler.connectionState.withLock { state in
+            state.version = version
+            // Reset packet number for Initial space
+            state.nextPacketNumber[.initial] = 0
+            state.largestReceivedPacketNumber.removeValue(forKey: .initial)
+        }
+
+        // 2. Clear Initial packet number space (loss detection & ACKs)
+        handler.pnSpaceManager.discardLevel(.initial)
+
+        // 3. Discard old Initial keys
+        packetProcessor.discardKeys(for: .initial)
+
+        // 4. Re-derive Initial keys with new version
+        // RFC 9001: Initial keys are derived from the Destination Connection ID
+        // field of the first Initial packet sent by the client.
+        // We use the same originalConnectionID.
+        _ = try packetProcessor.deriveAndInstallInitialKeys(
+            connectionID: originalConnectionID,
+            isClient: true,
+            version: version
         )
+
+        // 5. Reset TLS state (ClientHello needs to be rebuilt)
+        try await tlsProvider.reset()
+
+        // 6. Restart handshake
+        let outputs = try await tlsProvider.startHandshake(isClient: true)
+
+        // 6. Process TLS outputs to generate new Initial packets
+        // This will queue them in the outboundQueue and generate them.
+        let packets = try await processTLSOutputs(outputs)
+
+        // 7. Ensure packets are sent
+        // processTLSOutputs calls signalNeedsSend(), which triggers the loop.
+        // But we return them here to ensure immediate transmission.
+
+        // Log the retry
+        Self.logger.info("Retrying connection with version \(version)")
+
+        return packets
     }
 
     // MARK: - Connection Migration (RFC 9000 Section 9)
@@ -268,7 +346,7 @@ extension ManagedConnection {
     /// - Parameter data: The 8-byte response data
     /// - Returns: Whether this completes path validation
     public func handlePathResponse(_ data: Data) -> Bool {
-        if let _ = pathValidationManager.handleResponse(data) {
+        if pathValidationManager.handleResponse(data) != nil {
             // Path validated successfully
             state.withLock { s in
                 s.pathValidated = true

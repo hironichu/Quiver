@@ -1,5 +1,3 @@
-import Logging
-
 /// HTTP/3 Server (RFC 9114)
 ///
 /// A server that listens for incoming QUIC connections and handles
@@ -48,6 +46,7 @@ import Logging
 import Foundation
 import QUIC
 import QUICCore
+import QUICCrypto
 import QPACK
 import Logging
 
@@ -87,15 +86,18 @@ import Logging
 /// Pass an instance to `HTTP3Server.enableWebTransport(_:)` to configure
 /// how WebTransport sessions are accepted.
 ///
+/// - Note: Named `HTTP3WebTransportOptions` to avoid collision with the
+///   client-facing `WebTransportOptions` in the WebTransport module.
+///
 /// ## Usage
 ///
 /// ```swift
 /// let server = HTTP3Server()
 /// let sessions = await server.enableWebTransport(
-///     WebTransportOptions(maxSessionsPerConnection: 4)
+///     HTTP3WebTransportOptions(maxSessionsPerConnection: 4)
 /// )
 /// ```
-public struct WebTransportOptions: Sendable {
+public struct HTTP3WebTransportOptions: Sendable {
     /// Maximum number of concurrent WebTransport sessions per HTTP/3 connection.
     ///
     /// This value is advertised via `SETTINGS_WEBTRANSPORT_MAX_SESSIONS`.
@@ -213,9 +215,55 @@ public actor HTTP3Server {
     /// Stored so that `stop()` can cancel it.
     private var quicRunTask: Task<Void, Error>?
 
+    /// Server options for the simple `init(options:)` + `listen()` path.
+    ///
+    /// `nil` when the server is created with the advanced
+    /// `init(_:maxConnections:)` initializer.
+    private let serverOptions: HTTP3ServerOptions?
+
+    /// Alt-Svc gateway (HTTP/1.1 + HTTP/2 over TCP) that advertises
+    /// HTTP/3 via the `Alt-Svc` header. Created by `listenAll()`.
+    /// Protected by `HTTP3Server` actor isolation.
+    private var gateway: AltSvcGateway?
+
     // MARK: - Initialization
 
-    /// Creates an HTTP/3 server.
+    /// Creates an HTTP/3 server with options.
+    ///
+    /// This is the recommended initializer for most use cases. It
+    /// encapsulates certificate material, TLS policy, transport
+    /// parameters, and HTTP/3 settings in a single options struct.
+    /// Call `listen()` (no arguments) to start the server.
+    ///
+    /// - Parameter options: Server options (certificates, TLS, transport, HTTP/3)
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// let options = HTTP3ServerOptions(
+    ///     certificatePath: "/path/to/cert.pem",
+    ///     privateKeyPath: "/path/to/key.pem"
+    /// )
+    /// let server = HTTP3Server(options: options)
+    ///
+    /// await server.onRequest { context in
+    ///     try await context.respond(status: 200, Data("Hello!".utf8))
+    /// }
+    ///
+    /// try await server.listen()
+    /// ```
+    public init(options: HTTP3ServerOptions) {
+        self.serverOptions = options
+        self.settings = options.buildHTTP3Settings()
+        self.maxConnections = options.maxConnections
+    }
+
+    /// Creates an HTTP/3 server (advanced).
+    ///
+    /// Use this initializer when you need full control over
+    /// `QUICConfiguration` and `TLSConfiguration`. You must pass
+    /// a fully configured `QUICConfiguration` to
+    /// `listen(host:port:quicConfiguration:)`.
     ///
     /// - Parameters:
     ///   - settings: HTTP/3 settings for all connections (default: literal-only QPACK)
@@ -224,6 +272,7 @@ public actor HTTP3Server {
         settings: HTTP3Settings = HTTP3Settings(),
         maxConnections: Int = 0
     ) {
+        self.serverOptions = nil
         self.settings = settings
         self.maxConnections = maxConnections
     }
@@ -328,14 +377,11 @@ public actor HTTP3Server {
         state = .listening
 
         for await quicConnection in connectionSource {
-            // Check if we're stopping
             if state == .stopping || state == .stopped {
                 break
             }
 
-            // Check connection limit
             if maxConnections > 0 && connections.count >= maxConnections {
-                // Reject the connection — close it immediately
                 await quicConnection.close(
                     applicationError: HTTP3ErrorCode.excessiveLoad.rawValue,
                     reason: "Server connection limit reached"
@@ -345,13 +391,10 @@ public actor HTTP3Server {
 
             totalConnectionsAccepted += 1
 
-            // Handle the connection in a background task
             Task { [weak self] in
                 await self?.handleConnection(quicConnection)
             }
         }
-
-        // Connection source ended
         if state == .listening {
             state = .stopped
         }
@@ -389,6 +432,13 @@ public actor HTTP3Server {
         guard state == .listening else { return }
 
         state = .stopping
+
+        // Stop the Alt-Svc gateway first (TCP listeners)
+        if let gw = gateway {
+            await gw.stop()
+            gateway = nil
+            Self.logger.info("Alt-Svc gateway shut down")
+        }
 
         // Cancel the listener task if running
         listenerTask?.cancel()
@@ -600,6 +650,126 @@ public actor HTTP3Server {
     /// feeds incoming connections to the HTTP/3 server.
     ///
     /// The method blocks until `stop()` is called or the connection
+    /// Starts the HTTP/3 server using the stored `HTTP3ServerOptions`.
+    ///
+    /// Validates the options, builds `TLSConfiguration` and
+    /// `QUICConfiguration` internally, then binds and listens.
+    /// Blocks until `stop()` is called.
+    ///
+    /// Only usable when the server was created with `init(options:)`.
+    ///
+    /// - Throws: `HTTP3ServerOptions.ValidationError` if options are invalid,
+    ///   or any TLS/QUIC/socket error if the server cannot start
+    ///
+    /// ## Usage
+    ///
+    /// ```swift
+    /// let server = HTTP3Server(options: HTTP3ServerOptions(
+    ///     certificatePath: "cert.pem",
+    ///     privateKeyPath: "key.pem"
+    /// ))
+    ///
+    /// await server.onRequest { context in
+    ///     try await context.respond(status: 200, Data("OK".utf8))
+    /// }
+    ///
+    /// try await server.listen()
+    /// ```
+    public func listen() async throws {
+        guard let options = serverOptions else {
+            throw HTTP3Error(
+                code: .internalError,
+                reason: "listen() requires HTTP3ServerOptions. "
+                    + "Use init(options:) or call listen(host:port:quicConfiguration:) instead."
+            )
+        }
+
+        try options.validate()
+
+        let tlsConfig = try options.buildTLSConfiguration()
+        let quicConfig = options.buildQUICConfiguration(tlsConfiguration: tlsConfig)
+
+        try await listen(
+            host: options.host,
+            port: options.port,
+            quicConfiguration: quicConfig
+        )
+    }
+
+    /// Starts both the Alt-Svc gateway (TCP) and the HTTP/3 server (QUIC).
+    ///
+    /// 1. Validates options.
+    /// 2. If `gatewayHTTPPort` or `gatewayHTTPSPort` is set, starts the
+    ///    `AltSvcGateway` on those TCP ports.
+    /// 3. Starts the QUIC HTTP/3 server via `listen()`.
+    ///
+    /// The gateway advertises `Alt-Svc: h3=":PORT"` on the HTTPS
+    /// listener so browsers discover HTTP/3 automatically.
+    ///
+    /// Only usable when the server was created with `init(options:)`.
+    ///
+    /// - Throws: `HTTP3ServerOptions.ValidationError`, `AltSvcGatewayError`,
+    ///   or any TLS/QUIC/socket error
+    ///
+    /// ## Usage
+    ///
+    /// ```swift
+    /// let options = HTTP3ServerOptions(
+    ///     certificatePath: "cert.pem",
+    ///     privateKeyPath: "key.pem",
+    ///     gatewayHTTPPort: 80,
+    ///     gatewayHTTPSPort: 443
+    /// )
+    /// let server = HTTP3Server(options: options)
+    ///
+    /// await server.onRequest { context in
+    ///     try await context.respond(status: 200, Data("OK".utf8))
+    /// }
+    ///
+    /// try await server.listenAll()
+    /// ```
+    public func listenAll() async throws {
+        guard let options = serverOptions else {
+            throw HTTP3Error(
+                code: .internalError,
+                reason: "listenAll() requires HTTP3ServerOptions. "
+                    + "Use init(options:) or call listen(host:port:quicConfiguration:) instead."
+            )
+        }
+
+        try options.validate()
+
+        // Start the Alt-Svc gateway if configured
+        if let gatewayConfig = options.buildGatewayConfiguration() {
+            let gw = AltSvcGateway(configuration: gatewayConfig)
+            try await gw.start()
+            self.gateway = gw
+            Self.logger.info(
+                "Alt-Svc gateway started",
+                metadata: [
+                    "httpPort": "\(gatewayConfig.httpPort.map(String.init) ?? "disabled")",
+                    "httpsPort": "\(gatewayConfig.httpsPort.map(String.init) ?? "disabled")",
+                    "h3Port": "\(gatewayConfig.h3Port)",
+                ]
+            )
+        }
+
+        // Start the QUIC HTTP/3 server (blocks until stop())
+        do {
+            try await listen()
+        } catch {
+            // Tear down gateway on QUIC startup failure
+            if let gw = gateway {
+                await gw.stop()
+                gateway = nil
+            }
+            throw error
+        }
+    }
+
+    /// Starts the HTTP/3 server (advanced).
+    ///
+    /// Binds a QUIC endpoint and begins accepting connections. The
     /// source ends. Call `stop()` from another task to shut down.
     ///
     /// - Parameters:
@@ -611,16 +781,19 @@ public actor HTTP3Server {
     /// ## Usage
     ///
     /// ```swift
-    /// let server = HTTP3Server(settings: .literalOnly, maxConnections: 100)
-    ///
-    /// await server.onRequest { context in
-    ///     try await context.respond(status: 200, Data("OK".utf8))
+    /// let tlsConfig = try TLSConfiguration.server(
+    ///     certificatePath: "cert.pem",
+    ///     privateKeyPath: "key.pem"
+    /// )
+    /// var quicConfig = QUICConfiguration()
+    /// quicConfig.securityMode = .production {
+    ///     TLS13Handler(configuration: tlsConfig)
     /// }
     ///
-    /// // Blocks until stop() is called
+    /// let server = HTTP3Server()
     /// try await server.listen(
     ///     host: "0.0.0.0",
-    ///     port: 443,
+    ///     port: 4433,
     ///     quicConfiguration: quicConfig
     /// )
     /// ```
@@ -687,7 +860,7 @@ public actor HTTP3Server {
     /// }
     ///
     /// let sessions = await server.enableWebTransport(
-    ///     WebTransportOptions(maxSessionsPerConnection: 4)
+    ///     HTTP3WebTransportOptions(maxSessionsPerConnection: 4)
     /// )
     ///
     /// Task {
@@ -699,7 +872,7 @@ public actor HTTP3Server {
     /// try await server.listen(host: "0.0.0.0", port: 443, quicConfiguration: config)
     /// ```
     public func enableWebTransport(
-        _ options: WebTransportOptions = WebTransportOptions()
+        _ options: HTTP3WebTransportOptions = HTTP3WebTransportOptions()
     ) -> AsyncStream<WebTransportSession> {
         // Merge WebTransport-required settings
         settings.enableConnectProtocol = true
@@ -790,6 +963,11 @@ public actor HTTP3Server {
         }
 
         return stream
+    }
+
+    //Unsafe operation, expose the QUIC endpoint for advanced use cases (e.g. custom WebTransport handling, manual QUiC streams stat tracking, etc.)
+    public var endpoint: QUICEndpoint? {
+        return quicEndpoint
     }
 }
 

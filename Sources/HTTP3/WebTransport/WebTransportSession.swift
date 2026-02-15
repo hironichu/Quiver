@@ -51,11 +51,15 @@
 /// - [RFC 9297: HTTP Datagrams and the Capsule Protocol](https://www.rfc-editor.org/rfc/rfc9297.html)
 /// - [RFC 9220: Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html)
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
+import Logging
+import QUIC
 import QUICCore
 import QUICStream
-import QUIC
-import Logging
 
 // MARK: - WebTransport Session
 
@@ -136,6 +140,20 @@ public actor WebTransportSession {
     /// Equal to `sessionID / 4`. Used as the prefix varint in
     /// QUIC DATAGRAM frames to associate datagrams with this session.
     public let quarterStreamID: UInt64
+
+    /// The `:path` from the Extended CONNECT request (e.g. `"/echo"`).
+    ///
+    /// On the server side this is the path the client requested.
+    /// On the client side this is the path that was connected to.
+    /// Empty string when not provided at creation time.
+    public let path: String
+
+    /// The `:authority` from the Extended CONNECT request (e.g. `"example.com:4433"`).
+    ///
+    /// On the server side this is the authority the client targeted.
+    /// On the client side this is the authority that was connected to.
+    /// Empty string when not provided at creation time.
+    public let authority: String
 
     /// The QUIC stream underlying the Extended CONNECT request.
     ///
@@ -237,17 +255,23 @@ public actor WebTransportSession {
     /// transition to `.established` and begin processing capsules.
     ///
     /// - Parameters:
-    ///   - connectStream: The QUIC stream of the Extended CONNECT request
-    ///   - connection: The HTTP/3 connection this session belongs to
-    ///   - role: The endpoint role (client or server)
+    ///   - connectStream: The QUIC stream of the Extended CONNECT request.
+    ///   - connection: The HTTP/3 connection this session belongs to.
+    ///   - role: The endpoint role (client or server).
+    ///   - path: The request path associated with the session (client-provided for outgoing sessions).
+    ///   - authority: The request authority associated with the session (host or host:port).
     public init(
         connectStream: any QUICStreamProtocol,
         connection: HTTP3Connection,
-        role: Role
+        role: Role,
+        path: String = "",
+        authority: String = ""
     ) {
         self.connectStream = connectStream
         self.connection = connection
         self.role = role
+        self.path = path
+        self.authority = authority
         self.sessionID = connectStream.id
         self.quarterStreamID = connectStream.id / 4
 
@@ -557,7 +581,9 @@ public actor WebTransportSession {
     /// quarter stream ID prefix (RFC 9297). Datagrams are unreliable
     /// and may be dropped by the network.
     ///
-    /// - Parameter data: The datagram payload
+    /// - Parameters:
+    ///   - data: The application payload to send as a WebTransport datagram.
+    ///   - strategy: The sending strategy (priority, expiry). Defaults to `.fifo`.
     /// - Throws: `WebTransportError` if the session is not established
     ///   or datagrams are not supported
     ///
@@ -573,9 +599,9 @@ public actor WebTransportSession {
     /// ## Example
     ///
     /// ```swift
-    /// try await session.sendDatagram(Data("ping".utf8))
+    /// try await session.sendDatagram(Data("ping".utf8), strategy: .ttl(.milliseconds(100)))
     /// ```
-    public func sendDatagram(_ data: Data) async throws {
+    public func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy = .fifo) async throws {
         guard state == .established else {
             throw WebTransportError.sessionNotEstablished
         }
@@ -587,7 +613,7 @@ public actor WebTransportSession {
 
         // Send via the QUIC connection's datagram API (RFC 9221)
         do {
-            try await connection.quicConnection.sendDatagram(payload)
+            try await connection.quicConnection.sendDatagram(payload, strategy: strategy)
         } catch {
             throw WebTransportError.datagramError(
                 "Failed to send datagram for session \(sessionID)",
@@ -875,6 +901,8 @@ public actor WebTransportSession {
         parts.append("sessionID=\(sessionID)")
         parts.append("state=\(state)")
         parts.append("role=\(role)")
+        if !path.isEmpty { parts.append("path=\(path)") }
+        if !authority.isEmpty { parts.append("authority=\(authority)") }
         parts.append("bidiStreams=\(activeBidiStreams.count)")
         parts.append("uniStreams=\(activeUniStreams.count)")
         return "WebTransportSession(\(parts.joined(separator: ", ")))"
@@ -920,7 +948,8 @@ public actor WebTransportSession {
 
             // Decode all complete capsules from the buffer
             do {
-                let (capsules, consumed) = try WebTransportCapsuleCodec.decodeAll(from: capsuleBuffer)
+                let (capsules, consumed) = try WebTransportCapsuleCodec.decodeAll(
+                    from: capsuleBuffer)
 
                 if consumed > 0 {
                     capsuleBuffer = Data(capsuleBuffer.dropFirst(consumed))

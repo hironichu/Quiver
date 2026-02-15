@@ -3,7 +3,11 @@
 /// High-level stream wrapper implementing QUICStreamProtocol.
 /// Provides async read/write operations for application data.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Synchronization
 
 // MARK: - Managed Stream

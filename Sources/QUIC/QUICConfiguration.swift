@@ -2,7 +2,11 @@
 ///
 /// Configuration options for QUIC connections.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 import QUICCrypto
 import QUICRecovery
@@ -38,11 +42,11 @@ public enum QUICSecurityMode: Sendable {
     case development(tlsProviderFactory: @Sendable () -> any TLS13Provider)
 
     #if DEBUG
-    /// Testing environment: Uses MockTLSProvider
-    /// - Warning: Never use in production. This mode disables encryption.
-    /// - Note: This case is only available in DEBUG builds, matching the
-    ///   `QUICConfiguration.testing()` factory method guard.
-    case testing
+        /// Testing environment: Uses MockTLSProvider
+        /// - Warning: Never use in production. This mode disables encryption.
+        /// - Note: This case is only available in DEBUG builds, matching the
+        ///   `QUICConfiguration.testing()` factory method guard.
+        case testing
     #endif
 }
 
@@ -267,6 +271,14 @@ public struct QUICConfiguration: Sendable {
     /// Preferred connection ID length (default: 8)
     public var connectionIDLength: Int
 
+    // MARK: - Stateless Reset
+
+    /// Static key for generating deterministic Stateless Reset Tokens (RFC 9000 Section 10.3).
+    ///
+    /// If set, the server can generate valid Stateless Reset tokens for ANY connection ID,
+    /// allowing it to reset connections it has lost state for.
+    public var statelessResetKey: Data?
+
     // MARK: - Version
 
     /// QUIC version to use
@@ -279,6 +291,44 @@ public struct QUICConfiguration: Sendable {
     /// Used for QUIC transport parameter negotiation. For TLS-level ALPN
     /// configuration, use `TLSConfiguration.alpnProtocols` instead.
     public var alpn: [String]
+
+    // MARK: - Trust Source Passthrough (for TLS layer resolution)
+
+    /// Optional DER-encoded trusted CA certificates supplied by upper layers.
+    ///
+    /// This field is a passthrough hint for TLS provider creation code.
+    /// If set, the TLS layer should map this to `TLSConfiguration.trustedCACertificates`.
+    public var userTrustedCACertificatesDER: [Data]?
+
+    /// Optional path to a PEM bundle containing trusted CA certificates.
+    ///
+    /// This field is a passthrough hint for TLS provider creation code.
+    /// If set, the TLS layer can load certificates via PEM parsing and map
+    /// them into `TLSConfiguration.trustedCACertificates`.
+    public var userTrustedCAsPEMPath: String?
+
+    /// Whether upper layers request using system trust roots when no explicit
+    /// CA source is provided.
+    ///
+    /// Default is `true` to preserve existing system-trust behavior.
+    public var useSystemTrustStore: Bool
+
+    /// Whether peer certificate verification is required.
+    ///
+    /// This value is passed through to the TLS layer and should map to
+    /// `TLSConfiguration.verifyPeer`.
+    public var verifyPeer: Bool
+
+    /// Custom certificate validator for peer certificates.
+    ///
+    /// Called during the TLS handshake to validate the peer's certificate chain.
+    /// This allows implementing platform-specific trust evaluation (e.g. `SecTrust` on iOS)
+    /// or custom pinning logic.
+    ///
+    /// - Parameter certificates: The peer's certificate chain (DER encoded), leaf first
+    /// - Returns: Application-specific peer info, or nil if validation succeeds but no info is needed
+    /// - Throws: Any error to reject the certificate and abort the connection
+    public var certificateValidator: CertificateValidator?
 
     // MARK: - TLS Provider
 
@@ -335,14 +385,15 @@ public struct QUICConfiguration: Sendable {
     /// `serve(host:port:)` or `dial(address:)`.  Has no effect when
     /// a pre-built socket is supplied directly.
     ///
-    /// - Default: ``SocketConfiguration()``
+    /// - Default: `SocketConfiguration()`
     public var socketConfiguration: SocketConfiguration
 
+    
     // MARK: - Initialization
 
     /// Creates a default configuration.
     ///
-    /// All sizes derive from ``ProtocolLimits`` so that no bare `1200`
+    /// All sizes derive from `ProtocolLimits` so that no bare `1200`
     /// literals exist in the configuration layer.
     ///
     /// - Note: Use `TLSConfiguration` for all TLS settings, and prefer
@@ -360,8 +411,15 @@ public struct QUICConfiguration: Sendable {
         self.maxAckDelay = .milliseconds(25)
         self.ackDelayExponent = 3
         self.connectionIDLength = 8
+        self.statelessResetKey = nil
         self.version = .v1
         self.alpn = ["h3"]
+        self.userTrustedCACertificatesDER = nil
+        self.userTrustedCAsPEMPath = nil
+        self.useSystemTrustStore = true
+        self.verifyPeer = true
+        self.certificateValidator = nil
+        self.certificateValidator = nil
         self.enableDatagrams = false
         self.maxDatagramFrameSize = 65535
         self.tlsProviderFactory = nil
@@ -388,7 +446,8 @@ public struct QUICConfiguration: Sendable {
             case .payloadSizeBelowMinimum(let configured, let minimum):
                 return "maxUDPPayloadSize (\(configured)) < RFC 9000 minimum (\(minimum))"
             case .socketDatagramSizeTooSmall(let socketMax, let quicPayload):
-                return "socketConfiguration.maxDatagramSize (\(socketMax)) < maxUDPPayloadSize (\(quicPayload))"
+                return
+                    "socketConfiguration.maxDatagramSize (\(socketMax)) < maxUDPPayloadSize (\(quicPayload))"
             case .connectionIDLengthOutOfRange(let length):
                 return "connectionIDLength (\(length)) outside valid range 0...20"
             }
@@ -471,27 +530,27 @@ public struct QUICConfiguration: Sendable {
     }
 
     #if DEBUG
-    /// Creates a testing configuration with MockTLSProvider.
-    ///
-    /// - Warning: **Never use in production.** This mode disables TLS encryption
-    ///   and uses a mock provider that does not provide any security.
-    ///
-    /// - Returns: A configuration with testing security mode
-    ///
-    /// ## Example
-    ///
-    /// ```swift
-    /// // Only in unit tests
-    /// let config = QUICConfiguration.testing()
-    /// ```
-    ///
-    /// - Note: This method is only available in DEBUG builds.
-    @available(*, message: "Testing mode disables TLS encryption. Never use in production.")
-    public static func testing() -> QUICConfiguration {
-        var config = QUICConfiguration()
-        config.securityMode = .testing
-        return config
-    }
+        /// Creates a testing configuration with MockTLSProvider.
+        ///
+        /// - Warning: **Never use in production.** This mode disables TLS encryption
+        ///   and uses a mock provider that does not provide any security.
+        ///
+        /// - Returns: A configuration with testing security mode
+        ///
+        /// ## Example
+        ///
+        /// ```swift
+        /// // Only in unit tests
+        /// let config = QUICConfiguration.testing()
+        /// ```
+        ///
+        /// - Note: This method is only available in DEBUG builds.
+        @available(*, message: "Testing mode disables TLS encryption. Never use in production.")
+        public static func testing() -> QUICConfiguration {
+            var config = QUICConfiguration()
+            config.securityMode = .testing
+            return config
+        }
     #endif
 }
 
@@ -510,8 +569,9 @@ extension TransportParameters {
         self.initialMaxStreamsBidi = config.initialMaxStreamsBidi
         self.initialMaxStreamsUni = config.initialMaxStreamsUni
         self.ackDelayExponent = config.ackDelayExponent
-        self.maxAckDelay = UInt64(config.maxAckDelay.components.seconds * 1000 +
-                                   config.maxAckDelay.components.attoseconds / 1_000_000_000_000_000)
+        self.maxAckDelay = UInt64(
+            config.maxAckDelay.components.seconds * 1000 + config.maxAckDelay.components.attoseconds
+                / 1_000_000_000_000_000)
         self.initialSourceConnectionID = sourceConnectionID
 
         // RFC 9221: Advertise max_datagram_frame_size when datagrams are enabled

@@ -19,7 +19,11 @@
 /// per state for efficient byte-at-a-time decoding, falling back to
 /// bit-at-a-time decoding for correctness and simplicity.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Huffman Codec
 

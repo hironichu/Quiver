@@ -7,9 +7,14 @@
 /// - Unidirectional stream routing
 /// - Datagram routing
 
-import Foundation
 import QUIC
 import QUICCore
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - WebTransport Session Management
 
@@ -135,7 +140,9 @@ extension HTTP3Connection {
         let session = WebTransportSession(
             connectStream: context.stream,
             connection: self,
-            role: role
+            role: role,
+            path: context.request.path,
+            authority: context.request.authority
         )
 
         // Enforce per-connection session quota
@@ -154,13 +161,17 @@ extension HTTP3Connection {
     /// Extended CONNECT.
     ///
     /// - Parameters:
-    ///   - connectStream: The QUIC stream from the Extended CONNECT
-    ///   - response: The HTTP/3 response (should be 200)
-    /// - Returns: The started `WebTransportSession`
-    /// - Throws: `WebTransportError` if the response is not 200 or setup fails
+    ///   - connectStream: The QUIC stream from the Extended CONNECT.
+    ///   - response: The HTTP/3 response head (must be a success status).
+    ///   - path: The request path associated with the WebTransport session.
+    ///   - authority: The request authority associated with the WebTransport session.
+    /// - Returns: The started `WebTransportSession`.
+    /// - Throws: `WebTransportError` if the response is not successful or setup fails.
     public func createClientWebTransportSession(
         connectStream: any QUICStreamProtocol,
-        response: borrowing HTTP3ResponseHead
+        response: borrowing HTTP3ResponseHead,
+        path: String = "",
+        authority: String = ""
     ) async throws -> WebTransportSession {
         guard response.isSuccess else {
             throw WebTransportError.sessionRejected(
@@ -172,7 +183,9 @@ extension HTTP3Connection {
         let session = WebTransportSession(
             connectStream: connectStream,
             connection: self,
-            role: .client
+            role: .client,
+            path: path,
+            authority: authority
         )
 
         // Enforce per-connection session quota (client side)
@@ -205,8 +218,7 @@ extension HTTP3Connection {
         // Client-initiated bidi streams are even (0, 4, 8, ...),
         // Server-initiated bidi streams are 1, 5, 9, ...
         // The connection owns any stream routed through it.
-        webTransportSessions.keys.contains(streamID) ||
-        localControlStream?.id == streamID
+        webTransportSessions.keys.contains(streamID) || localControlStream?.id == streamID
     }
 
     // MARK: - WebTransport Stream Routing
@@ -228,7 +240,8 @@ extension HTTP3Connection {
             do {
                 let moreData = try await stream.read()
                 guard !moreData.isEmpty else {
-                    Self.logger.warning("WebTransport uni stream \(stream.id): empty after stream type")
+                    Self.logger.warning(
+                        "WebTransport uni stream \(stream.id): empty after stream type")
                     return
                 }
                 data = moreData
@@ -239,14 +252,19 @@ extension HTTP3Connection {
         }
 
         do {
-            guard let (sessionID, remaining) = try WebTransportStreamFraming.readUnidirectionalSessionID(from: data) else {
-                Self.logger.warning("WebTransport uni stream \(stream.id): insufficient data for session ID")
+            guard
+                let (sessionID, remaining) =
+                    try WebTransportStreamFraming.readUnidirectionalSessionID(from: data)
+            else {
+                Self.logger.warning(
+                    "WebTransport uni stream \(stream.id): insufficient data for session ID")
                 await stream.reset(errorCode: WebTransportStreamErrorCode.toHTTP3ErrorCode(0))
                 return
             }
 
             guard let session = webTransportSessions[sessionID] else {
-                Self.logger.warning("WebTransport uni stream \(stream.id): unknown session ID \(sessionID)")
+                Self.logger.warning(
+                    "WebTransport uni stream \(stream.id): unknown session ID \(sessionID)")
                 await stream.reset(errorCode: WebTransportStreamErrorCode.toHTTP3ErrorCode(0))
                 return
             }
@@ -254,7 +272,8 @@ extension HTTP3Connection {
             await session.deliverIncomingUnidirectionalStream(stream, initialData: remaining)
 
         } catch {
-            Self.logger.warning("WebTransport uni stream \(stream.id): session ID decode error: \(error)")
+            Self.logger.warning(
+                "WebTransport uni stream \(stream.id): session ID decode error: \(error)")
             await stream.reset(errorCode: WebTransportStreamErrorCode.toHTTP3ErrorCode(0))
         }
     }
@@ -272,7 +291,10 @@ extension HTTP3Connection {
                 guard let self = self else { break }
 
                 do {
-                    guard let (quarterStreamID, appPayload) = try WebTransportSession.parseDatagram(datagramPayload) else {
+                    guard
+                        let (quarterStreamID, appPayload) = try WebTransportSession.parseDatagram(
+                            datagramPayload)
+                    else {
                         continue
                     }
 

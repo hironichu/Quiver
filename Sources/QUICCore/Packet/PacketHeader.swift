@@ -259,7 +259,14 @@ public struct ShortHeader: Sendable, Hashable {
 
     /// Key phase bit (for key updates)
     public var keyPhase: Bool {
-        (firstByte & 0x04) != 0
+        get { (firstByte & 0x04) != 0 }
+        set {
+            if newValue {
+                firstByte |= 0x04
+            } else {
+                firstByte &= ~0x04
+            }
+        }
     }
 
     /// Creates a short header
@@ -506,7 +513,7 @@ public struct ProtectedLongHeader: Sendable, Hashable {
         // RFC 9000 §17.2: Endpoints MUST treat receipt of a packet that has a
         // non-zero value for reserved bits after removing both packet and header
         // protection as a connection error of type PROTOCOL_VIOLATION.
-        try header.validate(strict: true)
+        try header.validate()
 
         return header
     }
@@ -565,7 +572,8 @@ public struct ProtectedShortHeader: Sendable, Hashable {
     ///   - data: The packet data
     ///   - dcidLength: The expected DCID length (from connection state)
     /// - Returns: The parsed protected header and the number of bytes consumed
-    public static func parse(from data: Data, dcidLength: Int) throws -> (ProtectedShortHeader, Int) {
+    public static func parse(from data: Data, dcidLength: Int) throws -> (ProtectedShortHeader, Int)
+    {
         var reader = DataReader(data)
 
         guard let firstByte = reader.readByte() else {
@@ -614,7 +622,7 @@ public struct ProtectedShortHeader: Sendable, Hashable {
         // RFC 9000 §17.3: Endpoints MUST treat receipt of a packet that has a
         // non-zero value for reserved bits after removing both packet and header
         // protection as a connection error of type PROTOCOL_VIOLATION.
-        try header.validate(strict: true)
+        try header.validate()
 
         return header
     }
@@ -642,7 +650,9 @@ public enum ProtectedPacketHeader: Sendable, Hashable {
     ///   - data: The packet data
     ///   - dcidLength: For short headers, the expected DCID length (from connection state)
     /// - Returns: The parsed protected header and the number of bytes consumed
-    public static func parse(from data: Data, dcidLength: Int = 0) throws -> (ProtectedPacketHeader, Int) {
+    public static func parse(from data: Data, dcidLength: Int = 0) throws -> (
+        ProtectedPacketHeader, Int
+    ) {
         guard !data.isEmpty else {
             throw ParseError.insufficientData
         }
@@ -654,7 +664,8 @@ public enum ProtectedPacketHeader: Sendable, Hashable {
             let (header, length) = try ProtectedLongHeader.parse(from: data)
             return (.long(header), length)
         } else {
-            let (header, length) = try ProtectedShortHeader.parse(from: data, dcidLength: dcidLength)
+            let (header, length) = try ProtectedShortHeader.parse(
+                from: data, dcidLength: dcidLength)
             return (.short(header), length)
         }
     }
@@ -772,12 +783,10 @@ public enum PacketNumberEncoding {
 
 /// Header validation errors
 public enum HeaderValidationError: Error, Sendable {
-    /// The fixed bit (0x40) is not set to 1
-    case fixedBitNotSet
-    /// Reserved bits are not zero (warning-level, may be ignored per RFC 8999)
-    case reservedBitsNotZero(bits: UInt8)
     /// Retry packet is missing the Retry Integrity Tag (RFC 9001 Section 5.8)
     case missingRetryIntegrityTag
+    /// Reserved bits are non-zero (RFC 9000 Section 17.2/17.3)
+    case invalidReservedBits
 }
 
 extension LongHeader {
@@ -785,28 +794,29 @@ extension LongHeader {
     ///
     /// RFC 9000 Section 17.2: The Fixed bit MUST be set to 1.
     /// Reserved bits (two bits between type and packet number length) SHOULD be 0.
-    ///
+    /// If not it must be ignored
+    //
     /// Note: Per RFC 8999 (QUIC Invariants), receivers MUST ignore the fixed bit
     /// for future versions. However, for QUIC v1, the fixed bit validation can
     /// detect corrupted packets early.
     ///
     /// - Parameter strict: If true, also validates reserved bits; if false, only checks fixed bit
     /// - Throws: HeaderValidationError if validation fails
-    public func validate(strict: Bool = false) throws {
+    public func validate() throws {
         // Check fixed bit (0x40) is set
         // Note: Version Negotiation packets have arbitrary bits per RFC 8999
         if !version.isNegotiation {
-            guard (firstByte & 0x40) != 0 else {
-                throw HeaderValidationError.fixedBitNotSet
-            }
+            // RFC 9287: Greasing the QUIC Bit - Endpoints MUST NOT discard packets with fixed bit = 0
+            _ = (firstByte & 0x40) != 0
         }
 
-        // For strict validation, check reserved bits (bits 3-4 in Initial/Handshake/0-RTT)
-        // These are the two bits between packet type and packet number length
-        if strict && hasPacketNumber {
-            let reservedBits = (firstByte >> 2) & 0x03
-            if reservedBits != 0 {
-                throw HeaderValidationError.reservedBitsNotZero(bits: reservedBits)
+        // RFC 9000 Section 17.2: Reserved bits (bits 2-3) MUST be 0
+        // "Endpoints MUST treat receipt of a packet that has a non-zero value for reserved bits
+        // after removing both packet and header protection as a connection error of type PROTOCOL_VIOLATION."
+        if !version.isNegotiation {
+            if (firstByte & 0x0C) != 0 {
+                // We use a specific error for header validation failures
+                throw HeaderValidationError.invalidReservedBits
             }
         }
 
@@ -824,21 +834,18 @@ extension ShortHeader {
     ///
     /// RFC 9000 Section 17.3: The Fixed bit MUST be set to 1.
     /// Reserved bits (bits 3-4) SHOULD be 0.
-    ///
-    /// - Parameter strict: If true, also validates reserved bits; if false, only checks fixed bit
+    /// If not it must be ignored
     /// - Throws: HeaderValidationError if validation fails
-    public func validate(strict: Bool = false) throws {
+    public func validate() throws {
         // Check fixed bit (0x40) is set
-        guard (firstByte & 0x40) != 0 else {
-            throw HeaderValidationError.fixedBitNotSet
-        }
+        // RFC 9287: Greasing the QUIC Bit
+        // Endpoints MUST NOT discard packets with the fixed bit set to 0.
+        // We ignore the value of the fixed bit for Short Headers.
+        _ = (firstByte & 0x40) != 0
 
-        // For strict validation, check reserved bits (0x18 = bits 3-4)
-        if strict {
-            let reservedBits = (firstByte >> 3) & 0x03
-            if reservedBits != 0 {
-                throw HeaderValidationError.reservedBitsNotZero(bits: reservedBits)
-            }
+        // RFC 9000 Section 17.3: Reserved bits (bits 3-4) MUST be 0
+        if (firstByte & 0x18) != 0 {
+            throw HeaderValidationError.invalidReservedBits
         }
     }
 }

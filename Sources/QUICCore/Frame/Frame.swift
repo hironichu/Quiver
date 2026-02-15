@@ -156,12 +156,14 @@ public enum Frame: Sendable, Hashable {
         case .maxStreams(let f): return f.isBidirectional ? .maxStreamsBidi : .maxStreamsUni
         case .dataBlocked: return .dataBlocked
         case .streamDataBlocked: return .streamDataBlocked
-        case .streamsBlocked(let f): return f.isBidirectional ? .streamsBlockedBidi : .streamsBlockedUni
+        case .streamsBlocked(let f):
+            return f.isBidirectional ? .streamsBlockedBidi : .streamsBlockedUni
         case .newConnectionID: return .newConnectionID
         case .retireConnectionID: return .retireConnectionID
         case .pathChallenge: return .pathChallenge
         case .pathResponse: return .pathResponse
-        case .connectionClose(let f): return f.isApplicationError ? .connectionCloseApp : .connectionClose
+        case .connectionClose(let f):
+            return f.isApplicationError ? .connectionCloseApp : .connectionClose
         case .handshakeDone: return .handshakeDone
         case .datagram(let f): return f.hasLength ? .datagramWithLength : .datagram
         }
@@ -197,7 +199,8 @@ public enum Frame: Sendable, Hashable {
             // - NEW_TOKEN (server-only, post-handshake)
             // - PATH_RESPONSE (requires path validation, not possible in 0-RTT)
             switch frameType {
-            case .ack, .ackECN, .crypto, .handshakeDone, .newToken, .pathResponse:
+            case .ack, .ackECN, .crypto, .handshakeDone, .newToken, .pathResponse,
+                .retireConnectionID:
                 return false
             default:
                 return true

@@ -4,7 +4,11 @@
 /// allowing servers to accept or reject WebTransport and other
 /// tunneled protocol sessions.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUIC
 import QUICCore
 
@@ -97,7 +101,6 @@ public struct ExtendedConnectContext: Sendable {
     /// - Parameters:
     ///   - status: HTTP status code (e.g., 400, 403, 501)
     ///   - headers: Additional response headers (default: empty)
-    ///   - body: Optional response body (default: empty)
     /// - Throws: If sending the response fails
     public func reject(
         status: Int,

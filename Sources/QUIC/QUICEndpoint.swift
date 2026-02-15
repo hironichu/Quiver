@@ -10,14 +10,21 @@
 /// so that ECN counts are tracked per encryption level for ACK frames
 /// (RFC 9000 §13.4).
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
-import Synchronization
+#endif
+#if canImport(Security)
+import Security
+#endif
 import Logging
+import NIOUDPTransport
+import QUICConnection
 import QUICCore
 import QUICCrypto
-import QUICConnection
 @_exported import QUICTransport
-import NIOUDPTransport
+import Synchronization
 
 // MARK: - QUIC Endpoint
 
@@ -123,11 +130,11 @@ public actor QUICEndpoint {
     /// This method enforces the security mode hierarchy:
     /// 1. If `securityMode` is set, use it
     /// 2. Otherwise, if `tlsProviderFactory` is set (legacy), use it
-    /// 3. Otherwise, throw `QUICSecurityError.tlsProviderNotConfigured`
+    /// 3. Otherwise, build a default `TLS13Handler` from QUIC trust passthrough
     ///
     /// - Parameter isClient: Whether this is for a client connection
     /// - Returns: A configured TLS provider
-    /// - Throws: `QUICSecurityError.tlsProviderNotConfigured` if no TLS provider is configured
+    /// - Throws: TLS parsing/loading errors when PEM/DER trust inputs are invalid
     func createTLSProvider(isClient: Bool) throws -> any TLS13Provider {
         // Priority 1: Check securityMode (new API)
         if let securityMode = configuration.securityMode {
@@ -137,12 +144,12 @@ public actor QUICEndpoint {
             case .development(let factory):
                 return factory()
             #if DEBUG
-            case .testing:
-                logger.warning(
-                    "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
-                    metadata: ["isClient": "\(isClient)"]
-                )
-                return MockTLSProvider(configuration: TLSConfiguration())
+                case .testing:
+                    logger.warning(
+                        "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
+                        metadata: ["isClient": "\(isClient)"]
+                    )
+                    return MockTLSProvider(configuration: TLSConfiguration())
             #endif
             }
         }
@@ -152,12 +159,63 @@ public actor QUICEndpoint {
             return factory(isClient)
         }
 
-        // No TLS provider configured - fail safely
-        logger.error(
-            "TLS provider not configured. Set securityMode or tlsProviderFactory before connecting.",
-            metadata: ["isClient": "\(isClient)"]
-        )
-        throw QUICSecurityError.tlsProviderNotConfigured
+        // Priority 3: Build default TLS provider from QUICConfiguration passthrough
+        var tlsConfig = TLSConfiguration()
+        tlsConfig.alpnProtocols = configuration.alpn
+        tlsConfig.verifyPeer = configuration.verifyPeer
+
+        if let derRoots = configuration.userTrustedCACertificatesDER, !derRoots.isEmpty {
+            tlsConfig.trustedCACertificates = derRoots
+            logger.debug(
+                "TLS trust source selected: explicit DER CA roots",
+                metadata: ["rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+            )
+        } else if let pemPath = configuration.userTrustedCAsPEMPath, !pemPath.isEmpty {
+            let derRoots = try PEMLoader.loadCertificates(fromPath: pemPath)
+            tlsConfig.trustedCACertificates = derRoots
+            logger.debug(
+                "TLS trust source selected: PEM CA bundle",
+                metadata: [
+                    "pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)",
+                    "isClient": "\(isClient)",
+                ]
+            )
+        } else if configuration.useSystemTrustStore {
+            #if os(macOS)
+                try tlsConfig.useSystemTrustStore()
+            #elseif os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+                if tlsConfig.certificateValidator == nil {
+                    tlsConfig.certificateValidator = { certificates in
+                        #if canImport(Security)
+                            try SecTrustValidator.validate(certificates, policy: SecPolicyCreateSSL(true, nil))
+                            return nil
+                        #else
+                            throw QUICSecurityError.certificateValidationFailed(reason: "Security framework not available")
+                        #endif
+                    }
+                }
+            #elseif os(Linux) || os(Windows)
+                try tlsConfig.useSystemTrustStore()
+            #else
+                logger.warning(
+                    "System trust store not supported on this platform. Peer verification may fail if no roots provided."
+                )
+            #endif
+            
+            logger.debug(
+                "TLS trust source selected: system/platform trust",
+                metadata: ["isClient": "\(isClient)"]
+            )
+        } else {
+            // Explicitly disable system fallback by supplying empty trust anchors.
+            tlsConfig.trustedRootCertificates = []
+            logger.debug(
+                "TLS trust source selected: none (system trust disabled, no custom roots)",
+                metadata: ["isClient": "\(isClient)"]
+            )
+        }
+
+        return TLS13Handler(configuration: tlsConfig)
     }
 
     /// Creates a TLS provider with session resumption configuration.
@@ -167,7 +225,7 @@ public actor QUICEndpoint {
     ///   - sessionTicket: Optional session ticket for resumption
     ///   - maxEarlyDataSize: Maximum early data size for 0-RTT
     /// - Returns: A configured TLS provider
-    /// - Throws: `QUICSecurityError.tlsProviderNotConfigured` if no TLS provider is configured
+    /// - Throws: TLS parsing/loading errors when PEM/DER trust inputs are invalid
     func createTLSProvider(
         isClient: Bool,
         sessionTicket: Data?,
@@ -181,17 +239,17 @@ public actor QUICEndpoint {
             case .development(let factory):
                 return factory()
             #if DEBUG
-            case .testing:
-                logger.warning(
-                    "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
-                    metadata: ["isClient": "\(isClient)"]
-                )
-                var tlsConfig = TLSConfiguration()
-                tlsConfig.sessionTicket = sessionTicket
-                if let maxSize = maxEarlyDataSize {
-                    tlsConfig.maxEarlyDataSize = maxSize
-                }
-                return MockTLSProvider(configuration: tlsConfig)
+                case .testing:
+                    logger.warning(
+                        "Using MockTLSProvider in testing mode - NOT FOR PRODUCTION USE",
+                        metadata: ["isClient": "\(isClient)"]
+                    )
+                    var tlsConfig = TLSConfiguration()
+                    tlsConfig.sessionTicket = sessionTicket
+                    if let maxSize = maxEarlyDataSize {
+                        tlsConfig.maxEarlyDataSize = maxSize
+                    }
+                    return MockTLSProvider(configuration: tlsConfig)
             #endif
             }
         }
@@ -201,12 +259,67 @@ public actor QUICEndpoint {
             return factory(isClient)
         }
 
-        // No TLS provider configured - fail safely
-        logger.error(
-            "TLS provider not configured. Set securityMode or tlsProviderFactory before connecting.",
-            metadata: ["isClient": "\(isClient)"]
-        )
-        throw QUICSecurityError.tlsProviderNotConfigured
+        // Priority 3: Build default TLS provider from QUICConfiguration passthrough
+        var tlsConfig = TLSConfiguration()
+        tlsConfig.alpnProtocols = configuration.alpn
+        tlsConfig.verifyPeer = configuration.verifyPeer
+        tlsConfig.sessionTicket = sessionTicket
+        if let maxSize = maxEarlyDataSize {
+            tlsConfig.maxEarlyDataSize = maxSize
+        }
+
+        if let derRoots = configuration.userTrustedCACertificatesDER, !derRoots.isEmpty {
+            tlsConfig.trustedCACertificates = derRoots
+            logger.debug(
+                "TLS trust source selected: explicit DER CA roots",
+                metadata: ["rootCount": "\(derRoots.count)", "isClient": "\(isClient)"]
+            )
+        } else if let pemPath = configuration.userTrustedCAsPEMPath, !pemPath.isEmpty {
+            let derRoots = try PEMLoader.loadCertificates(fromPath: pemPath)
+            tlsConfig.trustedCACertificates = derRoots
+            logger.debug(
+                "TLS trust source selected: PEM CA bundle",
+                metadata: [
+                    "pemPath": "\(pemPath)", "rootCount": "\(derRoots.count)",
+                    "isClient": "\(isClient)",
+                ]
+            )
+        } else if configuration.useSystemTrustStore {
+            #if os(macOS)
+                try tlsConfig.useSystemTrustStore()
+            #elseif os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+                if tlsConfig.certificateValidator == nil {
+                    tlsConfig.certificateValidator = { certificates in
+                        #if canImport(Security)
+                            try SecTrustValidator.validate(certificates, policy: SecPolicyCreateSSL(true, nil))
+                            return nil
+                        #else
+                            throw QUICSecurityError.certificateValidationFailed(reason: "Security framework not available")
+                        #endif
+                    }
+                }
+            #elseif os(Linux) || os(Windows)
+                try tlsConfig.useSystemTrustStore()
+            #else
+                logger.warning(
+                    "System trust store not supported on this platform. Peer verification may fail if no roots provided."
+                )
+            #endif
+            
+            logger.debug(
+                "TLS trust source selected: system/platform trust",
+                metadata: ["isClient": "\(isClient)"]
+            )
+        } else {
+            // Explicitly disable system fallback by supplying empty trust anchors.
+            tlsConfig.trustedRootCertificates = []
+            logger.debug(
+                "TLS trust source selected: none (system trust disabled, no custom roots)",
+                metadata: ["isClient": "\(isClient)"]
+            )
+        }
+
+        return TLS13Handler(configuration: tlsConfig)
     }
 
     // MARK: - Address Management
@@ -307,6 +420,22 @@ public actor QUICEndpoint {
             return responses
 
         case .notFound(let dcid):
+            // RFC 9000 Section 10.3: Send Stateless Reset if possible (Server only, Short Header)
+            if isServer,
+                let key = configuration.statelessResetKey,
+                let first = data.first, (first & 0x80) == 0
+            {  // Short header check
+
+                // Generate deterministic token (stateless)
+                let token = StatelessResetToken.generate(staticKey: key, connectionID: dcid)
+                // Minimum size 43 bytes to be distinguishable from valid packets
+                let packet = StatelessResetPacket(token: token, minimumSize: 43)
+                let responseData = packet.encode()
+
+                try await send(responseData, to: remoteAddress)
+                logger.debug("Sent Stateless Reset to \(remoteAddress) for DCID=\(dcid)")
+                return []
+            }
             throw QUICEndpointError.connectionNotFound(dcid)
 
         case .invalid(let error):
@@ -379,7 +508,9 @@ public actor QUICEndpoint {
     // MARK: - Send Callback
 
     /// Sets a callback for sending packets (for testing)
-    public func setSendCallback(_ callback: @escaping @Sendable (Data, SocketAddress) async throws -> Void) {
+    public func setSendCallback(
+        _ callback: @escaping @Sendable (Data, SocketAddress) async throws -> Void
+    ) {
         sendCallback = callback
     }
 
@@ -418,3 +549,39 @@ public actor QUICEndpoint {
         router.connection(for: connectionID)
     }
 }
+
+// MARK: - SecTrust Validator (Apple Platforms)
+
+#if canImport(Security)
+    enum SecTrustValidator {
+        static func validate(_ certificates: [Data], policy: SecPolicy) throws {
+            guard !certificates.isEmpty else {
+                throw QUICSecurityError.certificateValidationFailed(reason: "No certificates provided")
+            }
+
+            // Create SecCertificate objects
+            let secCerts = certificates.compactMap {
+                SecCertificateCreateWithData(nil, $0 as CFData)
+            }
+            guard secCerts.count == certificates.count else {
+                throw QUICSecurityError.certificateValidationFailed(reason: "Failed to create SecCertificate from data")
+            }
+
+            // Create trust object
+            var trust: SecTrust?
+            let status = SecTrustCreateWithCertificates(secCerts as CFArray, policy, &trust)
+            guard status == errSecSuccess, let trust = trust else {
+                throw QUICSecurityError.certificateValidationFailed(reason: "Failed to create SecTrust")
+            }
+
+            // Evaluate trust
+            var error: CFError?
+            let valid = SecTrustEvaluateWithError(trust, &error)
+
+            if !valid {
+                let reason = error?.localizedDescription ?? "Unknown trust error"
+                throw QUICSecurityError.certificateValidationFailed(reason: "SecTrust evaluation failed: \(reason)")
+            }
+        }
+    }
+#endif

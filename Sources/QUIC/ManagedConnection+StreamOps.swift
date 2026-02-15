@@ -2,7 +2,11 @@
 ///
 /// Internal stream read/write/finish/reset helpers used by ManagedStream.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 import QUICConnection
 

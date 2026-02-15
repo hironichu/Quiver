@@ -2,7 +2,11 @@
 ///
 /// Validates certificate chains according to X.509 path validation rules.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Crypto
 @preconcurrency import X509
 import SwiftASN1

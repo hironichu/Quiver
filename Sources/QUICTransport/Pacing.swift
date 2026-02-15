@@ -6,7 +6,11 @@
 /// Uses a token bucket algorithm where tokens accumulate at the
 /// pacing rate and are consumed when sending packets.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Synchronization
 
 // MARK: - Pacing Configuration

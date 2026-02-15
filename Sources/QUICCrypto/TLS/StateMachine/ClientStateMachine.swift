@@ -2,7 +2,11 @@
 ///
 /// Implements the client-side TLS 1.3 handshake for QUIC.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Crypto
 import Synchronization
 import QUICCore

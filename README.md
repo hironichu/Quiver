@@ -163,12 +163,25 @@ quiver/
 │       ├── Frame/                     # HTTP/3 frame codec
 │       ├── Stream/                    # HTTP/3 stream types
 │       └── WebTransport/             # WebTransport support
+<<<<<<< HEAD
+│           ├── WebTransport.swift             # Client entry point (connect API)
+│           ├── WebTransportOptions.swift       # Simple client options
+│           ├── WebTransportOptionsAdvanced.swift # Power-user client options
+│           ├── WebTransportServer.swift        # Server actor (middleware + routing)
+│           ├── WebTransportServerOptions.swift # Server configuration
+│           ├── WebTransportReply.swift         # Middleware reply + request context
+│           ├── WebTransportSession.swift       # Session lifecycle
+│           ├── WebTransportStream.swift        # Stream wrapper
+│           ├── WebTransportCapsule.swift       # Capsule codec
+│           └── WebTransportError.swift         # Error types
+=======
 │           ├── WebTransportConfiguration.swift # Unified config
 │           ├── WebTransportServer.swift
 │           ├── WebTransportClient.swift
 │           ├── WebTransportSession.swift
 │           ├── WebTransportStream.swift
 │           └── WebTransportCapsule.swift
+>>>>>>> develop
 │
 ├── Examples/
 │   ├── QUICEchoServer/          # QUIC echo demo
@@ -221,26 +234,77 @@ await connection.shutdown()
 
 ### HTTP/3 Server
 
+The simplest way to run an HTTP/3 server uses `HTTP3ServerOptions`, which
+wires up TLS certificates, QUIC transport, and HTTP/3 settings internally:
+
 ```swift
 import HTTP3
 
+let options = HTTP3ServerOptions(
+    host: "0.0.0.0",
+    port: 4433,
+    certificatePath: "/path/to/cert.pem",
+    privateKeyPath: "/path/to/key.pem"
+)
+
+let server = HTTP3Server(options: options)
+
+await server.onRequest { context in
+    switch context.request.path {
+    case "/":
+        try await context.respond(
+            status: 200,
+            headers: [("content-type", "text/plain")],
+            Data("Hello, HTTP/3!".utf8)
+        )
+    case "/json":
+        let json = Data(#"{"message": "quiver"}"#.utf8)
+        try await context.respond(
+            status: 200,
+            headers: [("content-type", "application/json")],
+            json
+        )
+    default:
+        try await context.respond(status: 404)
+    }
+}
+
+// Blocks until stop() is called
+try await server.listen()
+```
+
+For full control over TLS and QUIC configuration, use the advanced API:
+
+```swift
+import HTTP3
+import QUICCrypto
+import QUIC
+
+var tlsConfig = try TLSConfiguration.server(
+    certificatePath: "/path/to/cert.pem",
+    privateKeyPath: "/path/to/key.pem",
+    alpnProtocols: ["h3"]
+)
+tlsConfig.verifyPeer = true
+try tlsConfig.addSystemTrustStore()
+
+var quicConfig = QUICConfiguration()
+quicConfig.alpn = ["h3"]
+quicConfig.securityMode = .production {
+    TLS13Handler(configuration: tlsConfig)
+}
+
 let server = HTTP3Server()
 
-// Register routes
-server.route("GET", "/") { request, context in
-    return HTTP3Response(status: 200, body: Data("Hello, HTTP/3!".utf8))
+await server.onRequest { context in
+    try await context.respond(status: 200, Data("OK".utf8))
 }
 
-server.route("GET", "/json") { request, context in
-    let json = Data(#"{"message": "quiver"}"#.utf8)
-    return HTTP3Response(
-        status: 200,
-        headers: [("content-type", "application/json")],
-        body: json
-    )
-}
-
-try await server.listen(host: "0.0.0.0", port: 4433)
+try await server.listen(
+    host: "0.0.0.0",
+    port: 4433,
+    quicConfiguration: quicConfig
+)
 ```
 
 ### HTTP/3 Client
@@ -260,6 +324,30 @@ print("Body: \(String(data: response.body, encoding: .utf8)!)")
 import HTTP3
 import QUIC
 
+<<<<<<< HEAD
+let serverOpts = WebTransportServerOptions(
+    certificateChain: [certData],
+    privateKey: keyData,
+    maxSessions: 4
+)
+
+let server = WebTransportServer(
+    host: "0.0.0.0",
+    port: 4433,
+    options: serverOpts,
+    middleware: { context in
+        // Optional: inspect context.path, context.headers, context.origin
+        return .accept
+    }
+)
+
+// Register routes with inline session handlers — like a normal HTTP router.
+// Sessions dispatched to a handler do NOT appear in incomingSessions.
+await server.register(path: "/echo") { session in
+    for await stream in await session.incomingBidirectionalStreams {
+        let data = try await stream.read()
+        try await stream.write(data) // Echo
+=======
 // Unified config — QUIC + WebTransport in one struct
 let config = WebTransportConfiguration(
     quic: myQuicConfig,
@@ -287,21 +375,65 @@ for await session in server.incomingSessions {
         for await datagram in await session.incomingDatagrams {
             try await session.sendDatagram(datagram)
         }
+>>>>>>> develop
     }
 }
 ```
 
+<<<<<<< HEAD
+// Routes can combine middleware (accept/reject gating) with a handler
+await server.register(
+    path: "/chat",
+    middleware: { context in
+        guard context.origin == "https://trusted.example.com" else {
+            return .reject(reason: "untrusted origin")
+        }
+        return .accept
+    }
+) { session in
+    for await stream in await session.incomingBidirectionalStreams {
+        // handle chat streams...
+    }
+}
+
+// Start via external QUIC endpoint (recommended for full TLS control)
+// or call server.listen() for simple cases
+await server.serve(connectionSource: quicEndpoint.newConnections)
+
+// Sessions on routes without a handler (or on an open server with no
+// routes registered) fall through here
+for await session in await server.incomingSessions {
+    // session.path and session.authority are available for dispatch
+    print("Unrouted session on \(await session.path)")
+}
+```
+
+=======
+>>>>>>> develop
 ### WebTransport Client
 
 ```swift
 import HTTP3
 import QUIC
 
+<<<<<<< HEAD
+// Simple — insecure defaults for dev/testing
+let session = try await WebTransport.connect(
+    url: "https://example.com:4433/echo",
+    options: .insecure()
+)
+
+// Or advanced — full QUIC config control
+let session = try await WebTransport.connect(
+    url: "https://example.com:4433/echo",
+    options: WebTransportOptionsAdvanced(quic: myQuicConfig)
+=======
 // One-call connect — creates QUIC endpoint, dials, sets up HTTP/3, sends Extended CONNECT
 let config = WebTransportConfiguration(quic: myQuicConfig)
 let session = try await WebTransportClient.connect(
     url: "https://example.com:4433/echo",
     configuration: config
+>>>>>>> develop
 )
 
 // Open a bidirectional stream

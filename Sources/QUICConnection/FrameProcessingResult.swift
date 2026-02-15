@@ -3,7 +3,11 @@
 /// Types used by `QUICConnectionHandler` for frame processing results,
 /// outbound packet queuing, timer actions, and connection close errors.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 import QUICRecovery
 

@@ -34,6 +34,19 @@ let package = Package(
             name: "HTTP3",
             targets: ["HTTP3"]
         ),
+        // Media Over QUIC (MOQ)
+        .library(
+            name: "MOQCore",
+            targets: ["MOQCore"]
+        ),
+        .library(
+            name: "MOQRelay",
+            targets: ["MOQRelay"]
+        ),
+        .library(
+            name: "MOQClient",
+            targets: ["MOQClient"]
+        ),
         // Example: QUIC Echo Server/Client
         .executable(
             name: "QUICEchoServer",
@@ -54,10 +67,18 @@ let package = Package(
             name: "QUICNetworkDemo",
             targets: ["QUICNetworkDemo"]
         ),
+        // Example: Alt-Svc Gateway Demo (HTTP/1.1 + HTTP/2 -> HTTP/3)
+        .executable(
+            name: "AltSvcDemo",
+            targets: ["AltSvcDemo"]
+        ),
     ],
     dependencies: [
         // NIO (used by NIOUDPTransport and other targets)
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
+
+        // NIO SSL (TLS over TCP for Alt-Svc gateway)
+        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.29.0"),
 
         // Cryptography
         .package(url: "https://github.com/apple/swift-crypto.git", from: "4.2.0"),
@@ -71,6 +92,8 @@ let package = Package(
 
         // Documentation
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
+
+        .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
     ],
     targets: [
         // MARK: - Core Types (No I/O)
@@ -78,7 +101,7 @@ let package = Package(
         .target(
             name: "QUICCore",
             dependencies: [
-                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/QUICCore"
         ),
@@ -104,6 +127,7 @@ let package = Package(
             dependencies: [
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/NIOUDPTransport"
         ),
@@ -139,7 +163,7 @@ let package = Package(
         .target(
             name: "QUICRecovery",
             dependencies: [
-                "QUICCore",
+                "QUICCore"
             ],
             path: "Sources/QUICRecovery"
         ),
@@ -151,6 +175,7 @@ let package = Package(
             dependencies: [
                 "QUICCore",
                 "NIOUDPTransport",
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             path: "Sources/QUICTransport"
         ),
@@ -187,10 +212,50 @@ let package = Package(
                 "QUIC",
                 "QPACK",
                 "QUICCore",
+                "QUICCrypto",
                 "QUICStream",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/HTTP3"
+        ),
+
+        // MARK: - MOQ Core
+
+        .target(
+            name: "MOQCore",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICStream",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/MOQCore"
+        ),
+
+        // MARK: - MOQ Relay & Client
+
+        .target(
+            name: "MOQRelay",
+            dependencies: [
+                "MOQCore",
+                "QUICCore",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/MOQRelay"
+        ),
+
+        .target(
+            name: "MOQClient",
+            dependencies: [
+                "MOQCore",
+                "QUICCore",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/MOQClient"
         ),
 
         // MARK: - Test Support
@@ -198,7 +263,7 @@ let package = Package(
         .target(
             name: "QuiverTestSupport",
             dependencies: [
-                "QUICCore",
+                "QUICCore"
             ],
             path: "Tests/QuiverTestSupport"
         ),
@@ -209,6 +274,12 @@ let package = Package(
             name: "QUICCoreTests",
             dependencies: ["QUICCore"],
             path: "Tests/QUICCoreTests"
+        ),
+
+        .testTarget(
+            name: "MOQCoreTests",
+            dependencies: ["MOQCore", "MOQRelay", "QUICCore"],
+            path: "Tests/MOQCoreTests"
         ),
 
         .testTarget(
@@ -227,6 +298,17 @@ let package = Package(
             name: "QUICStreamTests",
             dependencies: ["QUICStream", "QUICCore"],
             path: "Tests/QUICStreamTests"
+        ),
+
+        .testTarget(
+            name: "QUICConnectionTests",
+            dependencies: [
+                "QUICConnection",
+                "QUICCore",
+                "QUIC",
+                "QuiverTestSupport",
+            ],
+            path: "Tests/QUICConnectionTests"
         ),
 
         .testTarget(
@@ -256,6 +338,18 @@ let package = Package(
                 "QuiverTestSupport",
             ],
             path: "Tests/HTTP3Tests"
+        ),
+
+        .testTarget(
+            name: "WebTransportTests",
+            dependencies: [
+                "HTTP3",
+                "QUIC",
+                "QPACK",
+                "QUICCore",
+                "QUICStream",
+            ],
+            path: "Tests/WebTransportTests"
         ),
 
         // MARK: - Benchmarks (run separately with: swift test --filter QUICBenchmarks)
@@ -292,10 +386,7 @@ let package = Package(
                 "QUIC",
                 "QUICCore",
                 "QUICCrypto",
-                "QUICTransport",
                 "HTTP3",
-                "QPACK",
-                "NIOUDPTransport",
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/HTTP3Demo"
@@ -328,6 +419,17 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICNetworkDemo"
-        )
+        ),
+        .executableTarget(
+            name: "AltSvcDemo",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "HTTP3",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/AltSvcDemo"
+        ),
     ]
 )

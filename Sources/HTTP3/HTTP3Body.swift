@@ -19,7 +19,11 @@
 /// let raw  = body.stream()                      // raw AsyncStream<Data>
 /// ```
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Error
 

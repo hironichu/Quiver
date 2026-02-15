@@ -3,7 +3,11 @@
 /// Routes incoming packets to the appropriate connection based on
 /// Destination Connection ID (DCID).
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Logging
 import Synchronization
 import QUICCore

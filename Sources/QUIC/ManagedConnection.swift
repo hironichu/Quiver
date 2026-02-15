@@ -11,17 +11,20 @@
 /// High-level connection wrapper that orchestrates handshake, packet processing,
 /// and stream management. Implements QUICConnectionProtocol for public API.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Logging
-import Synchronization
+import QUICConnection
 import QUICCore
 import QUICCrypto
-import QUICConnection
-import QUICStream
 import QUICRecovery
+import QUICStream
+import Synchronization
 
 // MARK: - Managed Connection
-
 
 /// High-level managed connection for QUIC
 ///
@@ -125,6 +128,11 @@ public final class ManagedConnection: Sendable {
     /// Used to register the CID with the ConnectionRouter
     let onNewConnectionID: Mutex<(@Sendable (ConnectionID) -> Void)?>
 
+    /// Key Update Manager (RFC 9001 Section 6)
+    /// Tracks AEAD limits and manages key updates.
+    /// Initialized when 1-RTT keys are available.
+    let keyUpdateManager: Mutex<KeyUpdateManager?> = Mutex(nil)
+
     // MARK: - Initialization
 
     /// Creates a new managed connection
@@ -138,6 +146,8 @@ public final class ManagedConnection: Sendable {
     ///   - tlsProvider: TLS 1.3 provider
     ///   - localAddress: Local socket address (optional)
     ///   - remoteAddress: Remote socket address
+    ///   - maxDatagramSize: Configured maximum UDP payload size for packet
+    ///     processing and path MTU behavior.
     public convenience init(
         role: ConnectionRole,
         version: QUICVersion,
@@ -348,12 +358,14 @@ public final class ManagedConnection: Sendable {
         if let data = earlyData, !data.isEmpty {
             // Open a stream for early data (stream ID 0 for client-initiated bidirectional)
             let streamID: UInt64 = 0
-            handler.queueFrame(.stream(StreamFrame(
-                streamID: streamID,
-                offset: 0,
-                data: data,
-                fin: false
-            )), level: .zeroRTT)
+            handler.queueFrame(
+                .stream(
+                    StreamFrame(
+                        streamID: streamID,
+                        offset: 0,
+                        data: data,
+                        fin: false
+                    )), level: .zeroRTT)
 
             // Generate 0-RTT packet
             let packets = try generate0RTTPackets()
@@ -515,8 +527,9 @@ public final class ManagedConnection: Sendable {
         // + pnLength    packet number (before encryption)
         // + 16          AEAD tag  (PacketConstants.aeadTagSize)
         // + 9           PATH_CHALLENGE (1 type + 8 data)
-        let overhead = 1 + dcid.bytes.count + header.packetNumberLength
-                     + PacketConstants.aeadTagSize + 9
+        let overhead =
+            1 + dcid.bytes.count + header.packetNumberLength
+            + PacketConstants.aeadTagSize + 9
         let paddingCount = max(0, probe.packetSize - overhead)
 
         var frames: [Frame] = [probe.frame]
@@ -550,7 +563,9 @@ public final class ManagedConnection: Sendable {
     ///   - ecnCodepoint: ECN codepoint from the IP header (via `IncomingPacket`).
     ///     Defaults to `.notECT` when the transport does not provide ECN metadata.
     /// - Returns: Outbound packets to send in response
-    public func processIncomingPacket(_ data: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws -> [Data] {
+    public func processIncomingPacket(_ data: Data, ecnCodepoint: ECNCodepoint = .notECT)
+        async throws -> [Data]
+    {
         // Record received bytes for anti-amplification limit
         amplificationLimiter.recordBytesReceived(UInt64(data.count))
 
@@ -560,8 +575,49 @@ public final class ManagedConnection: Sendable {
             return try await processRetryPacket(data)
         }
 
+        // Check for Version Negotiation (RFC 9000 Section 6)
+        if let first = data.first, (first & 0x80) != 0, data.count >= 6 {
+            // Long Header, check version bytes (1-4)
+            let version =
+                UInt32(data[1]) << 24 | UInt32(data[2]) << 16 | UInt32(data[3]) << 8
+                | UInt32(data[4])
+            if version == 0 {
+                return try await handleVersionNegotiationPacket(data)
+            }
+        }
+
         // Decrypt the packet
-        let parsed = try packetProcessor.decryptPacket(data)
+        let parsed: ParsedPacket
+        do {
+            parsed = try packetProcessor.decryptPacket(data)
+        } catch {
+            // Check if this is a Stateless Reset (RFC 9000 Section 10.3)
+            if handler.isStatelessReset(data) {
+                Self.logger.warning("Received verified Stateless Reset! Closing connection.")
+                // RFC 9000 10.3.1: Enter draining state and do not send any further packets
+                state.withLock { $0.handshakeState = .closed }
+                shutdown()
+                return []
+            }
+
+            // Record decryption failure for 1-RTT packets (Short Header)
+            if let first = data.first, (first & 0x80) == 0 {
+                keyUpdateManager.withLock { $0?.recordDecryptionFailure() }
+            }
+            throw error
+        }
+
+        // Check for passive key update (RFC 9001 Section 6.3)
+        if parsed.encryptionLevel == .application, case .short(let header) = parsed.header {
+            keyUpdateManager.withLock { manager in
+                if let manager = manager, header.keyPhase != (manager.keyPhase == 1) {
+                    manager.receiveKeyUpdate()
+                    manager.keyUpdateComplete(newKeyPhase: header.keyPhase ? 1 : 0)
+                    Self.logger.info(
+                        "Passive Key Update detected (received phase \(header.keyPhase))")
+                }
+            }
+        }
 
         // RFC 9000 Section 7.2: Client MUST update DCID to server's SCID from first Initial packet
         // This is critical for QUIC handshake: client uses server's SCID as DCID in all subsequent packets
@@ -572,7 +628,8 @@ public final class ManagedConnection: Sendable {
                 let serverSCID = longHeader.sourceConnectionID
                 // Only update on first Initial packet (when DCIDs differ)
                 if currentDCID != serverSCID {
-                    Self.logger.debug("Client updating DCID from \(currentDCID) to server's SCID \(serverSCID)")
+                    Self.logger.debug(
+                        "Client updating DCID from \(currentDCID) to server's SCID \(serverSCID)")
                     state.withLock { state in
                         state.destinationConnectionID = serverSCID
                     }
@@ -634,7 +691,9 @@ public final class ManagedConnection: Sendable {
     /// This caused the Handshake packet to be silently dropped (no keys yet),
     /// losing the first 110 bytes of Handshake-level CRYPTO data and stalling
     /// the TLS handshake.
-    public func processDatagram(_ datagram: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws -> [Data] {
+    public func processDatagram(_ datagram: Data, ecnCodepoint: ECNCodepoint = .notECT) async throws
+        -> [Data]
+    {
         // Record received bytes for anti-amplification limit
         amplificationLimiter.recordBytesReceived(UInt64(datagram.count))
 
@@ -671,15 +730,45 @@ public final class ManagedConnection: Sendable {
                 // No keys for this encryption level yet.
                 // This can still happen legitimately (e.g. 0-RTT keys not yet
                 // available).  Log at trace level and skip.
-                Self.logger.trace("Skipping coalesced packet at offset \(info.offset): no keys for this encryption level yet")
+                Self.logger.trace(
+                    "Skipping coalesced packet at offset \(info.offset): no keys for this encryption level yet"
+                )
                 continue
             } catch PacketCodecError.decryptionFailed {
+                // Check if this is a Stateless Reset (RFC 9000 Section 10.3)
+                if handler.isStatelessReset(info.data) {
+                    Self.logger.warning(
+                        "Received verified Stateless Reset inside coalesced datagram! Closing connection."
+                    )
+                    state.withLock { $0.handshakeState = .closed }
+                    shutdown()
+                    return []
+                }
+
                 // Decryption failed — packet may be corrupted or keys are wrong
-                Self.logger.trace("Skipping coalesced packet at offset \(info.offset): decryption failed")
+                if let first = info.data.first, (first & 0x80) == 0 {
+                    keyUpdateManager.withLock { $0?.recordDecryptionFailure() }
+                }
+                Self.logger.trace(
+                    "Skipping coalesced packet at offset \(info.offset): decryption failed")
                 continue
             } catch QUICError.decryptionFailed {
-                // AEAD authentication tag mismatch
-                Self.logger.trace("Skipping coalesced packet at offset \(info.offset): AEAD decryption failed")
+                // Check if this is a Stateless Reset (RFC 9000 Section 10.3)
+                if handler.isStatelessReset(info.data) {
+                    Self.logger.warning(
+                        "Received verified Stateless Reset inside coalesced datagram! Closing connection."
+                    )
+                    state.withLock { $0.handshakeState = .closed }
+                    shutdown()
+                    return []
+                }
+
+                // AEAD decryption failed - authentication tag mismatch
+                if let first = info.data.first, (first & 0x80) == 0 {
+                    keyUpdateManager.withLock { $0?.recordDecryptionFailure() }
+                }
+                Self.logger.trace(
+                    "Skipping coalesced packet at offset \(info.offset): AEAD decryption failed")
                 continue
             } catch {
                 // Unexpected error — propagate
@@ -687,6 +776,18 @@ public final class ManagedConnection: Sendable {
             }
 
             processedAny = true
+
+            // Check for passive key update (RFC 9001 Section 6.3)
+            if parsed.encryptionLevel == .application, case .short(let header) = parsed.header {
+                keyUpdateManager.withLock { manager in
+                    if let manager = manager, header.keyPhase != (manager.keyPhase == 1) {
+                        manager.receiveKeyUpdate()
+                        manager.keyUpdateComplete(newKeyPhase: header.keyPhase ? 1 : 0)
+                        Self.logger.info(
+                            "Passive Key Update detected (received phase \(header.keyPhase))")
+                    }
+                }
+            }
 
             // RFC 9000 Section 7.2: Client MUST update DCID to server's SCID from first Initial packet
             // This is critical for QUIC handshake: client uses server's SCID as DCID in all subsequent packets
@@ -697,7 +798,9 @@ public final class ManagedConnection: Sendable {
                     let serverSCID = longHeader.sourceConnectionID
                     // Only update on first Initial packet (when DCIDs differ)
                     if currentDCID != serverSCID {
-                        Self.logger.debug("Client updating DCID from \(currentDCID) to server's SCID \(serverSCID)")
+                        Self.logger.debug(
+                            "Client updating DCID from \(currentDCID) to server's SCID \(serverSCID)"
+                        )
                         state.withLock { state in
                             state.destinationConnectionID = serverSCID
                         }
@@ -864,7 +967,9 @@ public final class ManagedConnection: Sendable {
         // Build and send new Initial packet with retry token
         var initialPackets: [Data] = []
         if !cryptoData.isEmpty {
-            let (scid, dcid) = state.withLock { ($0.sourceConnectionID, $0.destinationConnectionID) }
+            let (scid, dcid) = state.withLock {
+                ($0.sourceConnectionID, $0.destinationConnectionID)
+            }
             let pn = handler.getNextPacketNumber(for: .initial)
 
             let header = LongHeader(
@@ -964,7 +1069,9 @@ public final class ManagedConnection: Sendable {
                 do {
                     result.append(try encryptAndFlush(batch.frames, level: level))
                 } catch {
-                    Self.logger.warning("Oversized frame (\(batch.totalSize) > \(maxPayload)) at \(level): \(error)")
+                    Self.logger.warning(
+                        "Oversized frame (\(batch.totalSize) > \(maxPayload)) at \(level): \(error)"
+                    )
                 }
             } else {
                 result.append(try encryptAndFlush(batch.frames, level: level))
@@ -993,11 +1100,32 @@ public final class ManagedConnection: Sendable {
             encrypted = try packetProcessor.encryptShortHeaderPacket(
                 frames: frames, header: sh, packetNumber: pn
             )
+            // Record encryption and check for key update
+            keyUpdateManager.withLock { manager in
+                guard let manager = manager else { return }
+                manager.recordEncryption()
+
+                if manager.shouldInitiateKeyUpdate {
+                    // Initiate key update (RFC 9001 Section 6)
+                    do {
+                        try packetProcessor.initiateKeyUpdate()
+                        manager.initiateKeyUpdate()
+                        Self.logger.info(
+                            "Initiated Key Update (limit approaching or integrity failure)")
+                    } catch {
+                        Self.logger.error("Failed to initiate key update: \(error)")
+                        // Should we close connection? RFC says "endpoints MUST initiate key update before exceeding limits"
+                        // If we fail, we might exceed limit.
+                        // For now just log error.
+                    }
+                }
+            }
         default:
             throw PacketCodecError.invalidPacketFormat("Header type mismatch for level \(level)")
         }
 
-        Self.logger.trace("Emitting \(level) packet: \(encrypted.count) bytes (\(frames.count) frames)")
+        Self.logger.trace(
+            "Emitting \(level) packet: \(encrypted.count) bytes (\(frames.count) frames)")
         return encrypted
     }
 
@@ -1033,7 +1161,7 @@ public final class ManagedConnection: Sendable {
     // MARK: - Handshake Helpers
 
     /// Processes TLS outputs and generates packets
-    private func processTLSOutputs(_ outputs: [TLSOutput]) async throws -> [Data] {
+    func processTLSOutputs(_ outputs: [TLSOutput]) async throws -> [Data] {
         var outboundPackets: [Data] = []
         var handshakeCompleted = false
 
@@ -1042,27 +1170,51 @@ public final class ManagedConnection: Sendable {
             case .handshakeData(let data, let level):
                 // Queue CRYPTO frames
                 handler.queueCryptoData(data, level: level)
-                // NOTE: Do NOT call signalNeedsSend() here.
-                // The inline path (generateOutboundPackets at the end of this
-                // method) will build and return these packets directly.
-                // Signaling the outboundSendLoop here causes a race where
-                // the loop drains partially-queued frames, splitting handshake
-                // CRYPTO data across competing senders and losing packets.
+            // NOTE: Do NOT call signalNeedsSend() here.
+            // The inline path (generateOutboundPackets at the end of this
+            // method) will build and return these packets directly.
+            // Signaling the outboundSendLoop here causes a race where
+            // the loop drains partially-queued frames, splitting handshake
+            // CRYPTO data across competing senders and losing packets.
 
             case .keysAvailable(let info):
                 // Install keys via PacketProcessor (single source of truth for crypto)
                 let isClient = state.withLock { $0.role == .client }
                 try packetProcessor.installKeys(info, isClient: isClient)
 
+                // Initialize KeyUpdateManager when application keys become available
+                if info.level == .application {
+                    keyUpdateManager.withLock { manager in
+                        // Only initialize if not already set (rekeying shouldn't reset manager if it's the same session?)
+                        // Actually KeyUpdateManager persists across key updates.
+                        // But keysAvailable is called for initial installation.
+                        if manager == nil {
+                            manager = KeyUpdateManager(cipherSuite: info.cipherSuite)
+                        }
+                    }
+                }
+
             case .handshakeComplete(let info):
                 state.withLock { $0.negotiatedALPN = info.alpn }
 
                 // Parse peer transport parameters
                 if let peerParams = tlsProvider.getPeerTransportParameters() {
-                    Self.logger.debug("Received peer transport parameters: \(peerParams.count) bytes")
+                    Self.logger.debug(
+                        "Received peer transport parameters: \(peerParams.count) bytes")
                     if let params = decodeTransportParameters(peerParams) {
-                        Self.logger.debug("Decoded peer params: maxData=\(params.initialMaxData), bidiLocal=\(params.initialMaxStreamDataBidiLocal), bidiRemote=\(params.initialMaxStreamDataBidiRemote)")
+                        Self.logger.debug(
+                            "Decoded peer params: maxData=\(params.initialMaxData), bidiLocal=\(params.initialMaxStreamDataBidiLocal), bidiRemote=\(params.initialMaxStreamDataBidiRemote)"
+                        )
                         handler.setPeerTransportParameters(params)
+
+                        // Register stateless reset token from transport parameters
+                        if let token = params.statelessResetToken {
+                            handler.statelessResetManager.registerReceivedToken(token)
+                        }
+                        if let preferred = params.preferredAddress {
+                            handler.statelessResetManager.registerReceivedToken(
+                                preferred.statelessResetToken)
+                        }
                     } else {
                         Self.logger.error("Failed to decode transport parameters!")
                     }
@@ -1089,7 +1241,8 @@ public final class ManagedConnection: Sendable {
                 }
 
                 // Mark handshake as established, drain waiters, and propagate 0-RTT result
-                let waiters = state.withLock { s -> [(id: UUID, continuation: CheckedContinuation<Void, any Error>)] in
+                let waiters = state.withLock {
+                    s -> [(id: UUID, continuation: CheckedContinuation<Void, any Error>)] in
                     s.handshakeState = .established
                     // Propagate actual 0-RTT acceptance from the TLS provider
                     if s.is0RTTAttempted {
@@ -1169,7 +1322,9 @@ public final class ManagedConnection: Sendable {
     /// - Client: Discards keys here when HANDSHAKE_DONE is received
     private func completeHandshake() throws {
         // Single lock acquisition to get role, update state, and drain waiters
-        let (role, waiters) = state.withLock { s -> (ConnectionRole, [(id: UUID, continuation: CheckedContinuation<Void, any Error>)]) in
+        let (role, waiters) = state.withLock {
+            s -> (ConnectionRole, [(id: UUID, continuation: CheckedContinuation<Void, any Error>)])
+            in
             s.handshakeState = .established
             let w = s.handshakeCompletionContinuations
             s.handshakeCompletionContinuations.removeAll()
@@ -1218,7 +1373,9 @@ public final class ManagedConnection: Sendable {
         // Handle new peer-initiated streams
         let scidForDebug = state.withLock { $0.sourceConnectionID }
         if !result.newStreams.isEmpty {
-            Self.logger.debug("processFrameResult: \(result.newStreams.count) new streams: \(result.newStreams) for SCID=\(scidForDebug)")
+            Self.logger.debug(
+                "processFrameResult: \(result.newStreams.count) new streams: \(result.newStreams) for SCID=\(scidForDebug)"
+            )
         }
         for streamID in result.newStreams {
             let isBidirectional = StreamID.isBidirectional(streamID)
@@ -1230,17 +1387,22 @@ public final class ManagedConnection: Sendable {
             incomingStreamState.withLock { state in
                 // Don't yield if shutdown
                 guard !state.isShutdown else {
-                    Self.logger.trace("NOT yielding stream \(streamID) - shutdown for SCID=\(scidForDebug)")
+                    Self.logger.trace(
+                        "NOT yielding stream \(streamID) - shutdown for SCID=\(scidForDebug)")
                     return
                 }
 
                 if let continuation = state.continuation {
                     // Continuation exists, yield directly
-                    Self.logger.trace("Yielding stream \(streamID) directly to continuation for SCID=\(scidForDebug)")
+                    Self.logger.trace(
+                        "Yielding stream \(streamID) directly to continuation for SCID=\(scidForDebug)"
+                    )
                     continuation.yield(stream)
                 } else {
                     // Buffer the stream until incomingStreams is accessed
-                    Self.logger.trace("Buffering stream \(streamID) (no continuation yet, pendingCount=\(state.pendingStreams.count)) for SCID=\(scidForDebug)")
+                    Self.logger.trace(
+                        "Buffering stream \(streamID) (no continuation yet, pendingCount=\(state.pendingStreams.count)) for SCID=\(scidForDebug)"
+                    )
                     state.pendingStreams.append(stream)
                 }
             }
@@ -1294,12 +1456,15 @@ public final class ManagedConnection: Sendable {
             onNewConnectionID.withLock { callback in
                 callback?(frame.connectionID)
             }
+            // Register stateless reset token
+            handler.statelessResetManager.registerReceivedToken(frame.statelessResetToken)
         }
 
         // Handle DPLPMTUD probe acknowledgment — a PATH_RESPONSE matched
         // an active PMTUD probe and confirmed a new path MTU.
         if let newMTU = result.discoveredPLPMTU {
-            Self.logger.info("DPLPMTUD: path MTU confirmed at \(newMTU) bytes (was \(handler.maxDatagramSize))")
+            Self.logger.info(
+                "DPLPMTUD: path MTU confirmed at \(newMTU) bytes (was \(handler.maxDatagramSize))")
             // NOTE: maxDatagramSize on the handler is currently a `let`.
             // Full runtime MTU update (congestion window recalculation,
             // pacing adjustment) requires making it mutable and notifying
@@ -1312,7 +1477,8 @@ public final class ManagedConnection: Sendable {
     }
 
     /// Builds a packet header for the given level
-    private func buildPacketHeader(for level: EncryptionLevel, packetNumber: UInt64) -> PacketHeader {
+    private func buildPacketHeader(for level: EncryptionLevel, packetNumber: UInt64) -> PacketHeader
+    {
         let (scid, dcid, version) = state.withLock { state in
             (state.sourceConnectionID, state.destinationConnectionID, handler.version)
         }

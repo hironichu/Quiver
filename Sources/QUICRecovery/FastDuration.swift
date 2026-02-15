@@ -6,7 +6,11 @@
 /// Use `FastDuration` for internal calculations where performance is critical,
 /// then convert back to `Duration` for public APIs.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - FastDuration
 

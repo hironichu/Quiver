@@ -2,8 +2,9 @@
 ///
 /// Tests for verifying RFC compliance and wire format compatibility.
 
-import Testing
 import Foundation
+import Testing
+
 @testable import QUIC
 @testable import QUICCore
 @testable import QUICCrypto
@@ -41,13 +42,15 @@ struct RFC9001TestVectorTests {
 
         // Verify client initial secret
         #expect(
-            secrets.clientSecret.withUnsafeBytes { Data($0) } == RFC9001TestVectors.clientInitialSecret,
+            secrets.clientSecret.withUnsafeBytes { Data($0) }
+                == RFC9001TestVectors.clientInitialSecret,
             "Client initial secret mismatch"
         )
 
         // Verify server initial secret
         #expect(
-            secrets.serverSecret.withUnsafeBytes { Data($0) } == RFC9001TestVectors.serverInitialSecret,
+            secrets.serverSecret.withUnsafeBytes { Data($0) }
+                == RFC9001TestVectors.serverInitialSecret,
             "Server initial secret mismatch"
         )
     }
@@ -124,10 +127,11 @@ struct RetryIntegrityTagTests {
     func retryIntegrityTagRoundTrip() throws {
         let originalDCID = try ConnectionID(RFC9001TestVectors.clientDCID)
         let destinationCID = try ConnectionID(Data())
-        let sourceCID = try ConnectionID(Data([
-            0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5
-        ]))
-        let retryToken = Data([0x74, 0x6f, 0x6b, 0x65, 0x6e]) // "token"
+        let sourceCID = try ConnectionID(
+            Data([
+                0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5,
+            ]))
+        let retryToken = Data([0x74, 0x6f, 0x6b, 0x65, 0x6e])  // "token"
 
         // Create a complete Retry packet with tag
         let retryPacket = try RetryIntegrityTag.createRetryPacket(
@@ -162,9 +166,10 @@ struct RetryIntegrityTagTests {
     func retryIntegrityTagVerification() throws {
         let originalDCID = try ConnectionID(RFC9001TestVectors.clientDCID)
         let destinationCID = try ConnectionID(Data())
-        let sourceCID = try ConnectionID(Data([
-            0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5
-        ]))
+        let sourceCID = try ConnectionID(
+            Data([
+                0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5,
+            ]))
         let retryToken = Data([0x74, 0x6f, 0x6b, 0x65, 0x6e])
 
         // Create retry packet
@@ -195,9 +200,10 @@ struct RetryIntegrityTagTests {
     func invalidRetryIntegrityTagRejected() throws {
         let originalDCID = try ConnectionID(RFC9001TestVectors.clientDCID)
         let destinationCID = try ConnectionID(Data())
-        let sourceCID = try ConnectionID(Data([
-            0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5
-        ]))
+        let sourceCID = try ConnectionID(
+            Data([
+                0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5,
+            ]))
         let retryToken = Data([0x74, 0x6f, 0x6b, 0x65, 0x6e])
 
         // Create valid retry packet
@@ -270,8 +276,9 @@ struct VersionNegotiationTests {
         #expect(packet[0] & 0x80 == 0x80, "Long header form bit must be set")
 
         // Version field (bytes 1-4) must be 0x00000000
-        let version = UInt32(packet[1]) << 24 | UInt32(packet[2]) << 16 |
-                      UInt32(packet[3]) << 8 | UInt32(packet[4])
+        let version =
+            UInt32(packet[1]) << 24 | UInt32(packet[2]) << 16 | UInt32(packet[3]) << 8
+            | UInt32(packet[4])
         #expect(version == WireFormatTestData.versionNegotiationVersion)
 
         // DCID length byte
@@ -312,7 +319,7 @@ struct VersionNegotiationTests {
 
     @Test("Version selection chooses common version")
     func versionSelection() {
-        let clientVersions: [QUICVersion] = [.v1, .init(rawValue: 0xaabbccdd)]
+        let clientVersions: [QUICVersion] = [.v1, .init(rawValue: 0xaabb_ccdd)]
         let serverVersions: [QUICVersion] = [.v2, .v1]
 
         let selected = VersionNegotiator.selectVersion(
@@ -326,7 +333,7 @@ struct VersionNegotiationTests {
 
     @Test("Version selection returns nil when no common version")
     func versionSelectionNoCommon() {
-        let clientVersions: [QUICVersion] = [.init(rawValue: 0x11111111)]
+        let clientVersions: [QUICVersion] = [.init(rawValue: 0x1111_1111)]
         let serverVersions: [QUICVersion] = [.v1, .v2]
 
         let selected = VersionNegotiator.selectVersion(
@@ -659,7 +666,7 @@ struct ECNSupportTests {
     }
 
     @Test("ECN validation state machine")
-    func ecnValidationStateMachine() {
+    func ecnValidationStateMachine() throws {
         let manager = ECNManager()
 
         // Initially unknown
@@ -672,7 +679,7 @@ struct ECNSupportTests {
 
         // Process valid feedback
         let counts = ECNCountState(ect0: 10, ect1: 0, ce: 0)
-        _ = manager.processACKFeedback(counts, level: .application)
+        _ = try manager.processACKFeedback(counts, level: .application)
 
         // After 10 packets, should be capable
         #expect(manager.validationState == .capable)
@@ -695,11 +702,12 @@ struct PacingTests {
 
     @Test("Pacer rate limiting")
     func pacerRateLimiting() async throws {
-        let pacer = Pacer(config: PacingConfiguration(
-            initialRate: 10_000,  // 10 KB/s
-            maxBurst: 1_000,      // 1 KB burst
-            minInterval: .milliseconds(1)
-        ))
+        let pacer = Pacer(
+            config: PacingConfiguration(
+                initialRate: 10_000,  // 10 KB/s
+                maxBurst: 1_000,  // 1 KB burst
+                minInterval: .milliseconds(1)
+            ))
 
         // First burst should be immediate
         let delay1 = pacer.packetDelay(bytes: 500)

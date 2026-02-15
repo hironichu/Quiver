@@ -6,7 +6,11 @@
 /// - Warning: This provider is only available in DEBUG builds.
 ///   It provides no security and must never be used in production.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Crypto
 import Synchronization
 import QUICCore

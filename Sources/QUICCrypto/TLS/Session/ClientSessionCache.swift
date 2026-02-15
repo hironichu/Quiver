@@ -3,7 +3,11 @@
 /// Client-side storage for session tickets to enable session resumption
 /// and 0-RTT early data.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Crypto
 import Synchronization
 

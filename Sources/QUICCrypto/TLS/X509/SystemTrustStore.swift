@@ -34,7 +34,11 @@
 /// The cached system roots are protected by `Synchronization.Mutex` and are
 /// safe to access from multiple threads/tasks concurrently.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 @preconcurrency import X509
 import SwiftASN1
 

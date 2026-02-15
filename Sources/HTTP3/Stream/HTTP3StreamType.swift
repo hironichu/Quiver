@@ -30,7 +30,11 @@
 ///
 /// Unknown stream types MUST be ignored for forward compatibility.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Stream Type Identifiers
 

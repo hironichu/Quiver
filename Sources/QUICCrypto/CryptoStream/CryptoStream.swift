@@ -2,7 +2,11 @@
 ///
 /// Reassembles out-of-order CRYPTO frames for TLS handshake data.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 
 /// Error thrown by CryptoStream operations
@@ -45,8 +49,15 @@ public struct CryptoStream: Sendable {
     public mutating func receive(_ frame: CryptoFrame) throws {
         guard !frame.data.isEmpty else { return }
 
+        let length = UInt64(frame.data.count)
+
+        // RFC 9000 Section 19.6: Largest offset cannot exceed 2^62-1
+        guard frame.offset <= Varint.maxValue - length else {
+            throw CryptoStreamError.invalidOffset(frame.offset)
+        }
+
         // Calculate end offset
-        let endOffset = frame.offset + UInt64(frame.data.count)
+        let endOffset = frame.offset + length
 
         // Check if this would exceed buffer limit
         // Buffer limit is measured from read offset to end of buffered data

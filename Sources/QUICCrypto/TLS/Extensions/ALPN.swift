@@ -8,7 +8,11 @@
 /// opaque ProtocolName<1..2^8-1>;
 /// ```
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - ALPN Extension
 

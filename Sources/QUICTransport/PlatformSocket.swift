@@ -22,14 +22,25 @@
 
 import Foundation
 
-#if canImport(Glibc)
-import Glibc
-#elseif canImport(Musl)
-import Musl
-#elseif canImport(Darwin)
-import Darwin
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
+    import Darwin
+#elseif os(Linux)
+    #if canImport(Glibc)
+        import Glibc
+    #elseif canImport(Musl)
+        import Musl
+    #endif
+#elseif os(Windows)
+    import ucrt
 #endif
+#if os(Android)
+    import Android
 
+// Values pulled directly from Android NDK /usr/include/netinet/in.h
+// internal let IPPROTO_IP: Int32 = 0
+// internal let IPPROTO_IPV6: Int32 = 41
+// internal let IPPROTO_UDP: Int32 = 17
+#endif
 // MARK: - Platform Socket Option Constants
 
 /// Platform-resolved socket option constants for QUIC network integration.
@@ -51,15 +62,15 @@ public enum PlatformSocketConstants {
     /// - Linux: `IP_MTU_DISCOVER` with value `IP_PMTUDISC_DO`
     /// - macOS/iOS: `IP_DONTFRAG` with value `1`
     #if os(Linux)
-    public static let ipv4DFOption: CInt = CInt(IP_MTU_DISCOVER)
-    public static let ipv4DFValue: CInt = CInt(IP_PMTUDISC_DO)
+        public static let ipv4DFOption: CInt = CInt(IP_MTU_DISCOVER)
+        public static let ipv4DFValue: CInt = CInt(IP_PMTUDISC_DO)
     #elseif canImport(Darwin)
-    public static let ipv4DFOption: CInt = CInt(IP_DONTFRAG)
-    public static let ipv4DFValue: CInt = 1
+        public static let ipv4DFOption: CInt = CInt(IP_DONTFRAG)
+        public static let ipv4DFValue: CInt = 1
     #else
-    // Unsupported platform — callers should check `isDFSupported`.
-    public static let ipv4DFOption: CInt = 0
-    public static let ipv4DFValue: CInt = 0
+        // Unsupported platform — callers should check `isDFSupported`.
+        public static let ipv4DFOption: CInt = 0
+        public static let ipv4DFValue: CInt = 0
     #endif
 
     /// Socket option level for IPv6 DF control.
@@ -69,12 +80,12 @@ public enum PlatformSocketConstants {
     ///
     /// `IPV6_DONTFRAG` is the same on Linux and Darwin.
     #if os(Linux)
-    public static let ipv6DFOption: CInt = CInt(IPV6_DONTFRAG)
+        public static let ipv6DFOption: CInt = CInt(IPV6_DONTFRAG)
     #elseif canImport(Darwin)
-    // IPV6_DONTFRAG is defined as 62 in <netinet6/in6.h> but not exported by Swift's Darwin module.
-    public static let ipv6DFOption: CInt = CInt(62)
+        // IPV6_DONTFRAG is defined as 62 in <netinet6/in6.h> but not exported by Swift's Darwin module.
+        public static let ipv6DFOption: CInt = CInt(62)
     #else
-    public static let ipv6DFOption: CInt = 0
+        public static let ipv6DFOption: CInt = 0
     #endif
 
     /// Value to enable IPv6 DF.
@@ -82,9 +93,9 @@ public enum PlatformSocketConstants {
 
     /// Whether the current platform supports setting the DF bit.
     #if os(Linux) || canImport(Darwin)
-    public static let isDFSupported: Bool = true
+        public static let isDFSupported: Bool = true
     #else
-    public static let isDFSupported: Bool = false
+        public static let isDFSupported: Bool = false
     #endif
 
     // ---------------------------------------------------------------
@@ -101,20 +112,20 @@ public enum PlatformSocketConstants {
     ///
     /// When enabled, `recvmsg()` returns `IP_TOS` in ancillary data (cmsg).
     #if os(Linux)
-    public static let ipv4RecvTOS: CInt = CInt(IP_RECVTOS)
+        public static let ipv4RecvTOS: CInt = CInt(IP_RECVTOS)
     #elseif canImport(Darwin)
-    public static let ipv4RecvTOS: CInt = CInt(IP_RECVTOS)
+        public static let ipv4RecvTOS: CInt = CInt(IP_RECVTOS)
     #else
-    public static let ipv4RecvTOS: CInt = 0
+        public static let ipv4RecvTOS: CInt = 0
     #endif
 
     /// Socket option to request traffic class delivery on received IPv6 packets.
     #if os(Linux)
-    public static let ipv6RecvTClass: CInt = CInt(IPV6_RECVTCLASS)
+        public static let ipv6RecvTClass: CInt = CInt(IPV6_RECVTCLASS)
     #elseif canImport(Darwin)
-    public static let ipv6RecvTClass: CInt = CInt(IPV6_RECVTCLASS)
+        public static let ipv6RecvTClass: CInt = CInt(IPV6_RECVTCLASS)
     #else
-    public static let ipv6RecvTClass: CInt = 0
+        public static let ipv6RecvTClass: CInt = 0
     #endif
 
     // ---------------------------------------------------------------
@@ -123,27 +134,27 @@ public enum PlatformSocketConstants {
 
     /// Socket option to set the TOS byte (including ECN bits) on outgoing IPv4 packets.
     #if os(Linux)
-    public static let ipv4TOS: CInt = CInt(IP_TOS)
+        public static let ipv4TOS: CInt = CInt(IP_TOS)
     #elseif canImport(Darwin)
-    public static let ipv4TOS: CInt = CInt(IP_TOS)
+        public static let ipv4TOS: CInt = CInt(IP_TOS)
     #else
-    public static let ipv4TOS: CInt = 0
+        public static let ipv4TOS: CInt = 0
     #endif
 
     /// Socket option to set the traffic class (including ECN bits) on outgoing IPv6 packets.
     #if os(Linux)
-    public static let ipv6TClass: CInt = CInt(IPV6_TCLASS)
+        public static let ipv6TClass: CInt = CInt(IPV6_TCLASS)
     #elseif canImport(Darwin)
-    public static let ipv6TClass: CInt = CInt(IPV6_TCLASS)
+        public static let ipv6TClass: CInt = CInt(IPV6_TCLASS)
     #else
-    public static let ipv6TClass: CInt = 0
+        public static let ipv6TClass: CInt = 0
     #endif
 
     /// Whether the current platform supports ECN socket options.
     #if os(Linux) || canImport(Darwin)
-    public static let isECNSupported: Bool = true
+        public static let isECNSupported: Bool = true
     #else
-    public static let isECNSupported: Bool = false
+        public static let isECNSupported: Bool = false
     #endif
 
     // ---------------------------------------------------------------
@@ -152,22 +163,22 @@ public enum PlatformSocketConstants {
 
     /// `UDP_GRO` socket option (Linux 5.0+). Zero on other platforms.
     #if os(Linux)
-    // UDP_GRO = 104, not always in headers — define explicitly.
-    public static let udpGRO: CInt = 104
-    public static let isGROSupported: Bool = true
+        // UDP_GRO = 104, not always in headers — define explicitly.
+        public static let udpGRO: CInt = 104
+        public static let isGROSupported: Bool = true
     #else
-    public static let udpGRO: CInt = 0
-    public static let isGROSupported: Bool = false
+        public static let udpGRO: CInt = 0
+        public static let isGROSupported: Bool = false
     #endif
 
     /// `UDP_SEGMENT` socket option for GSO (Linux 4.18+). Zero on other platforms.
     #if os(Linux)
-    // UDP_SEGMENT = 103
-    public static let udpSegment: CInt = 103
-    public static let isGSOSupported: Bool = true
+        // UDP_SEGMENT = 103
+        public static let udpSegment: CInt = 103
+        public static let isGSOSupported: Bool = true
     #else
-    public static let udpSegment: CInt = 0
-    public static let isGSOSupported: Bool = false
+        public static let udpSegment: CInt = 0
+        public static let isGSOSupported: Bool = false
     #endif
 
     // ---------------------------------------------------------------
@@ -183,21 +194,27 @@ public enum PlatformSocketConstants {
 
     /// `SIOCGIFMTU` ioctl request code, available on Linux and Darwin.
     #if os(Linux) || canImport(Darwin)
-    public static let siocgifmtu: UInt = {
-        #if os(Linux)
-        return UInt(Glibc.SIOCGIFMTU)
-        #elseif canImport(Darwin)
-        // SIOCGIFMTU = _IOWR('i', 51, struct ifreq) = 0xC0206933 on Darwin (64-bit).
-        // The macro is not importable through Swift's Darwin module.
-        return UInt(0xC020_6933)
-        #else
-        return 0
-        #endif
-    }()
-    public static let isMTUQuerySupported: Bool = true
+        public static let siocgifmtu: UInt = {
+            #if os(Linux)
+                #if canImport(Glibc)
+                    return UInt(Glibc.SIOCGIFMTU)
+                #elseif canImport(Musl)
+                    return UInt(Musl.SIOCGIFMTU)
+                #else
+                    return 0
+                #endif
+            #elseif canImport(Darwin)
+                // SIOCGIFMTU = _IOWR('i', 51, struct ifreq) = 0xC0206933 on Darwin (64-bit).
+                // The macro is not importable through Swift's Darwin module.
+                return UInt(0xC020_6933)
+            #else
+                return 0
+            #endif
+        }()
+        public static let isMTUQuerySupported: Bool = true
     #else
-    public static let siocgifmtu: UInt = 0
-    public static let isMTUQuerySupported: Bool = false
+        public static let siocgifmtu: UInt = 0
+        public static let isMTUQuerySupported: Bool = false
     #endif
 }
 
@@ -289,19 +306,21 @@ public struct PlatformSocketOptions: Sendable {
         if enableDF && PlatformSocketConstants.isDFSupported {
             switch addressFamily {
             case .ipv4:
-                opts.append(SocketOptionDescriptor(
-                    level: PlatformSocketConstants.ipv4DFLevel,
-                    name: PlatformSocketConstants.ipv4DFOption,
-                    value: PlatformSocketConstants.ipv4DFValue,
-                    label: "IPv4-DF"
-                ))
+                opts.append(
+                    SocketOptionDescriptor(
+                        level: PlatformSocketConstants.ipv4DFLevel,
+                        name: PlatformSocketConstants.ipv4DFOption,
+                        value: PlatformSocketConstants.ipv4DFValue,
+                        label: "IPv4-DF"
+                    ))
             case .ipv6:
-                opts.append(SocketOptionDescriptor(
-                    level: PlatformSocketConstants.ipv6DFLevel,
-                    name: PlatformSocketConstants.ipv6DFOption,
-                    value: PlatformSocketConstants.ipv6DFValue,
-                    label: "IPv6-DF"
-                ))
+                opts.append(
+                    SocketOptionDescriptor(
+                        level: PlatformSocketConstants.ipv6DFLevel,
+                        name: PlatformSocketConstants.ipv6DFOption,
+                        value: PlatformSocketConstants.ipv6DFValue,
+                        label: "IPv6-DF"
+                    ))
             }
             dfOK = true
         }
@@ -310,38 +329,42 @@ public struct PlatformSocketOptions: Sendable {
         if enableECN && PlatformSocketConstants.isECNSupported {
             switch addressFamily {
             case .ipv4:
-                opts.append(SocketOptionDescriptor(
-                    level: PlatformSocketConstants.ipv4ECNLevel,
-                    name: PlatformSocketConstants.ipv4RecvTOS,
-                    value: 1,
-                    label: "IPv4-RECVTOS"
-                ))
+                opts.append(
+                    SocketOptionDescriptor(
+                        level: PlatformSocketConstants.ipv4ECNLevel,
+                        name: PlatformSocketConstants.ipv4RecvTOS,
+                        value: 1,
+                        label: "IPv4-RECVTOS"
+                    ))
             case .ipv6:
-                opts.append(SocketOptionDescriptor(
-                    level: PlatformSocketConstants.ipv6ECNLevel,
-                    name: PlatformSocketConstants.ipv6RecvTClass,
-                    value: 1,
-                    label: "IPv6-RECVTCLASS"
-                ))
+                opts.append(
+                    SocketOptionDescriptor(
+                        level: PlatformSocketConstants.ipv6ECNLevel,
+                        name: PlatformSocketConstants.ipv6RecvTClass,
+                        value: 1,
+                        label: "IPv6-RECVTCLASS"
+                    ))
             }
 
             // --- ECN send ---
             let tosValue = CInt(ecnValue & 0x03)
             switch addressFamily {
             case .ipv4:
-                opts.append(SocketOptionDescriptor(
-                    level: PlatformSocketConstants.ipv4ECNLevel,
-                    name: PlatformSocketConstants.ipv4TOS,
-                    value: tosValue,
-                    label: "IPv4-TOS"
-                ))
+                opts.append(
+                    SocketOptionDescriptor(
+                        level: PlatformSocketConstants.ipv4ECNLevel,
+                        name: PlatformSocketConstants.ipv4TOS,
+                        value: tosValue,
+                        label: "IPv4-TOS"
+                    ))
             case .ipv6:
-                opts.append(SocketOptionDescriptor(
-                    level: PlatformSocketConstants.ipv6ECNLevel,
-                    name: PlatformSocketConstants.ipv6TClass,
-                    value: tosValue,
-                    label: "IPv6-TCLASS"
-                ))
+                opts.append(
+                    SocketOptionDescriptor(
+                        level: PlatformSocketConstants.ipv6ECNLevel,
+                        name: PlatformSocketConstants.ipv6TClass,
+                        value: tosValue,
+                        label: "IPv6-TCLASS"
+                    ))
             }
             ecnOK = true
         }
@@ -367,53 +390,58 @@ public struct PlatformSocketOptions: Sendable {
 /// confirmed via DPLPMTUD probing (RFC 8899).
 public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
     #if os(Linux) || canImport(Darwin)
-    guard PlatformSocketConstants.isMTUQuerySupported else { return nil }
+        guard PlatformSocketConstants.isMTUQuerySupported else { return nil }
 
-    #if os(Linux)
-    let fd = socket(AF_INET, Int32(SOCK_DGRAM.rawValue), 0)
-    #else
-    let fd = socket(AF_INET, SOCK_DGRAM, 0)
-    #endif
-    guard fd >= 0 else { return nil }
-    defer { close(fd) }
+        #if os(Linux)
+            #if canImport(Glibc)
+                let fd = socket(AF_INET, Int32(Glibc.SOCK_DGRAM.rawValue), 0)
+            #else
+                let fd = socket(AF_INET, SOCK_DGRAM, 0)
+            #endif
+        #else
+            let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        #endif
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
 
-    var ifr = ifreq()
-    let nameBytes = interfaceName.utf8CString
+        var ifr = ifreq()
+        let nameBytes = interfaceName.utf8CString
 
-    // Copy interface name into the ifreq struct.
-    // The name field layout differs between Linux and Darwin.
-    let nameFits: Bool = withUnsafeMutablePointer(to: &ifr) { ifrPtr in
-        ifrPtr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<ifreq>.size) { rawPtr in
-            // ifr_name is at offset 0 on both platforms; IFNAMSIZ = 16
-            let maxLen = 16
-            guard nameBytes.count <= maxLen else { return false }
-            for (i, byte) in nameBytes.enumerated() {
-                rawPtr[i] = UInt8(bitPattern: byte)
+        // Copy interface name into the ifreq struct.
+        // The name field layout differs between Linux and Darwin.
+        let nameFits: Bool = withUnsafeMutablePointer(to: &ifr) { ifrPtr in
+            ifrPtr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<ifreq>.size) { rawPtr in
+                // ifr_name is at offset 0 on both platforms; IFNAMSIZ = 16
+                let maxLen = 16
+                guard nameBytes.count <= maxLen else { return false }
+                for (i, byte) in nameBytes.enumerated() {
+                    rawPtr[i] = UInt8(bitPattern: byte)
+                }
+                return true
             }
-            return true
         }
-    }
-    guard nameFits else { return nil }
+        guard nameFits else { return nil }
 
-    #if os(Linux)
-    let rc = ioctl(fd, UInt(Glibc.SIOCGIFMTU), &ifr)
-    #else
-    let rc = ioctl(fd, PlatformSocketConstants.siocgifmtu, &ifr)
-    #endif
+        // Use the platform-resolved constant.
+        // This removes the need for `Glibc.SIOCGIFMTU` here,
+        // solving the static SDK (Musl) build issue.
+        let rc = ioctl(fd, PlatformSocketConstants.siocgifmtu, &ifr)
 
-    guard rc == 0 else { return nil }
+        guard rc == 0 else { return nil }
 
-    // Extract MTU from the ifreq union.
-    let mtu: Int32 = withUnsafePointer(to: &ifr) { ifrPtr in
-        ifrPtr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<ifreq>.size) { rawPtr in
-            // ifr_mtu sits at the same offset as ifr_ifru on both platforms,
-            // which is right after ifr_name (offset 16).  It's an Int32.
-            rawPtr.advanced(by: 16).withMemoryRebound(to: Int32.self, capacity: 1) { $0.pointee }
+        // Extract MTU from the ifreq union.
+        let mtu: Int32 = withUnsafePointer(to: &ifr) { ifrPtr in
+            ifrPtr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<ifreq>.size) { rawPtr in
+                // ifr_mtu sits at the same offset as ifr_ifru on both platforms,
+                // which is right after ifr_name (offset 16).  It's an Int32.
+                rawPtr.advanced(by: 16).withMemoryRebound(to: Int32.self, capacity: 1) {
+                    $0.pointee
+                }
+            }
         }
-    }
-    return Int(mtu)
+        return Int(mtu)
     #else
-    return nil
+        return nil
     #endif
 }
 
@@ -424,28 +452,47 @@ public func queryInterfaceMTU(_ interfaceName: String) -> Int? {
 /// name is known.
 public func queryDefaultInterfaceMTU() -> Int? {
     #if os(Linux) || canImport(Darwin)
-    var addrs: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
-    defer { freeifaddrs(addrs) }
+        var addrs: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
+        defer { freeifaddrs(addrs) }
 
-    var current: UnsafeMutablePointer<ifaddrs>? = first
-    while let entry = current {
-        let flags = UInt32(entry.pointee.ifa_flags)
-        let isUp = (flags & UInt32(IFF_UP)) != 0
-        let isLoopback = (flags & UInt32(IFF_LOOPBACK)) != 0
-        let family = entry.pointee.ifa_addr?.pointee.sa_family ?? 0
+        var seen = Set<String>()
+        var inetCandidates: [String] = []
+        var fallbackCandidates: [String] = []
 
-        if isUp && !isLoopback && (Int32(family) == AF_INET || Int32(family) == AF_INET6) {
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let entry = current {
+            let flags = UInt32(entry.pointee.ifa_flags)
+            let isUp = (flags & UInt32(IFF_UP)) != 0
+            let isRunning = (flags & UInt32(IFF_RUNNING)) != 0
+            let isLoopback = (flags & UInt32(IFF_LOOPBACK)) != 0
+
+            guard isUp, isRunning, !isLoopback else {
+                current = entry.pointee.ifa_next
+                continue
+            }
+
             let name = String(cString: entry.pointee.ifa_name)
+            if seen.insert(name).inserted {
+                let family = entry.pointee.ifa_addr?.pointee.sa_family ?? 0
+                if Int32(family) == AF_INET || Int32(family) == AF_INET6 {
+                    inetCandidates.append(name)
+                } else {
+                    fallbackCandidates.append(name)
+                }
+            }
+
+            current = entry.pointee.ifa_next
+        }
+
+        for name in inetCandidates + fallbackCandidates {
             if let mtu = queryInterfaceMTU(name) {
                 return mtu
             }
         }
-        current = entry.pointee.ifa_next
-    }
-    return nil
+        return nil
     #else
-    return nil
+        return nil
     #endif
 }
 

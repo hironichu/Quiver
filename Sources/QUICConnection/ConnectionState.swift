@@ -2,7 +2,11 @@
 ///
 /// Manages the lifecycle of a QUIC connection.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 
 // MARK: - Connection State

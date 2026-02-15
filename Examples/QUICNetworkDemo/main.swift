@@ -548,6 +548,9 @@ func runClient(
     }
 
     log("Client", "Connected!")
+    if connection.localAddress != nil {
+        log("Client", "OK ADDR IS NOT NIL")
+    }
     log("Client", "  Local:  \(connection.localAddress?.description ?? "unknown")")
     log("Client", "  Remote: \(connection.remoteAddress)")
     log("Client", "")

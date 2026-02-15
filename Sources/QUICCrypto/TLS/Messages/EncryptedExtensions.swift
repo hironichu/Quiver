@@ -6,7 +6,11 @@
 /// } EncryptedExtensions;
 /// ```
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// TLS 1.3 EncryptedExtensions message
 public struct EncryptedExtensions: Sendable {

@@ -8,7 +8,11 @@
 /// } Extension;
 /// ```
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Extension Type
 

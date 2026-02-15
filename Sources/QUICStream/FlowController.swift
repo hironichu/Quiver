@@ -2,7 +2,11 @@
 ///
 /// Manages connection-level and stream-level flow control.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 
 /// Connection and stream-level flow control

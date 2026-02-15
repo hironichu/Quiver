@@ -8,7 +8,7 @@ openssl req -new -key localhost.key -subj "/CN=localhost" -out localhost.csr
 
 # 3) Sign with SANs + serverAuth
 cat > localhost.ext <<'EOF'
-subjectAltName=DNS:localhost,IP:127.0.0.1
+subjectAltName=DNS:localhost,IP:127.0.0.1,IP:192.168.1.165
 extendedKeyUsage=serverAuth
 EOF
 

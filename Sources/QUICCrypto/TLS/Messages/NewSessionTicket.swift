@@ -13,7 +13,11 @@
 /// The server sends this message after the handshake to establish
 /// a PSK that can be used for session resumption.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - NewSessionTicket Message
 

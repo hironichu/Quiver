@@ -2,7 +2,11 @@
 ///
 /// Tracks sent packets for loss detection and acknowledgment management.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 
 /// Tracks a sent packet for loss detection (RFC 9002 Appendix A.1.1)

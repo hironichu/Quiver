@@ -2,7 +2,11 @@
 ///
 /// Supports ECDSA with P-256/P-384 and Ed25519.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Crypto
 
 // MARK: - TLS Signature

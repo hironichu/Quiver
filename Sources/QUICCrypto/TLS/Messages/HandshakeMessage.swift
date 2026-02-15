@@ -9,12 +9,17 @@
 /// } Handshake;
 /// ```
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Handshake Type
 
 /// TLS 1.3 handshake message types (RFC 8446 Section 4)
-public enum HandshakeType: UInt8, Sendable {
+@frozen public enum HandshakeType: UInt8, Sendable {
+
     case clientHello = 1
     case serverHello = 2
     case newSessionTicket = 4
@@ -31,7 +36,7 @@ public enum HandshakeType: UInt8, Sendable {
 // MARK: - TLS Constants
 
 /// TLS protocol constants
-public enum TLSConstants {
+@frozen public enum TLSConstants {
     /// TLS 1.3 version (0x0304)
     public static let version13: UInt16 = 0x0304
 
@@ -59,7 +64,7 @@ public enum TLSConstants {
 // MARK: - Cipher Suite
 
 /// TLS 1.3 cipher suites (RFC 8446 Section B.4)
-public enum CipherSuite: UInt16, Sendable, CaseIterable {
+@frozen public enum CipherSuite: UInt16, Sendable, CaseIterable {
     case tls_aes_128_gcm_sha256 = 0x1301
     case tls_aes_256_gcm_sha384 = 0x1302
     case tls_chacha20_poly1305_sha256 = 0x1303
@@ -88,7 +93,7 @@ public enum CipherSuite: UInt16, Sendable, CaseIterable {
 // MARK: - Named Group
 
 /// Named groups for key exchange (RFC 8446 Section 4.2.7)
-public enum NamedGroup: UInt16, Sendable {
+@frozen public enum NamedGroup: UInt16, Sendable {
     case secp256r1 = 0x0017
     case secp384r1 = 0x0018
     case secp521r1 = 0x0019
@@ -99,7 +104,7 @@ public enum NamedGroup: UInt16, Sendable {
 // MARK: - Signature Scheme
 
 /// Signature schemes (RFC 8446 Section 4.2.3)
-public enum SignatureScheme: UInt16, Sendable {
+@frozen public enum SignatureScheme: UInt16, Sendable {
     // ECDSA
     case ecdsa_secp256r1_sha256 = 0x0403
     case ecdsa_secp384r1_sha384 = 0x0503

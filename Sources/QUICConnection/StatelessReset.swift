@@ -4,7 +4,11 @@
 /// has lost state and cannot process a packet. The reset is indicated by
 /// a 16-byte token at the end of a UDP datagram.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Synchronization
 import Crypto
 import QUICCore

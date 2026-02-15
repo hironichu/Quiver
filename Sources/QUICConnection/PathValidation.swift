@@ -4,10 +4,15 @@
 /// An endpoint validates a path by sending a PATH_CHALLENGE frame and receiving
 /// a PATH_RESPONSE frame containing the same data.
 
-import Foundation
-import Synchronization
-import QUICCore
 import Crypto
+import QUICCore
+import Synchronization
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 // MARK: - Path Validation State
 
 /// State of a path validation attempt
@@ -183,7 +188,8 @@ public final class PathValidationManager: Sendable {
     public func retryValidation(for path: NetworkPath) -> Data? {
         return state.withLock { s in
             guard let currentState = s.pendingValidations[path],
-                  case .failed = currentState else {
+                case .failed = currentState
+            else {
                 return nil
             }
 
@@ -291,7 +297,7 @@ public final class ConnectionIDManager: Sendable {
     }
 
     /// Errors related to connection ID operations
-    public enum ConnectionIDError: Error, Sendable {
+    public enum ConnectionIDError: Error, Sendable, Equatable {
         /// Invalid connection ID length
         case invalidLength(Int)
         /// Duplicate sequence number with different CID or token (RFC 9000 §5.1.1)
@@ -318,8 +324,9 @@ public final class ConnectionIDManager: Sendable {
             // If same sequence but different CID or token, it's a PROTOCOL_VIOLATION
             if let existing = s.peerCIDs[frame.sequenceNumber] {
                 // If CID and token match exactly, just ignore the duplicate
-                if existing.connectionID == frame.connectionID &&
-                   existing.statelessResetToken == frame.statelessResetToken {
+                if existing.connectionID == frame.connectionID
+                    && existing.statelessResetToken == frame.statelessResetToken
+                {
                     return  // Ignore exact duplicate
                 }
                 // Different CID or token with same sequence = PROTOCOL_VIOLATION
@@ -335,8 +342,14 @@ public final class ConnectionIDManager: Sendable {
             }
 
             // RFC 9000 §5.1.1: Enforce active_connection_id_limit
-            // Count active (non-retired) CIDs
+            // Count active (non-retired) CIDs. The limit includes the CID currently in use.
+            // We need to count the *stored* peer CIDs.
+            // Note: The limit applies to the number of *active* connection IDs.
+            // Retired CIDs don't count.
             let activeCIDCount = s.peerCIDs.count
+
+            // If we are adding a NEW one (which we are, since we passed the duplicate check),
+            // we must ensure we don't exceed the limit.
             if activeCIDCount >= Int(activeConnectionIDLimit) {
                 // We're at or over the limit - peer is violating our limit
                 throw ConnectionIDError.exceededConnectionIDLimit(

@@ -6,12 +6,16 @@
 /// - `handleNewConnection` — processes incoming Initial packets
 /// - `handleVersionNegotiationPacket` — handles VN packets (client-side)
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
+import NIOUDPTransport
+import QUICConnection
 import QUICCore
 import QUICCrypto
-import QUICConnection
 import QUICTransport
-import NIOUDPTransport
 
 // MARK: - Server API
 
@@ -50,7 +54,8 @@ extension QUICEndpoint {
         // Wait briefly for the socket to start and get the address
         try await Task.sleep(for: .milliseconds(10))
         if let nioAddr = await socket.localAddress,
-           let addr = SocketAddress(nioAddr) {
+            let addr = SocketAddress(nioAddr)
+        {
             await endpoint.setLocalAddress(addr)
         }
 
@@ -118,7 +123,9 @@ extension QUICEndpoint {
     // MARK: - New Connection Handling
 
     /// Handles a new incoming connection (server mode)
-    func handleNewConnection(info: ConnectionRouter.IncomingConnectionInfo) async throws -> ManagedConnection {
+    func handleNewConnection(info: ConnectionRouter.IncomingConnectionInfo) async throws
+        -> ManagedConnection
+    {
         // Generate our source connection ID
         // Note: length 8 is always valid (0-20 allowed), so random() will never return nil
         guard let sourceConnectionID = ConnectionID.random(length: 8) else {
@@ -157,21 +164,25 @@ extension QUICEndpoint {
 
         // Enable ECN if the socket was created with ECN support
         if let nioSocket = self.socket as? NIOQUICSocket,
-           nioSocket.platformOptions?.ecnEnabled == true {
+            nioSocket.platformOptions?.ecnEnabled == true
+        {
             connection.enableECN()
         }
 
         // Enable DPLPMTUD if the socket has the DF bit set
         if let nioSocket = self.socket as? NIOQUICSocket,
-           nioSocket.platformOptions?.dfEnabled == true {
+            nioSocket.platformOptions?.dfEnabled == true
+        {
             connection.enablePMTUD()
         }
 
         // Register with both our SCID and the client's DCID
-        router.register(connection, for: [
-            sourceConnectionID,
-            info.destinationConnectionID
-        ])
+        router.register(
+            connection,
+            for: [
+                sourceConnectionID,
+                info.destinationConnectionID,
+            ])
         timerManager.register(connection)
 
         // Initialize sendSignal stream before starting the loop
@@ -184,7 +195,8 @@ extension QUICEndpoint {
         if let socket = self.socket {
             Task { [weak self] in
                 guard let self = self else { return }
-                await self.outboundSendLoop(connection: connection, sendSignal: sendSignal, socket: socket)
+                await self.outboundSendLoop(
+                    connection: connection, sendSignal: sendSignal, socket: socket)
             }
         }
 
@@ -213,7 +225,9 @@ extension QUICEndpoint {
     /// - Parameters:
     ///   - data: The Version Negotiation packet data
     ///   - remoteAddress: Where the packet came from
-    func handleVersionNegotiationPacket(_ data: Data, from remoteAddress: SocketAddress) async throws {
+    func handleVersionNegotiationPacket(_ data: Data, from remoteAddress: SocketAddress)
+        async throws
+    {
         // Only clients process Version Negotiation packets
         guard !isServer else {
             // Servers ignore VN packets (RFC 9000 Section 6)
@@ -263,12 +277,17 @@ extension QUICEndpoint {
             supported: QUICVersion.supportedVersions
         ) {
             // We can retry with the new version
-            try await connection.retryWithVersion(newVersion)
+            let packets = try await connection.retryWithVersion(newVersion)
+            for packet in packets {
+                try await send(packet, to: remoteAddress)
+            }
         } else {
             // No common version - close connection gracefully
             // RFC 9000: This isn't a protocol error, just an incompatibility
             await connection.close(error: nil)
-            logger.debug("UNREGISTER from handleVersionNegotiationPacket for SCID=\(connection.sourceConnectionID)")
+            logger.debug(
+                "UNREGISTER from handleVersionNegotiationPacket for SCID=\(connection.sourceConnectionID)"
+            )
             router.unregister(connection)
             timerManager.markClosed(connection)
         }

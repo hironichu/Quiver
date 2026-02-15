@@ -5,8 +5,9 @@
 /// - Reserved bits MUST be 0
 /// - Validation MUST happen after header protection removal (RFC 9001 §5.4.1)
 
-import Testing
 import Foundation
+import Testing
+
 @testable import QUICCore
 
 @Suite("RFC 9000 - Packet Header Validation Compliance")
@@ -90,8 +91,8 @@ struct PacketHeaderRFCTests {
         #expect(validatedHeader.packetType == .initial)
     }
 
-    @Test("Long header with fixed bit = 0 fails unprotect() validation")
-    func longHeaderFixedBitZeroFailsValidation() throws {
+    @Test("Long header with fixed bit = 0 passes unprotect() validation")
+    func longHeaderFixedBitZeroPassesValidation() throws {
         var packet = Data()
         packet.append(0xC0)  // Protected first byte (doesn't matter for this test)
         packet.append(contentsOf: [0x00, 0x00, 0x00, 0x01])  // Version 1
@@ -105,16 +106,16 @@ struct PacketHeaderRFCTests {
 
         let (protectedHeader, _) = try ProtectedLongHeader.parse(from: packet)
 
-        // After HP removal, if first byte has fixed bit = 0, validation MUST fail
-        let unprotectedFirstByte: UInt8 = 0x80  // Fixed=0 (INVALID)
+        // After HP removal, if first byte has fixed bit = 0, validation MUST succeed (RFC 9287)
+        let unprotectedFirstByte: UInt8 = 0x80  // Fixed=0 (Greased)
 
-        #expect(throws: HeaderValidationError.self) {
-            _ = try protectedHeader.unprotect(
-                unprotectedFirstByte: unprotectedFirstByte,
-                packetNumber: 0,
-                packetNumberLength: 1
-            )
-        }
+        let validatedHeader = try protectedHeader.unprotect(
+            unprotectedFirstByte: unprotectedFirstByte,
+            packetNumber: 0,
+            packetNumberLength: 1
+        )
+        // Verify it parsed as Initial
+        #expect(validatedHeader.packetType == .initial)
     }
 
     @Test("Long header with non-zero reserved bits fails unprotect() validation")
@@ -167,8 +168,8 @@ struct PacketHeaderRFCTests {
         #expect(validatedHeader.destinationConnectionID.bytes == Data([0x01, 0x02, 0x03, 0x04]))
     }
 
-    @Test("Short header with fixed bit = 0 fails unprotect() validation")
-    func shortHeaderFixedBitZeroFailsValidation() throws {
+    @Test("Short header with fixed bit = 0 passes unprotect() validation")
+    func shortHeaderFixedBitZeroPassesValidation() throws {
         var packet = Data()
         packet.append(0x40)  // Protected (doesn't matter)
         packet.append(contentsOf: [0x01, 0x02, 0x03, 0x04])
@@ -176,16 +177,16 @@ struct PacketHeaderRFCTests {
 
         let (protectedHeader, _) = try ProtectedShortHeader.parse(from: packet, dcidLength: 4)
 
-        // After HP removal, fixed bit = 0 (INVALID)
-        let unprotectedFirstByte: UInt8 = 0x00  // Fixed=0 (INVALID)
+        // After HP removal, fixed bit = 0 (Greased) - MUST succeed
+        let unprotectedFirstByte: UInt8 = 0x00  // Fixed=0
 
-        #expect(throws: HeaderValidationError.self) {
-            _ = try protectedHeader.unprotect(
-                unprotectedFirstByte: unprotectedFirstByte,
-                packetNumber: 0,
-                packetNumberLength: 1
-            )
-        }
+        let validatedHeader = try protectedHeader.unprotect(
+            unprotectedFirstByte: unprotectedFirstByte,
+            packetNumber: 0,
+            packetNumberLength: 1
+        )
+        // Verify we got a valid header
+        #expect(validatedHeader.destinationConnectionID.bytes == Data([0x01, 0x02, 0x03, 0x04]))
     }
 
     @Test("Short header with non-zero reserved bits fails unprotect() validation")

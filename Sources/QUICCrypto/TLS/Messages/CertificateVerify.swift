@@ -16,7 +16,11 @@
 /// 64 spaces + "TLS 1.3, client CertificateVerify" + 0x00 + Transcript-Hash
 /// ```
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Certificate Verify Message
 

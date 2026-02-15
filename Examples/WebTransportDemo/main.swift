@@ -119,6 +119,10 @@ struct DemoArguments {
     let certPath: String?  // Server: PEM certificate path
     let keyPath: String?  // Server: PEM private key path
     let caCertPath: String?  // Client: PEM CA certificate path
+    let useSystemCertificates: Bool  // Client: use system trust store
+
+    // Debug options
+    let dumpSystemRootCNs: Bool  // Client: dump loaded system root certificate CNs
 
     // Demo options
     let skipDatagrams: Bool
@@ -147,6 +151,8 @@ struct DemoArguments {
         var certPath: String?
         var keyPath: String?
         var caCertPath: String?
+        var useSystemCertificates = false
+        var dumpSystemRootCNs = false
         var skipDatagrams = false
 
         var i = 1
@@ -179,6 +185,10 @@ struct DemoArguments {
             case "--ca-cert":
                 i += 1
                 if i < args.count { caCertPath = args[i] }
+            case "--use-system-certificates":
+                useSystemCertificates = true
+            case "--dump-system-root-cns":
+                dumpSystemRootCNs = true
             case "--skip-datagrams":
                 skipDatagrams = true
             default:
@@ -195,6 +205,8 @@ struct DemoArguments {
             certPath: certPath,
             keyPath: keyPath,
             caCertPath: caCertPath,
+            useSystemCertificates: useSystemCertificates,
+            dumpSystemRootCNs: dumpSystemRootCNs,
             skipDatagrams: skipDatagrams
         )
     }
@@ -240,16 +252,42 @@ func makeServerTLSConfig(certPath: String?, keyPath: String?) throws -> (TLSConf
 
 /// Creates a client TLS configuration.
 ///
-/// When `caCertPath` is provided, loads a trusted CA certificate from disk
-/// and enables full peer verification (production mode). Otherwise, disables
-/// strict verification and allows self-signed certificates (development mode).
-func makeClientTLSConfig(caCertPath: String?) throws -> (TLSConfiguration, String) {
-    if let caCertPath = caCertPath {
+/// Resolution order:
+/// 1) `useSystemCertificates == true` => verify with system trust store
+/// 2) `caCertPath != nil` => verify with explicit CA bundle
+/// 3) fallback => development mode (allow self-signed)
+func makeClientTLSConfig(
+    caCertPath: String?,
+    useSystemCertificates: Bool,
+    dumpSystemRootCNs: Bool
+) throws -> (TLSConfiguration, String) {
+    if useSystemCertificates {
+        var tlsConfig = TLSConfiguration.client(
+            serverName: "localhost",
+            alpnProtocols: [h3ALPN]
+        )
+        try tlsConfig.useSystemTrustStore()
+        let roots = tlsConfig.trustedRootCertificates ?? []
+        let rootCount = roots.count
+        log("Config", "TLS trust source selected: system trust store (rootCount: \(rootCount))")
+        if dumpSystemRootCNs {
+            for (idx, cert) in roots.enumerated() {
+                let subject = String(describing: cert.subject)
+                let cn = extractCommonName(fromSubjectDescription: subject) ?? "<none>"
+                log("Config", "Root[\(idx)] CN=\(cn)")
+            }
+        }
+        tlsConfig.verifyPeer = true
+        tlsConfig.allowSelfSigned = false
+        return (tlsConfig, "Production (system trust store, verifyPeer: true)")
+    } else if let caCertPath = caCertPath {
         var tlsConfig = TLSConfiguration.client(
             serverName: "localhost",
             alpnProtocols: [h3ALPN]
         )
         try tlsConfig.loadTrustedCAs(fromPEMFile: caCertPath)
+        let rootCount = tlsConfig.trustedRootCertificates?.count ?? 0
+        log("Config", "TLS trust source selected: PEM CA bundle (path: \(caCertPath), rootCount: \(rootCount))")
         tlsConfig.verifyPeer = true
         tlsConfig.allowSelfSigned = false
         return (tlsConfig, "Production (CA: \(caCertPath), verifyPeer: true)")
@@ -258,6 +296,7 @@ func makeClientTLSConfig(caCertPath: String?) throws -> (TLSConfiguration, Strin
             serverName: "localhost",
             alpnProtocols: [h3ALPN]
         )
+        log("Config", "TLS trust source selected: none (development mode, self-signed allowed)")
         tlsConfig.verifyPeer = false
         tlsConfig.allowSelfSigned = true
         return (tlsConfig, "Development (allowSelfSigned: true, verifyPeer: false)")
@@ -311,11 +350,19 @@ func makeServerConfiguration(certPath: String?, keyPath: String?) throws -> QUIC
 }
 
 /// Creates a QUIC configuration for the WebTransport client.
-func makeClientConfiguration(caCertPath: String?) throws -> QUICConfiguration {
-    let (tlsConfig, description) = try makeClientTLSConfig(caCertPath: caCertPath)
+func makeClientConfiguration(
+    caCertPath: String?,
+    useSystemCertificates: Bool,
+    dumpSystemRootCNs: Bool
+) throws -> QUICConfiguration {
+    let (tlsConfig, description) = try makeClientTLSConfig(
+        caCertPath: caCertPath,
+        useSystemCertificates: useSystemCertificates,
+        dumpSystemRootCNs: dumpSystemRootCNs
+    )
     log("Config", "TLS mode: \(description)")
 
-    let isProduction = (caCertPath != nil)
+    let isProduction = useSystemCertificates || (caCertPath != nil)
 
     var config: QUICConfiguration
     if isProduction {
@@ -349,8 +396,8 @@ func makeClientConfiguration(caCertPath: String?) throws -> QUICConfiguration {
 /// Runs the WebTransport echo server.
 ///
 /// The server:
-/// 1. Creates a WebTransportServer with session limits
-/// 2. Starts listening via `listen(host:port:quicConfiguration:)`
+/// 1. Creates a WebTransportServer with options and path registration
+/// 2. Creates a QUIC endpoint and feeds connections via `serve(connectionSource:)`
 /// 3. For each incoming WebTransport session:
 ///    a. Echoes bidirectional stream data back to the sender
 ///    b. Reads unidirectional streams and sends a response on a new uni stream
@@ -359,11 +406,10 @@ func makeClientConfiguration(caCertPath: String?) throws -> QUICConfiguration {
 /// ## WebTransport Server Setup Flow
 ///
 /// ```
-/// WebTransportServer.listen(host, port, quicConfig)
-///   └─► QUICEndpoint.serve(host, port, config)   ← UDP socket + QUIC I/O
-///       └─► HTTP3Server.serve(connectionSource)   ← HTTP/3 layer
-///           └─► Extended CONNECT handler           ← WebTransport negotiation
-///               └─► WebTransportSession created    ← Yielded to incomingSessions
+/// QUICEndpoint.serve(host, port, quicConfig)     ← UDP socket + QUIC I/O
+///   └─► server.serve(connectionSource)            ← WebTransport + HTTP/3 layer
+///       └─► Middleware resolution                  ← Accept/reject via middleware
+///           └─► WebTransportSession created        ← Yielded to incomingSessions
 /// ```
 func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) async throws {
     log("Server", "╔══════════════════════════════════════════════════════════════╗")
@@ -394,51 +440,41 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     log("Server", "")
 
     // Step 1: Create the QUIC configuration
+    //
+    // The demo builds its own QUICConfiguration with TLS because
+    // WebTransportServerOptions.buildQUICConfiguration() does not set
+    // securityMode (QUICCrypto is not a direct HTTP3 dependency).
+    // We create the QUIC endpoint ourselves and feed connections via
+    // server.serve(connectionSource:).
+    //
     let quicConfig = try makeServerConfiguration(certPath: certPath, keyPath: keyPath)
 
     // Step 2: Create the WebTransport server
     //
-    // WebTransportServer wraps HTTP3Server and handles:
-    //   - HTTP/3 SETTINGS with WebTransport extensions
-    //     (ENABLE_CONNECT_PROTOCOL, H3_DATAGRAM, WEBTRANSPORT_MAX_SESSIONS)
-    //   - Extended CONNECT request acceptance/rejection
-    //   - WebTransportSession creation and lifecycle
+    // WebTransportServerOptions carries cert paths and transport params.
+    // The server uses middleware to control session acceptance and
+    // register(path:) for path-based routing.
     //
-    let server = WebTransportServer(
-        configuration: WebTransportConfiguration(
-            quic: quicConfig,
-            maxSessions: 4
-        ),
-        serverOptions: WebTransportServer.ServerOptions(
-            allowedPaths: [echoPath]
-        )
+    // NOTE: certificatePath/privateKeyPath are provided for documentation
+    // purposes but TLS is configured via the QUICConfiguration above.
+    //
+    let serverOptions = WebTransportServerOptions(
+        certificatePath: certPath ?? "dev-self-signed",
+        privateKeyPath: keyPath ?? "dev-self-signed",
+        maxSessions: 4,
+        maxIdleTimeout: .seconds(60),
+        initialMaxStreamsBidi: 200,
+        initialMaxStreamsUni: 200
     )
 
-    // Optionally serve regular HTTP/3 requests alongside WebTransport
-    await server.onRequest { context in
-        let body = """
-            <!DOCTYPE html>
-            <html>
-            <head><title>WebTransport Echo Server</title></head>
-            <body>
-                <h1>WebTransport Echo Server</h1>
-                <p>This server accepts WebTransport sessions at path <code>\(echoPath)</code>.</p>
-                <p>Use the Quiver WebTransport client or a browser with WebTransport support.</p>
-                <h2>Endpoints</h2>
-                <ul>
-                    <li><strong>Bidi stream echo</strong>: Open a bidirectional stream, send data, receive echo</li>
-                    <li><strong>Uni stream echo</strong>: Open a unidirectional stream, send data; server responds on a new uni stream</li>
-                    <li><strong>Datagram echo</strong>: Send a datagram, receive echo datagram</li>
-                </ul>
-            </body>
-            </html>
-            """
-        try await context.respond(
-            status: 200,
-            headers: [("content-type", "text/html; charset=utf-8")],
-            Data(body.utf8)
-        )
-    }
+    let server = WebTransportServer(
+        host: host,
+        port: port,
+        options: serverOptions
+    )
+
+    // Register the echo path — only this path will be accepted
+    await server.register(path: echoPath)
 
     // Step 3: Start the session handler in a background task
     //
@@ -482,19 +518,19 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
 
     // Step 4: Start listening
     //
-    // server.listen() creates the full QUIC + HTTP/3 stack internally:
-    //   1. Creates a NIOQUICSocket bound to host:port
-    //   2. Starts a QUICEndpoint with the I/O loop
-    //   3. Starts an HTTP3Server that processes connections
-    //   4. Registers Extended CONNECT handler for WebTransport
+    // We create the QUIC endpoint ourselves (with TLS configured via
+    // makeServerConfiguration) and feed connections to the server.
     //
-    // This call blocks until stop() is called.
-    //
+    let (endpoint, runTask) = try await QUICEndpoint.serve(
+        host: host,
+        port: port,
+        configuration: quicConfig
+    )
+
+    let connectionStream = await endpoint.incomingConnections
+
     do {
-        try await server.listen(
-            host: host,
-            port: port
-        )
+        try await server.serve(connectionSource: connectionStream)
     } catch {
         log("Server", "Server error: \(error)")
     }
@@ -503,6 +539,8 @@ func runServer(host: String, port: UInt16, certPath: String?, keyPath: String?) 
     sessionHandlerTask.cancel()
     log("Server", "Shutting down...")
     await server.stop(gracePeriod: .seconds(5))
+    await endpoint.stop()
+    runTask.cancel()
     log("Server", "Server stopped.")
 }
 
@@ -707,10 +745,8 @@ func handleUniEcho(
 /// Runs the WebTransport echo client.
 ///
 /// The client:
-/// 1. Establishes a QUIC connection to the server
-/// 2. Creates a WebTransportClient and initializes the HTTP/3 layer
-/// 3. Opens a WebTransport session via Extended CONNECT
-/// 4. Tests all three echo mechanisms:
+/// 1. Establishes a WebTransport session via `WebTransport.connect()`
+/// 2. Tests all three echo mechanisms:
 ///    a. Bidirectional stream echo
 ///    b. Unidirectional stream echo
 ///    c. Datagram echo
@@ -718,99 +754,68 @@ func handleUniEcho(
 /// ## Client Setup Flow
 ///
 /// ```
-/// QUICEndpoint(config).dial(address)          ← QUIC handshake
-///   └─► WebTransportClient(quicConnection)
-///       └─► client.initialize()                ← HTTP/3 SETTINGS exchange
-///           └─► client.connect(path: "/echo")  ← Extended CONNECT → 200 OK
-///               └─► WebTransportSession        ← Ready for streams & datagrams
+/// WebTransport.connect(url, options)
+///   └─► QUICEndpoint(config).dial(address)     ← QUIC handshake
+///       └─► HTTP3Connection.initialize()        ← HTTP/3 SETTINGS exchange
+///           └─► sendExtendedConnect()            ← Extended CONNECT → 200 OK
+///               └─► WebTransportSession          ← Ready for streams & datagrams
 /// ```
-func runClient(host: String, port: UInt16, caCertPath: String?, skipDatagrams: Bool) async throws {
+func runClient(
+    host: String,
+    port: UInt16,
+    caCertPath: String?,
+    useSystemCertificates: Bool,
+    dumpSystemRootCNs: Bool,
+    skipDatagrams: Bool
+) async throws {
     log("Client", "╔══════════════════════════════════════════════════════════════╗")
     log("Client", "║            WebTransport Echo Client                         ║")
     log("Client", "╚══════════════════════════════════════════════════════════════╝")
     log("Client", "")
     log("Client", "Connecting to \(host):\(port)")
 
-    if let caCertPath = caCertPath {
-        log("Client", "  TLS: Production (CA cert: \(caCertPath))")
+    if useSystemCertificates {
+        log("WebTransport", "  TLS: Production (system trust store)")
+    } else if let caCertPath = caCertPath {
+        log("WebTransport", "  TLS: Production (CA cert: \(caCertPath))")
     } else {
-        log("Client", "  TLS: Development (allowSelfSigned: true)")
+        log("WebTransport", "  TLS: Development (allowSelfSigned: true)")
     }
     log("Client", "")
 
     // Step 1: Create client QUIC configuration
-    let config = try makeClientConfiguration(caCertPath: caCertPath)
-
-    // Step 2: Connect to the server via QUIC
-    //
-    // QUICEndpoint.dial() performs the full QUIC handshake:
-    //   1. Creates a UDP socket on a random local port
-    //   2. Sends Initial packet (ClientHello)
-    //   3. Processes server's Initial + Handshake packets
-    //   4. Completes TLS 1.3 handshake
-    //
-    let endpoint = QUICEndpoint(configuration: config)
-    let serverAddress = QUIC.SocketAddress(ipAddress: host, port: port)
-
-    log("Client", "Dialing QUIC connection to \(serverAddress)...")
-    let quicConnection: any QUICConnectionProtocol
-    do {
-        quicConnection = try await endpoint.dial(address: serverAddress, timeout: .seconds(10))
-    } catch {
-        log("Client", "Failed to connect: \(error)")
-        log("Client", "")
-        log("Client", "Make sure the server is running:")
-        log("Client", "  swift run WebTransportDemo server --host \(host) --port \(port)")
-        throw error
-    }
-
-    log("Client", "QUIC connection established!")
-    log("Client", "  Local:  \(quicConnection.localAddress?.description ?? "unknown")")
-    log("Client", "  Remote: \(quicConnection.remoteAddress)")
-    log("Client", "")
-
-    // Step 3: Initialize the WebTransport client
-    //
-    // WebTransportClient wraps the QUIC connection with an HTTP/3 layer:
-    //   - Opens HTTP/3 control stream, sends SETTINGS
-    //   - Opens QPACK encoder/decoder streams
-    //   - Waits for server's SETTINGS (checks WebTransport support)
-    //
-    log("Client", "Initializing HTTP/3 + WebTransport layer...")
-    let wtClient = WebTransportClient(
-        quicConnection: quicConnection,
-        configuration: WebTransportClient.Configuration(
-            maxSessions: 1,
-            connectionReadyTimeout: .seconds(10),
-            connectTimeout: .seconds(10)
-        )
+    let quicConfig = try makeClientConfiguration(
+        caCertPath: caCertPath,
+        useSystemCertificates: useSystemCertificates,
+        dumpSystemRootCNs: dumpSystemRootCNs
     )
-    try await wtClient.initialize()
-    log("Client", "HTTP/3 layer ready")
-    log("Client", "")
 
-    // Step 4: Establish a WebTransport session
+    // Step 2: Connect and establish a WebTransport session
     //
-    // connect() sends an Extended CONNECT request:
-    //   :method = CONNECT
-    //   :protocol = webtransport
-    //   :scheme = https
-    //   :authority = host:port
-    //   :path = /echo
+    // WebTransport.connect() handles the entire flow in one call:
+    //   1. Creates a QUICEndpoint and dials the server (QUIC handshake)
+    //   2. Initializes HTTP/3 (control + QPACK streams, SETTINGS)
+    //   3. Sends Extended CONNECT with :protocol=webtransport
+    //   4. Checks 200 OK and creates the session
     //
-    // The server responds with 200 OK to accept the session.
+    // We use WebTransportOptionsAdvanced because the demo builds its own
+    // QUICConfiguration with custom TLS (production/development mode).
     //
-    log("Client", "Opening WebTransport session (path: \(echoPath))...")
+    let url = "https://\(host):\(port)\(echoPath)"
+    let advancedOptions = WebTransportOptionsAdvanced(quic: quicConfig)
+
+    log("Client", "Connecting to \(url) via WebTransport...")
     let session: WebTransportSession
     do {
-        session = try await wtClient.connect(
-            authority: "\(host):\(port)",
-            path: echoPath
+        session = try await WebTransport.connect(
+            url: url,
+            options: advancedOptions
         )
     } catch {
         log("Client", "WebTransport session failed: \(error)")
-        await quicConnection.close(error: nil)
-        await endpoint.stop()
+        log("Client", "")
+        log("Client", "Make sure the server is running:")
+        log("Client", "  swift run WebTransportDemo server --host \(host) --port \(port)")
         throw error
     }
 
@@ -896,11 +901,6 @@ func runClient(host: String, port: UInt16, caCertPath: String?, skipDatagrams: B
     log("Client", "Closing WebTransport session...")
     try await session.close()
     log("Client", "Session closed")
-
-    log("Client", "Closing QUIC connection...")
-    await wtClient.close()
-    await endpoint.stop()
-    log("Client", "Connection closed")
 
     log("Client", "")
     log("Client", "╔══════════════════════════════════════════════════════════════╗")
@@ -1100,7 +1100,12 @@ func testDatagramEcho(session: WebTransportSession) async throws {
             "Client",
             "[\(num)/\(messages.count)] Sending datagram: \"\(message)\" (\(data.count) bytes)")
         do {
-            try await session.sendDatagram(data)
+            if message.contains("fast") {
+                // Demonstrate TTL strategy for this specific message
+                try await session.sendDatagram(data, strategy: .ttl(.milliseconds(200)))
+            } else {
+                try await session.sendDatagram(data)
+            }
         } catch {
             log("Client", "[\(num)/\(messages.count)] Send failed: \(error)")
             log("Client", "  (Datagrams require H3_DATAGRAM and may not be supported by all peers)")
@@ -1169,6 +1174,22 @@ enum DemoError: Error, CustomStringConvertible {
 
 // MARK: - Help
 
+func extractCommonName(fromSubjectDescription subject: String) -> String? {
+    let patterns = ["CN=", "commonName=", "CommonName="]
+    for pattern in patterns {
+        if let range = subject.range(of: pattern) {
+            let tail = subject[range.upperBound...]
+            let delimiters = [",", ")", ";", "\n"]
+            let end = tail.firstIndex { delimiters.contains(String($0)) } ?? tail.endIndex
+            let value = tail[..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                return value
+            }
+        }
+    }
+    return nil
+}
+
 func printHelp() {
     print(
         """
@@ -1203,8 +1224,10 @@ func printHelp() {
             generates a self-signed P-256 key pair for development.
 
         CLIENT OPTIONS:
-            --ca-cert <path>        Path to PEM CA certificate file
-            --skip-datagrams        Skip the datagram echo test
+            --ca-cert <path>                Path to PEM CA certificate file
+            --use-system-certificates       Use system trust store for server cert verification
+            --dump-system-root-cns          Dump CN for each loaded system root certificate
+            --skip-datagrams                Skip the datagram echo test
 
             When --ca-cert is provided, the client verifies the server's
             certificate against the trusted CA (production mode). Otherwise,
@@ -1329,6 +1352,8 @@ case .client:
             host: arguments.host,
             port: arguments.port,
             caCertPath: arguments.caCertPath,
+            useSystemCertificates: arguments.useSystemCertificates,
+            dumpSystemRootCNs: arguments.dumpSystemRootCNs,
             skipDatagrams: arguments.skipDatagrams
         )
     } catch {

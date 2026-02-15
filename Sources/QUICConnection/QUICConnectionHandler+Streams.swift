@@ -5,7 +5,11 @@
 /// - Stream state queries (isReceiveComplete, isResetByPeer, hasData, etc.)
 /// - Datagram support (RFC 9221)
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import QUICCore
 import QUICStream
 
@@ -98,18 +102,22 @@ extension QUICConnectionHandler {
 
     /// Sends a QUIC DATAGRAM frame with the given payload.
     ///
-    /// Queues a DATAGRAM frame (with explicit length) to be sent in the
-    /// next outbound packet at the application encryption level.
+    /// Queues a DATAGRAM frame to be sent in the next outbound packet.
+    /// Supports expiry and prioritization strategies for real-time media.
     ///
-    /// - Parameter data: The datagram payload
+    /// - Parameters:
+    ///   - data: The datagram payload
+    ///   - strategy: Sending strategy (FIFO, TTL, Priority)
     /// - Throws: `QUICConnectionHandlerError.cryptoError` if the connection is not established
-    package func sendDatagram(_ data: Data) throws {
+    package func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy = .fifo) throws {
         let status = connectionState.withLock { $0.status }
         guard status == .established else {
-            throw QUICConnectionHandlerError.cryptoError("Connection not established for datagram send")
+            throw QUICConnectionHandlerError.cryptoError(
+                "Connection not established for datagram send")
         }
 
-        let frame = Frame.datagram(DatagramFrame(data: data, hasLength: true))
-        queueFrame(frame, level: .application)
+        datagramQueue.withLock { queue in
+            queue.enqueue(data, strategy: strategy)
+        }
     }
 }

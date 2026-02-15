@@ -2,9 +2,14 @@
 ///
 /// Defines the interface for UDP communication.
 
-import Foundation
 import NIOCore
+import SystemPackage
 
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 /// An incoming datagram with data and sender address.
 public struct IncomingDatagram: Sendable {
     /// The received data as ByteBuffer (zero-copy from NIO).

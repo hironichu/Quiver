@@ -2,7 +2,11 @@
 ///
 /// Output events from TLS processing during QUIC handshake.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Crypto
 import QUICCore
 

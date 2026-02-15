@@ -2,17 +2,31 @@
 ///
 /// SwiftNIO-based implementation of UDP transport.
 
-import Foundation
 import NIOCore
 import NIOPosix
 import Synchronization
+import SystemPackage
 
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
 #endif
 
+#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
+    import Darwin
+#elseif os(Linux)
+    #if canImport(Glibc)
+        import Glibc
+    #elseif canImport(Musl)
+        import Musl
+    #endif
+#elseif os(Windows)
+    import ucrt
+#elseif os(Android)
+    import Bionic  // The native Android C library module
+    import Android
+#endif
 /// SwiftNIO-based UDP transport implementation.
 ///
 /// Provides both unicast and multicast UDP communication using SwiftNIO's
@@ -58,6 +72,12 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
 
     /// Stream of incoming datagrams.
     public let incomingDatagrams: AsyncStream<IncomingDatagram>
+    #if os(Android)
+        // Standard Linux/Android values
+        internal let IPPROTO_IP: Int32 = 0
+        internal let IPPROTO_IPV6: Int32 = 41
+        internal let IPPROTO_UDP: Int32 = 17
+    #endif
 
     private struct State {
         var channel: (any Channel)?
@@ -485,21 +505,21 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
 
         // Apply SO_REUSEPORT if needed (for multicast)
         #if canImport(Darwin)
-        if configuration.reusePort {
-            let reusePortOption = ChannelOptions.Types.SocketOption(
-                level: .socket,
-                name: .init(rawValue: SO_REUSEPORT)
-            )
-            bootstrap = bootstrap.channelOption(reusePortOption, value: 1)
-        }
+            if configuration.reusePort {
+                let reusePortOption = ChannelOptions.Types.SocketOption(
+                    level: .socket,
+                    name: .init(rawValue: SO_REUSEPORT)
+                )
+                bootstrap = bootstrap.channelOption(reusePortOption, value: 1)
+            }
         #elseif os(Linux)
-        if configuration.reusePort {
-            let reusePortOption = ChannelOptions.Types.SocketOption(
-                level: .socket,
-                name: .init(rawValue: SO_REUSEPORT)
-            )
-            bootstrap = bootstrap.channelOption(reusePortOption, value: 1)
-        }
+            if configuration.reusePort {
+                let reusePortOption = ChannelOptions.Types.SocketOption(
+                    level: .socket,
+                    name: .init(rawValue: SO_REUSEPORT)
+                )
+                bootstrap = bootstrap.channelOption(reusePortOption, value: 1)
+            }
         #endif
 
         // Determine bind address
@@ -525,56 +545,56 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
         if !isIPv6 {
             // IPv4: Enable IP_MULTICAST_LOOP and set multicast TTL
             #if canImport(Darwin)
-            let multicastLoopOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: IPPROTO_IP),
-                name: .init(rawValue: IP_MULTICAST_LOOP)
-            )
-            bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
+                let multicastLoopOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: IPPROTO_IP),
+                    name: .init(rawValue: IP_MULTICAST_LOOP)
+                )
+                bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
 
-            let multicastTTLOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: IPPROTO_IP),
-                name: .init(rawValue: IP_MULTICAST_TTL)
-            )
-            bootstrap = bootstrap.channelOption(multicastTTLOption, value: 255)
+                let multicastTTLOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: IPPROTO_IP),
+                    name: .init(rawValue: IP_MULTICAST_TTL)
+                )
+                bootstrap = bootstrap.channelOption(multicastTTLOption, value: 255)
             #elseif os(Linux)
-            let multicastLoopOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: CInt(IPPROTO_IP)),
-                name: .init(rawValue: CInt(IP_MULTICAST_LOOP))
-            )
-            bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
+                let multicastLoopOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: CInt(IPPROTO_IP)),
+                    name: .init(rawValue: CInt(IP_MULTICAST_LOOP))
+                )
+                bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
 
-            let multicastTTLOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: CInt(IPPROTO_IP)),
-                name: .init(rawValue: CInt(IP_MULTICAST_TTL))
-            )
-            bootstrap = bootstrap.channelOption(multicastTTLOption, value: 255)
+                let multicastTTLOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: CInt(IPPROTO_IP)),
+                    name: .init(rawValue: CInt(IP_MULTICAST_TTL))
+                )
+                bootstrap = bootstrap.channelOption(multicastTTLOption, value: 255)
             #endif
         } else {
             // IPv6: Enable IPV6_MULTICAST_LOOP and set multicast hops
             #if canImport(Darwin)
-            let multicastLoopOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: IPPROTO_IPV6),
-                name: .init(rawValue: IPV6_MULTICAST_LOOP)
-            )
-            bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
+                let multicastLoopOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: IPPROTO_IPV6),
+                    name: .init(rawValue: IPV6_MULTICAST_LOOP)
+                )
+                bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
 
-            let multicastHopsOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: IPPROTO_IPV6),
-                name: .init(rawValue: IPV6_MULTICAST_HOPS)
-            )
-            bootstrap = bootstrap.channelOption(multicastHopsOption, value: 255)
+                let multicastHopsOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: IPPROTO_IPV6),
+                    name: .init(rawValue: IPV6_MULTICAST_HOPS)
+                )
+                bootstrap = bootstrap.channelOption(multicastHopsOption, value: 255)
             #elseif os(Linux)
-            let multicastLoopOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: CInt(IPPROTO_IPV6)),
-                name: .init(rawValue: CInt(IPV6_MULTICAST_LOOP))
-            )
-            bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
+                let multicastLoopOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: CInt(IPPROTO_IPV6)),
+                    name: .init(rawValue: CInt(IPV6_MULTICAST_LOOP))
+                )
+                bootstrap = bootstrap.channelOption(multicastLoopOption, value: 1)
 
-            let multicastHopsOption = ChannelOptions.Types.SocketOption(
-                level: .init(rawValue: CInt(IPPROTO_IPV6)),
-                name: .init(rawValue: CInt(IPV6_MULTICAST_HOPS))
-            )
-            bootstrap = bootstrap.channelOption(multicastHopsOption, value: 255)
+                let multicastHopsOption = ChannelOptions.Types.SocketOption(
+                    level: .init(rawValue: CInt(IPPROTO_IPV6)),
+                    name: .init(rawValue: CInt(IPV6_MULTICAST_HOPS))
+                )
+                bootstrap = bootstrap.channelOption(multicastHopsOption, value: 255)
             #endif
         }
 
@@ -594,7 +614,7 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
             } catch {
                 // Log but don't fail - multicast may still work on some systems
                 #if DEBUG
-                print("Warning: Failed to set IP_MULTICAST_IF: \(error)")
+                    print("Warning: Failed to set IP_MULTICAST_IF: \(error)")
                 #endif
             }
         }
@@ -605,36 +625,42 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
     /// Gets the first non-loopback IPv4 address for multicast interface
     private func getDefaultInterfaceAddress() throws -> in_addr {
         #if canImport(Darwin)
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else {
-            return in_addr(s_addr: INADDR_ANY.bigEndian)
-        }
-
-        defer { freeifaddrs(ifaddr) }
-
-        var ptr = firstAddr
-        while true {
-            let interface = ptr.pointee
-            let family = interface.ifa_addr.pointee.sa_family
-
-            // Look for non-loopback IPv4 address
-            if family == UInt8(AF_INET) {
-                let name = String(cString: interface.ifa_name)
-                if name != "lo0" && (interface.ifa_flags & UInt32(IFF_UP)) != 0 {
-                    let addr = interface.ifa_addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
-                        $0.pointee.sin_addr
-                    }
-                    return addr
-                }
+            var ifaddr: UnsafeMutablePointer<ifaddrs>?
+            guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else {
+                return in_addr(s_addr: INADDR_ANY.bigEndian)
             }
 
-            guard let next = interface.ifa_next else { break }
-            ptr = next
-        }
+            defer { freeifaddrs(ifaddr) }
 
-        return in_addr(s_addr: INADDR_ANY.bigEndian)
+            var ptr = firstAddr
+            while true {
+                let interface = ptr.pointee
+                let family = interface.ifa_addr.pointee.sa_family
+
+                // Look for non-loopback IPv4 address
+                if family == UInt8(AF_INET) {
+                    let name = String(cString: interface.ifa_name)
+                    if name != "lo0" && (interface.ifa_flags & UInt32(IFF_UP)) != 0 {
+                        let addr = interface.ifa_addr.withMemoryRebound(
+                            to: sockaddr_in.self, capacity: 1
+                        ) {
+                            $0.pointee.sin_addr
+                        }
+                        return addr
+                    }
+                }
+
+                guard let next = interface.ifa_next else { break }
+                ptr = next
+            }
+
+            return in_addr(s_addr: INADDR_ANY.bigEndian)
         #else
-        return in_addr(s_addr: in_addr_t(INADDR_ANY).bigEndian)
+            #if os(Android)
+                return in_addr(s_addr: in_addr_t(0x0000_0000).bigEndian)
+            #else
+                return in_addr(s_addr: in_addr_t(INADDR_ANY).bigEndian)
+            #endif
         #endif
     }
 
@@ -697,7 +723,7 @@ private final class DatagramHandler: ChannelInboundHandler, @unchecked Sendable 
         // Log error but keep channel open for UDP
         // UDP is connectionless, so individual errors shouldn't close the channel
         #if DEBUG
-        print("NIOUDPTransport channel error: \(error)")
+            print("NIOUDPTransport channel error: \(error)")
         #endif
     }
 }

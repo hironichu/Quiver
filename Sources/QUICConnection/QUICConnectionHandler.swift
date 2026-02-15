@@ -4,18 +4,21 @@
 /// Handles packet processing, loss detection, ACK generation,
 /// and TLS handshake coordination.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Logging
-import Synchronization
 import QUICCore
-import QUICRecovery
 import QUICCrypto
+import QUICRecovery
 import QUICStream
-
-// MARK: - Connection Handler Errors
-
 /// Errors that can occur during connection handling
 import QUICTransport
+import Synchronization
+
+// MARK: - Connection Handler Errors
 
 enum QUICConnectionHandlerError: Error, Sendable {
     /// Missing required secret for key derivation
@@ -50,10 +53,10 @@ package final class QUICConnectionHandler: Sendable {
     package let maxDatagramSize: Int
 
     /// Connection state
-    let connectionState: Mutex<ConnectionState>
+    package let connectionState: Mutex<ConnectionState>
 
     /// Packet number space manager (loss detection + ACK management)
-    let pnSpaceManager: PacketNumberSpaceManager
+    package let pnSpaceManager: PacketNumberSpaceManager
 
     /// Congestion controller
     let congestionController: any CongestionController
@@ -82,6 +85,9 @@ package final class QUICConnectionHandler: Sendable {
     /// Pending outbound packets
     let outboundQueue: Mutex<[OutboundPacket]> = Mutex([])
 
+    /// Managed datagram queue for prioritized/expired datagrams
+    let datagramQueue: Mutex<DatagramQueue> = Mutex(DatagramQueue())
+
     /// Whether handshake is complete
     let handshakeComplete: Mutex<Bool> = Mutex(false)
 
@@ -94,7 +100,7 @@ package final class QUICConnectionHandler: Sendable {
     let connectionIDManager: ConnectionIDManager
 
     /// Stateless reset manager
-    let statelessResetManager: StatelessResetManager
+    package let statelessResetManager: StatelessResetManager
 
     /// ECN manager for tracking congestion signals (RFC 9000 §13.4).
     ///
@@ -139,12 +145,13 @@ package final class QUICConnectionHandler: Sendable {
     ) {
         self.maxDatagramSize = maxDatagramSize
 
-        self.connectionState = Mutex(ConnectionState(
-            role: role,
-            version: version,
-            sourceConnectionID: sourceConnectionID,
-            destinationConnectionID: destinationConnectionID
-        ))
+        self.connectionState = Mutex(
+            ConnectionState(
+                role: role,
+                version: version,
+                sourceConnectionID: sourceConnectionID,
+                destinationConnectionID: destinationConnectionID
+            ))
 
         self.pnSpaceManager = PacketNumberSpaceManager()
         self.congestionController = congestionControllerFactory.makeCongestionController(
@@ -180,10 +187,11 @@ package final class QUICConnectionHandler: Sendable {
 
         // DPLPMTUD — starts disabled; call pmtuDiscovery.enable() after
         // confirming the socket has the DF bit set.
-        self.pmtuDiscovery = PMTUDiscoveryManager(configuration: PMTUConfiguration(
-            basePLPMTU: maxDatagramSize,
-            maxPLPMTU: max(maxDatagramSize, 1452)
-        ))
+        self.pmtuDiscovery = PMTUDiscoveryManager(
+            configuration: PMTUConfiguration(
+                basePLPMTU: maxDatagramSize,
+                maxPLPMTU: max(maxDatagramSize, 1452)
+            ))
     }
 
     // MARK: - TLS Provider
@@ -250,14 +258,16 @@ package final class QUICConnectionHandler: Sendable {
 
         // Update stream manager with peer's limits
         streamManager.handleMaxData(MaxDataFrame(maxData: params.initialMaxData))
-        streamManager.handleMaxStreams(MaxStreamsFrame(
-            maxStreams: params.initialMaxStreamsBidi,
-            isBidirectional: true
-        ))
-        streamManager.handleMaxStreams(MaxStreamsFrame(
-            maxStreams: params.initialMaxStreamsUni,
-            isBidirectional: false
-        ))
+        streamManager.handleMaxStreams(
+            MaxStreamsFrame(
+                maxStreams: params.initialMaxStreamsBidi,
+                isBidirectional: true
+            ))
+        streamManager.handleMaxStreams(
+            MaxStreamsFrame(
+                maxStreams: params.initialMaxStreamsUni,
+                isBidirectional: false
+            ))
 
         // Update per-stream data limits
         // Note: Peer's bidi_local is our send limit for streams WE open
@@ -285,10 +295,35 @@ package final class QUICConnectionHandler: Sendable {
         // race between outboundSendLoop and packetReceiveLoop.
 
         // Step 1: Atomic drain of externally-queued frames.
-        let snapshot: [OutboundPacket] = outboundQueue.withLock { queue in
+        var snapshot: [OutboundPacket] = outboundQueue.withLock { queue in
             let result = queue
             queue.removeAll()
             return result
+        }
+
+        // Pull datagrams from the managed queue (respecting priority/TTL)
+        // We do this here to include them in the 'external frames' budget calculation
+        // or we could treat them as stream-like data.
+        // For now, let's treat them as "high priority" external frames that must go out if possible.
+        // We'll peek at the budget later, but since Datagrams are unreliable, we might just drop them if no space.
+        // However, getOutboundPackets doesn't take a budget, it returns what needs to look like a packet.
+        // The *actual* packing happens here by creating OutboundPacket structs.
+        //
+        // Strategy: Pull what we can for *this* burst.
+        // Let's assume a burst limit of ~10 MTUs for datagrams to avoid starving everything else?
+        // Or just drain everything that fits in the remaining congestion window (not checked here)
+        // or just drain everything.
+        //
+        // Let's drain up to 64KB of datagrams per tick to prevent starvation,
+        // expiring old ones first.
+        let datagramFrames = datagramQueue.withLock { queue in
+            queue.dequeue(maxBytes: 64 * 1024, now: now)
+        }
+
+        if !datagramFrames.isEmpty {
+            for frame in datagramFrames {
+                snapshot.append(OutboundPacket(frames: [.datagram(frame)], level: .application))
+            }
         }
 
         // Step 2: Generate ACK frames locally (no queue touch).
@@ -331,7 +366,8 @@ package final class QUICConnectionHandler: Sendable {
             let dcidLen = connectionState.withLock { $0.currentDestinationCID.bytes.count }
             let packetOverhead = 1 + dcidLen + 4 + PacketConstants.aeadTagSize
 
-            let controlFrameBytes = ackPackets
+            let controlFrameBytes =
+                ackPackets
                 .filter { $0.level == .application }
                 .flatMap { $0.frames }
                 .reduce(0) { $0 + FrameSize.frame($1) }
@@ -339,12 +375,14 @@ package final class QUICConnectionHandler: Sendable {
                 .flatMap { $0.frames }
                 .reduce(0) { $0 + FrameSize.frame($1) }
 
-            let externalFrameBytes = snapshot
+            let externalFrameBytes =
+                snapshot
                 .filter { $0.level == .application }
                 .flatMap { $0.frames }
                 .reduce(0) { $0 + FrameSize.frame($1) }
 
-            let streamBudget = max(0, maxDatagramSize - packetOverhead - controlFrameBytes - externalFrameBytes)
+            let streamBudget = max(
+                0, maxDatagramSize - packetOverhead - controlFrameBytes - externalFrameBytes)
 
             // Step 5: Generate stream frames locally.
             let streamFrames = streamManager.generateStreamFrames(maxBytes: streamBudget)
@@ -352,7 +390,8 @@ package final class QUICConnectionHandler: Sendable {
                 Self.logger.trace("Generated \(streamFrames.count) stream frames")
             }
             for streamFrame in streamFrames {
-                streamPackets.append(OutboundPacket(frames: [.stream(streamFrame)], level: .application))
+                streamPackets.append(
+                    OutboundPacket(frames: [.stream(streamFrame)], level: .application))
             }
         } else {
             Self.logger.trace("Handshake not complete, skipping stream frame generation")
@@ -377,8 +416,10 @@ package final class QUICConnectionHandler: Sendable {
         //   1 (flags) + 4 (version) + 1+20 (DCID) + 1+20 (SCID) + 1 (token len) + 2 (length) + 4 (PN) + 16 (AEAD) = 70
         let longHeaderOverhead = 1 + 4 + 1 + 20 + 1 + 20 + 1 + 2 + 4 + PacketConstants.aeadTagSize
         let maxCryptoPayload = max(64, maxDatagramSize - longHeaderOverhead)
-        let frames = cryptoStreamManager.createFrames(for: data, at: level, maxFrameSize: maxCryptoPayload)
-        Self.logger.debug("Queueing \(frames.count) CRYPTO frames (\(data.count) bytes) at \(level)")
+        let frames = cryptoStreamManager.createFrames(
+            for: data, at: level, maxFrameSize: maxCryptoPayload)
+        Self.logger.debug(
+            "Queueing \(frames.count) CRYPTO frames (\(data.count) bytes) at \(level)")
         for frame in frames {
             queueFrame(.crypto(frame), level: level)
         }

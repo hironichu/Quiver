@@ -3,14 +3,18 @@
 /// Extension providing the public QUICConnectionProtocol API including
 /// stream management, datagrams, session tickets, and shutdown.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Logging
-import Synchronization
+import QUICConnection
 import QUICCore
 import QUICCrypto
-import QUICConnection
-import QUICStream
 import QUICRecovery
+import QUICStream
+import Synchronization
 
 // MARK: - QUICConnectionProtocol
 
@@ -132,7 +136,7 @@ extension ManagedConnection: QUICConnectionProtocol {
         }
     }
 
-    public func sendDatagram(_ data: Data) async throws {
+    public func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy = .fifo) async throws {
         guard isEstablished else {
             throw QUICDatagramError.connectionNotReady
         }
@@ -150,7 +154,7 @@ extension ManagedConnection: QUICConnectionProtocol {
 
         // Write datagram payload through the handler
         // The handler encodes it as a DATAGRAM frame on the wire
-        try handler.sendDatagram(data)
+        try handler.sendDatagram(data, strategy: strategy)
         signalNeedsSend()
     }
 
@@ -208,7 +212,8 @@ extension ManagedConnection: QUICConnectionProtocol {
 
     public func close(applicationError errorCode: UInt64, reason: String) async {
         let scid = state.withLock { $0.sourceConnectionID }
-        Self.logger.info("close(applicationError: \(errorCode), reason: \(reason)) called for SCID=\(scid)")
+        Self.logger.info(
+            "close(applicationError: \(errorCode), reason: \(reason)) called for SCID=\(scid)")
         handler.close(error: ConnectionCloseError(code: errorCode, reason: reason))
         state.withLock { $0.handshakeState = .closing }
         shutdown()
@@ -223,7 +228,8 @@ extension ManagedConnection: QUICConnectionProtocol {
     /// This allows existing iterators to complete normally while preventing
     /// new iterators from hanging (they get an already-finished stream).
     public func shutdown() {
-        let (scid, handshakeWaiters) = state.withLock { s -> (ConnectionID, [(id: UUID, continuation: CheckedContinuation<Void, any Error>)]) in
+        let (scid, handshakeWaiters) = state.withLock {
+            s -> (ConnectionID, [(id: UUID, continuation: CheckedContinuation<Void, any Error>)]) in
             let w = s.handshakeCompletionContinuations
             s.handshakeCompletionContinuations.removeAll()
             return (s.sourceConnectionID, w)
@@ -280,7 +286,9 @@ extension ManagedConnection: QUICConnectionProtocol {
         // Finish send signal stream to stop outboundSendLoop in QUICEndpoint
         state.withLock { s in
             guard !s.isSendSignalShutdown else { return }  // Already shutdown
-            Self.logger.debug("shutdown() finishing sendSignal for SCID=\(s.sourceConnectionID), hasContinuation=\(s.sendSignalContinuation != nil)")
+            Self.logger.debug(
+                "shutdown() finishing sendSignal for SCID=\(s.sourceConnectionID), hasContinuation=\(s.sendSignalContinuation != nil)"
+            )
             s.isSendSignalShutdown = true
             s.sendSignalContinuation?.finish()
             s.sendSignalContinuation = nil

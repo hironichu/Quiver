@@ -2,7 +2,11 @@
 ///
 /// Defines ASN.1 tag classes and universal tag numbers used in DER encoding.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Tag Class
 

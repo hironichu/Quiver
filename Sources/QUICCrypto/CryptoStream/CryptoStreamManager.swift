@@ -2,7 +2,11 @@
 ///
 /// Manages CRYPTO streams for all encryption levels.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Synchronization
 import QUICCore
 

@@ -35,10 +35,10 @@ QUICCore implements QUIC's wire format specifications:
 
 - ``Varint``
 - ``DataReader``
-- ``DataWriter``
-- ``PacketEncoder``
-- ``PacketDecoder``
-- ``StandardFrameCodec``
+- ``FrameSize``
+- ``FrameEncoder``
+- ``FrameDecoder``
+- ``PacketCodecError``
 
 ### Transport Parameters
 

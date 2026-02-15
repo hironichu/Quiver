@@ -3,8 +3,12 @@
 /// Initial packets are encrypted using keys derived from the
 /// Destination Connection ID and a version-specific salt.
 
-import Foundation
 import Crypto
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import QUICCore
 
 // MARK: - Initial Secrets
@@ -57,7 +61,8 @@ public struct InitialSecrets: Sendable {
         )
     }
 
-    private static func deriveInitialSecret(connectionID: ConnectionID, salt: Data) -> SymmetricKey {
+    private static func deriveInitialSecret(connectionID: ConnectionID, salt: Data) -> SymmetricKey
+    {
         // HKDF-Extract with salt and connection ID
         let prk = HKDF<SHA256>.extract(
             inputKeyMaterial: SymmetricKey(data: connectionID.bytes),
@@ -235,60 +240,66 @@ private enum HKDFLabels {
     /// "client in" with output length 32 (initial secret derivation)
     static let hkdfLabelClientIn32: Data = {
         var data = Data(capacity: 20)
-        data.append(0x00); data.append(0x20)  // length = 32
-        data.append(UInt8(clientIn.count))    // label length = 15
+        data.append(0x00)
+        data.append(0x20)  // length = 32
+        data.append(UInt8(clientIn.count))  // label length = 15
         data.append(clientIn)
-        data.append(0x00)                     // context length = 0
+        data.append(0x00)  // context length = 0
         return data
     }()
 
     /// "server in" with output length 32 (initial secret derivation)
     static let hkdfLabelServerIn32: Data = {
         var data = Data(capacity: 20)
-        data.append(0x00); data.append(0x20)  // length = 32
-        data.append(UInt8(serverIn.count))    // label length = 15
+        data.append(0x00)
+        data.append(0x20)  // length = 32
+        data.append(UInt8(serverIn.count))  // label length = 15
         data.append(serverIn)
-        data.append(0x00)                     // context length = 0
+        data.append(0x00)  // context length = 0
         return data
     }()
 
     /// "quic key" with output length 16 (AES-128-GCM key)
     static let hkdfLabelQuicKey16: Data = {
         var data = Data(capacity: 19)
-        data.append(0x00); data.append(0x10)  // length = 16
-        data.append(UInt8(quicKey.count))     // label length = 14
+        data.append(0x00)
+        data.append(0x10)  // length = 16
+        data.append(UInt8(quicKey.count))  // label length = 14
         data.append(quicKey)
-        data.append(0x00)                     // context length = 0
+        data.append(0x00)  // context length = 0
         return data
     }()
 
     /// "quic iv" with output length 12
     static let hkdfLabelQuicIV12: Data = {
         var data = Data(capacity: 18)
-        data.append(0x00); data.append(0x0C)  // length = 12
-        data.append(UInt8(quicIV.count))      // label length = 13
+        data.append(0x00)
+        data.append(0x0C)  // length = 12
+        data.append(UInt8(quicIV.count))  // label length = 13
         data.append(quicIV)
-        data.append(0x00)                     // context length = 0
+        data.append(0x00)  // context length = 0
         return data
     }()
 
     /// "quic hp" with output length 16 (header protection key)
     static let hkdfLabelQuicHP16: Data = {
         var data = Data(capacity: 18)
-        data.append(0x00); data.append(0x10)  // length = 16
-        data.append(UInt8(quicHP.count))      // label length = 13
+        data.append(0x00)
+        data.append(0x10)  // length = 16
+        data.append(UInt8(quicHP.count))  // label length = 13
         data.append(quicHP)
-        data.append(0x00)                     // context length = 0
+        data.append(0x00)  // context length = 0
         return data
     }()
 
     /// "quic ku" with output length 32 (key update secret)
     static let hkdfLabelQuicKU32: Data = {
         var data = Data(capacity: 18)
-        data.append(0x00); data.append(0x20)  // length = 32
-        data.append(UInt8(quicKU.count))      // label length = 13
+        data.append(0x00)
+        data.append(0x20)  // length = 32
+        data.append(UInt8(quicKU.count))  // label length = 13
         data.append(quicKU)
-        data.append(0x00)                     // context length = 0
+        data.append(0x00)  // context length = 0
         return data
     }()
 
@@ -328,7 +339,7 @@ private enum HKDFLabels {
     }
 }
 
-func hkdfExpandLabel(
+package func hkdfExpandLabel(
     secret: SymmetricKey,
     label: String,
     context: Data,
@@ -337,7 +348,9 @@ func hkdfExpandLabel(
 ) throws -> Data {
     // Fast path: use pre-computed HkdfLabel for common QUIC operations
     if labelPrefix == "tls13 ",
-       let precomputed = HKDFLabels.precomputedHkdfLabel(label: label, length: length, context: context) {
+        let precomputed = HKDFLabels.precomputedHkdfLabel(
+            label: label, length: length, context: context)
+    {
         let output = HKDF<SHA256>.expand(
             pseudoRandomKey: secret,
             info: precomputed,

@@ -3,9 +3,14 @@
 /// ECN allows routers to signal congestion without dropping packets.
 /// QUIC endpoints track ECN counts and report them in ACK frames.
 
-import Foundation
-import Synchronization
 import QUICCore
+import Synchronization
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - ECN Codepoint
 
@@ -202,18 +207,23 @@ public final class ECNManager: Sendable {
     ///   - counts: ECN counts from the ACK frame
     ///   - level: The encryption level
     /// - Returns: Number of newly detected CE marks (congestion signals)
-    public func processACKFeedback(_ counts: ECNCountState, level: EncryptionLevel) -> UInt64 {
-        state.withLock { s in
+    /// - Throws: `TransportError.protocolViolation` if ECN counts decrease (invalid feedback)
+    public func processACKFeedback(_ counts: ECNCountState, level: EncryptionLevel) throws -> UInt64
+    {
+        try state.withLock { s in
             let previousCounts = s.peerCounts[level] ?? ECNCountState()
 
             // Validate ECN counts (must not decrease)
             guard counts.ect0Count >= previousCounts.ect0Count,
-                  counts.ect1Count >= previousCounts.ect1Count,
-                  counts.ceCount >= previousCounts.ceCount else {
+                counts.ect1Count >= previousCounts.ect1Count,
+                counts.ceCount >= previousCounts.ceCount
+            else {
                 // Invalid feedback - ECN counts decreased
+                // RFC 9000 Section 13.4.2.1: MUST generate a connection error of type PROTOCOL_VIOLATION
                 s.validationState = .failed
                 s.markOutgoing = false
-                return 0
+                throw QUICError.protocolViolation(
+                    "ECN Validation Failed: Correctness check failed (counts decreased)")
             }
 
             // Calculate newly reported CE marks

@@ -14,7 +14,11 @@
 /// - [draft-ietf-webtrans-http3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
 /// - [RFC 9297: HTTP Datagrams](https://www.rfc-editor.org/rfc/rfc9297.html)
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - WebTransport Session Close Info
 

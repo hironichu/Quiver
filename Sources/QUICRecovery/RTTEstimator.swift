@@ -2,7 +2,11 @@
 ///
 /// Round-trip time estimation for loss detection and congestion control.
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - RTT Estimator
 
@@ -110,5 +114,3 @@ package struct RTTEstimator: Sendable {
         return smoothedRTT + k + maxAckDelay
     }
 }
-
-

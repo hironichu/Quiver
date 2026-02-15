@@ -3,9 +3,14 @@
 /// Manages cryptographic state for QUIC connections including
 /// key derivation and packet protection.
 
-import Foundation
 import Crypto
 import QUICCore
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - Crypto Errors
 
@@ -58,23 +63,53 @@ package struct CryptoContext: Sendable {
     /// The sealer for this level (encryption)
     package let sealer: (any PacketSealer)?
 
+    /// The traffic secret for reading (decryption) at this level
+    package let readTrafficSecret: Data?
+
+    /// The traffic secret for writing (encryption) at this level
+    package let writeTrafficSecret: Data?
+
+    /// The cipher suite used (for key updates)
+    package let cipherSuite: QUICCipherSuite?
+
     /// Creates an empty crypto context
     package init() {
         self.opener = nil
         self.sealer = nil
+        self.readTrafficSecret = nil
+        self.writeTrafficSecret = nil
+        self.cipherSuite = nil
     }
 
     /// Creates a crypto context with opener and sealer
-    package init(opener: any PacketOpener, sealer: any PacketSealer) {
+    package init(
+        opener: any PacketOpener,
+        sealer: any PacketSealer,
+        readTrafficSecret: Data? = nil,
+        writeTrafficSecret: Data? = nil,
+        cipherSuite: QUICCipherSuite? = nil
+    ) {
         self.opener = opener
         self.sealer = sealer
+        self.readTrafficSecret = readTrafficSecret
+        self.writeTrafficSecret = writeTrafficSecret
+        self.cipherSuite = cipherSuite
     }
 
     /// Creates a crypto context with optional opener and/or sealer
     /// Used for 0-RTT where only one direction is available
-    package init(opener: (any PacketOpener)?, sealer: (any PacketSealer)?) {
+    package init(
+        opener: (any PacketOpener)?,
+        sealer: (any PacketSealer)?,
+        readTrafficSecret: Data? = nil,
+        writeTrafficSecret: Data? = nil,
+        cipherSuite: QUICCipherSuite? = nil
+    ) {
         self.opener = opener
         self.sealer = sealer
+        self.readTrafficSecret = readTrafficSecret
+        self.writeTrafficSecret = writeTrafficSecret
+        self.cipherSuite = cipherSuite
     }
 }
 
