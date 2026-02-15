@@ -785,6 +785,8 @@ public enum PacketNumberEncoding {
 public enum HeaderValidationError: Error, Sendable {
     /// Retry packet is missing the Retry Integrity Tag (RFC 9001 Section 5.8)
     case missingRetryIntegrityTag
+    /// Reserved bits are non-zero (RFC 9000 Section 17.2/17.3)
+    case invalidReservedBits
 }
 
 extension LongHeader {
@@ -806,6 +808,16 @@ extension LongHeader {
         if !version.isNegotiation {
             // RFC 9287: Greasing the QUIC Bit - Endpoints MUST NOT discard packets with fixed bit = 0
             _ = (firstByte & 0x40) != 0
+        }
+
+        // RFC 9000 Section 17.2: Reserved bits (bits 2-3) MUST be 0
+        // "Endpoints MUST treat receipt of a packet that has a non-zero value for reserved bits
+        // after removing both packet and header protection as a connection error of type PROTOCOL_VIOLATION."
+        if !version.isNegotiation {
+            if (firstByte & 0x0C) != 0 {
+                // We use a specific error for header validation failures
+                throw HeaderValidationError.invalidReservedBits
+            }
         }
 
         // RFC 9001 Section 5.8: Retry packets MUST have a Retry Integrity Tag
@@ -830,5 +842,10 @@ extension ShortHeader {
         // Endpoints MUST NOT discard packets with the fixed bit set to 0.
         // We ignore the value of the fixed bit for Short Headers.
         _ = (firstByte & 0x40) != 0
+
+        // RFC 9000 Section 17.3: Reserved bits (bits 3-4) MUST be 0
+        if (firstByte & 0x18) != 0 {
+            throw HeaderValidationError.invalidReservedBits
+        }
     }
 }

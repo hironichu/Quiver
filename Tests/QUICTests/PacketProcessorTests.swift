@@ -37,8 +37,13 @@ struct PacketProcessorTests {
         let frame = Frame.ping
 
         // Server sends to Client
+        // Note: Packet must be long enough for header protection sampling (at least 4 bytes + sample length)
+        // For ChaCha20, sample is 16 bytes.
+        // We add a PADDING frame to ensure sufficient length.
+        let paddingFrame = Frame.padding(count: 20)
+
         let packet0 = try server.encryptShortHeaderPacket(
-            frames: [frame],
+            frames: [frame, paddingFrame],
             header: ShortHeader(
                 destinationConnectionID: dcid,
                 packetNumber: 0,
@@ -53,14 +58,20 @@ struct PacketProcessorTests {
         client.setDCIDLength(8)
         let parsed0 = try client.decryptPacket(packet0)
         #expect(parsed0.frames.contains(Frame.ping))
-        #expect(parsed0.header.short?.keyPhase == false)
+        switch parsed0.header {
+        case .short(let short):
+            #expect(short.keyPhase == false)
+            break
+        default:
+            break
+        }
 
         // 2. Server initiates Key Update (Phase 0 -> 1)
         try server.initiateKeyUpdate()
 
         // Server sends packet with Phase 1
         let packet1 = try server.encryptShortHeaderPacket(
-            frames: [frame],
+            frames: [frame, paddingFrame],
             header: ShortHeader(
                 destinationConnectionID: dcid,
                 packetNumber: 1,
@@ -74,11 +85,17 @@ struct PacketProcessorTests {
         // Client receives Phase 1 (should trial decrypt and succeed)
         let parsed1 = try client.decryptPacket(packet1)
         #expect(parsed1.frames.contains(Frame.ping))
-        #expect(parsed1.header.short?.keyPhase == true)
+        switch parsed1.header {
+        case .short(let short):
+            #expect(short.keyPhase == true)
+            break
+        default:
+            break
+        }
 
         // 3. Server sends another Phase 1 packet
         let packet2 = try server.encryptShortHeaderPacket(
-            frames: [frame],
+            frames: [frame, paddingFrame],
             header: ShortHeader(
                 destinationConnectionID: dcid,
                 packetNumber: 2,
@@ -91,6 +108,12 @@ struct PacketProcessorTests {
 
         let parsed2 = try client.decryptPacket(packet2)
         #expect(parsed2.frames.contains(Frame.ping))
-        #expect(parsed2.header.short?.keyPhase == true)
+        switch parsed1.header {
+        case .short(let short):
+            #expect(short.keyPhase == true)
+            break
+        default:
+            break
+        }
     }
 }

@@ -6,14 +6,15 @@
 /// - `cryptoContext` — retrieves the crypto context for an encryption level
 /// - `discardLevel` — discards keys and state for an encryption level
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
 import QUICCore
 import QUICCrypto
 import QUICRecovery
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - Crypto Operations
 
@@ -26,7 +27,9 @@ extension QUICConnectionHandler {
     ///   If nil, uses the current destination connection ID. Servers should pass
     ///   the original DCID from the client's first Initial packet.
     /// - Returns: Tuple of client and server key material
-    package func deriveInitialKeys(connectionID: ConnectionID? = nil) throws -> (client: KeyMaterial, server: KeyMaterial) {
+    package func deriveInitialKeys(connectionID: ConnectionID? = nil) throws -> (
+        client: KeyMaterial, server: KeyMaterial
+    ) {
         let (defaultCID, version) = connectionState.withLock { state in
             (state.currentDestinationCID, state.version)
         }
@@ -40,8 +43,8 @@ extension QUICConnectionHandler {
         // RFC 9001 Section 5.2: Initial keys MUST use AES-128-GCM-SHA256
         // The cipher suite for initial keys is not negotiated - it's fixed by the protocol
         let role = connectionState.withLock { $0.role }
-        let (readKeys, writeKeys) = role == .client ?
-            (serverKeys, clientKeys) : (clientKeys, serverKeys)
+        let (readKeys, writeKeys) =
+            role == .client ? (serverKeys, clientKeys) : (clientKeys, serverKeys)
 
         // Initial keys always use AES-128-GCM per RFC 9001 Section 5.2
         let opener = try AES128GCMOpener(keyMaterial: readKeys)
@@ -88,8 +91,10 @@ extension QUICConnectionHandler {
 
         // Standard bidirectional keys
         guard let clientSecret = info.clientSecret,
-              let serverSecret = info.serverSecret else {
-            throw QUICConnectionHandlerError.missingSecret("Both client and server secrets required")
+            let serverSecret = info.serverSecret
+        else {
+            throw QUICConnectionHandlerError.missingSecret(
+                "Both client and server secrets required")
         }
 
         // Determine which keys to use for read/write based on role
@@ -103,12 +108,25 @@ extension QUICConnectionHandler {
             writeKeys = try KeyMaterial.derive(from: serverSecret, cipherSuite: cipherSuite)
         }
 
-        // Create opener/sealer using factory method (selects AES or ChaCha20)
         let (opener, _) = try readKeys.createCrypto()
         let (_, sealer) = try writeKeys.createCrypto()
 
+        // Store secrets for future key updates
+        // Note: For client, readSecret is serverSecret, writeSecret is clientSecret
+        let readSecretKey = role == .client ? serverSecret : clientSecret
+        let writeSecretKey = role == .client ? clientSecret : serverSecret
+
+        let readSecretData = readSecretKey.withUnsafeBytes { Data($0) }
+        let writeSecretData = writeSecretKey.withUnsafeBytes { Data($0) }
+
         cryptoContexts.withLock { contexts in
-            contexts[info.level] = CryptoContext(opener: opener, sealer: sealer)
+            contexts[info.level] = CryptoContext(
+                opener: opener,
+                sealer: sealer,
+                readTrafficSecret: readSecretData,
+                writeTrafficSecret: writeSecretData,
+                cipherSuite: cipherSuite
+            )
         }
 
         // Update key schedule

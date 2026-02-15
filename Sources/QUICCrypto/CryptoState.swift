@@ -4,12 +4,13 @@
 /// key derivation and packet protection.
 
 import Crypto
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
 import QUICCore
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - Crypto Errors
 
@@ -62,8 +63,11 @@ package struct CryptoContext: Sendable {
     /// The sealer for this level (encryption)
     package let sealer: (any PacketSealer)?
 
-    /// The traffic secret for this level (for key updates)
-    package let trafficSecret: Data?
+    /// The traffic secret for reading (decryption) at this level
+    package let readTrafficSecret: Data?
+
+    /// The traffic secret for writing (encryption) at this level
+    package let writeTrafficSecret: Data?
 
     /// The cipher suite used (for key updates)
     package let cipherSuite: QUICCipherSuite?
@@ -72,7 +76,8 @@ package struct CryptoContext: Sendable {
     package init() {
         self.opener = nil
         self.sealer = nil
-        self.trafficSecret = nil
+        self.readTrafficSecret = nil
+        self.writeTrafficSecret = nil
         self.cipherSuite = nil
     }
 
@@ -80,12 +85,14 @@ package struct CryptoContext: Sendable {
     package init(
         opener: any PacketOpener,
         sealer: any PacketSealer,
-        trafficSecret: Data? = nil,
+        readTrafficSecret: Data? = nil,
+        writeTrafficSecret: Data? = nil,
         cipherSuite: QUICCipherSuite? = nil
     ) {
         self.opener = opener
         self.sealer = sealer
-        self.trafficSecret = trafficSecret
+        self.readTrafficSecret = readTrafficSecret
+        self.writeTrafficSecret = writeTrafficSecret
         self.cipherSuite = cipherSuite
     }
 
@@ -94,12 +101,14 @@ package struct CryptoContext: Sendable {
     package init(
         opener: (any PacketOpener)?,
         sealer: (any PacketSealer)?,
-        trafficSecret: Data? = nil,
+        readTrafficSecret: Data? = nil,
+        writeTrafficSecret: Data? = nil,
         cipherSuite: QUICCipherSuite? = nil
     ) {
         self.opener = opener
         self.sealer = sealer
-        self.trafficSecret = trafficSecret
+        self.readTrafficSecret = readTrafficSecret
+        self.writeTrafficSecret = writeTrafficSecret
         self.cipherSuite = cipherSuite
     }
 }

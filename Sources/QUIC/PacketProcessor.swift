@@ -5,14 +5,15 @@
 /// convenient packet processing.
 
 import Crypto
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
 import QUICCore
 import QUICCrypto
 import Synchronization
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - Packet Processor
 
@@ -154,6 +155,15 @@ package final class PacketProcessor: Sendable {
     ///   - info: Keys available info from TLS provider
     ///   - isClient: Whether this is the client side
     /// - Throws: Error if key derivation or context creation fails
+    /// Installs keys from TLS keying material
+    ///
+    /// This is the unified entry point for key installation.
+    /// PacketProcessor is the single source of truth for crypto contexts.
+    ///
+    /// - Parameters:
+    ///   - info: Keys available info from TLS provider
+    ///   - isClient: Whether this is the client side
+    /// - Throws: Error if key derivation or context creation fails
     package func installKeys(_ info: KeysAvailableInfo, isClient: Bool) throws {
         let cipherSuite = info.cipherSuite
 
@@ -171,7 +181,8 @@ package final class PacketProcessor: Sendable {
                 let context = CryptoContext(
                     opener: nil,
                     sealer: sealer,
-                    trafficSecret: secretData,
+                    readTrafficSecret: nil,
+                    writeTrafficSecret: secretData,
                     cipherSuite: cipherSuite
                 )
                 installContext(context, for: info.level)
@@ -181,7 +192,8 @@ package final class PacketProcessor: Sendable {
                 let context = CryptoContext(
                     opener: opener,
                     sealer: nil,
-                    trafficSecret: secretData,
+                    readTrafficSecret: secretData,
+                    writeTrafficSecret: nil,
                     cipherSuite: cipherSuite
                 )
                 installContext(context, for: info.level)
@@ -209,42 +221,22 @@ package final class PacketProcessor: Sendable {
         let (_, sealer) = try writeKeys.createCrypto()
 
         // Traffic secrets for Key Update
-        // We store the secret used to DERIVE these keys.
-        // For client: readSecret = serverSecret, writeSecret = clientSecret
+        // Store the secrets used to DERIVE these keys.
         let readSecretKey = isClient ? serverSecret : clientSecret
+        let writeSecretKey = isClient ? clientSecret : serverSecret
+
         let readSecretData = readSecretKey.withUnsafeBytes { Data($0) }
+        let writeSecretData = writeSecretKey.withUnsafeBytes { Data($0) }
 
         let context = CryptoContext(
             opener: opener,
             sealer: sealer,
-            trafficSecret: readSecretData,  // We'll handle secrets separately for Application level?
-            // Or we can store them here. Since we have one context for both directions,
-            // we can't easily store "the" secret.
-            // But wait, for Key Update, we need to update BOTH.
-            // We can store `trafficSecret` as a tuple? No, types.
+            readTrafficSecret: readSecretData,
+            writeTrafficSecret: writeSecretData,
             cipherSuite: cipherSuite
         )
 
-        // IMPORTANT: For Application level, we need to persist these secrets for Key Update.
-        // We will misuse `trafficSecret` to store the READ secret for now?
-        // Or better, add `writeSecret` to CryptoContext?
-        // For now, let's just install the context.
-        // To support Key Update, we will need to store the secrets in `PacketProcessor` or
-        // extend `CryptoContext` further.
-        // Given `CryptoContext` is `package`, let's assume we can add properties later if needed
-        // or just use `trafficSecret` for one and maybe a new property.
-        // Actually, let's just assume we can't do Key Update WITHOUT tracking secrets.
-        // Let's add `additionalSecret` or similar?
-        // Or just `clientSecret` and `serverSecret` properties.
-        // For this step, I'll install the context and we can refine secret storage when implementing `initiateKeyUpdate`.
-
         installContext(context, for: info.level)
-
-        // If this is Application level, we should store the secrets for Key Update
-        if info.level == .application {
-            // TODO: Store secrets for Key Update
-            // For now, we rely on the context being installed.
-        }
     }
 
     /// Discards keys for an encryption level
@@ -331,10 +323,15 @@ package final class PacketProcessor: Sendable {
             if nextCtx == nil {
                 // Try to derive next keys from current keys
                 if let currentCtx = applicationContexts.withLock({ $0[currentPhase] }),
-                    let secret = currentCtx.trafficSecret,
+                    let readSecret = currentCtx.readTrafficSecret,
+                    let writeSecret = currentCtx.writeTrafficSecret,
                     let suite = currentCtx.cipherSuite
                 {
-                    try? derivedNextCtx = deriveNextGeneration(from: secret, cipherSuite: suite)
+                    try? derivedNextCtx = deriveNextGenerationContext(
+                        readSecret: readSecret,
+                        writeSecret: writeSecret,
+                        cipherSuite: suite
+                    )
                     nextCtx = derivedNextCtx
                 }
             }
@@ -581,14 +578,16 @@ package final class PacketProcessor: Sendable {
 
         // Derive next keys from current phase
         guard let currentContext = applicationContexts.withLock({ $0[phase] }),
-            let secretData = currentContext.trafficSecret,
+            let readSecret = currentContext.readTrafficSecret,
+            let writeSecret = currentContext.writeTrafficSecret,
             let cipherSuite = currentContext.cipherSuite
         else {
             throw PacketCodecError.keyUpdateFailed("No current application keys available")
         }
 
-        let nextContext = try deriveNextGeneration(
-            from: secretData,
+        let nextContext = try deriveNextGenerationContext(
+            readSecret: readSecret,
+            writeSecret: writeSecret,
             cipherSuite: cipherSuite
         )
 
@@ -607,14 +606,16 @@ package final class PacketProcessor: Sendable {
         let oldPhase = newPhase ^ 1
 
         guard let oldContext = applicationContexts.withLock({ $0[oldPhase] }),
-            let secretData = oldContext.trafficSecret,
+            let readSecret = oldContext.readTrafficSecret,
+            let writeSecret = oldContext.writeTrafficSecret,
             let cipherSuite = oldContext.cipherSuite
         else {
             throw PacketCodecError.keyUpdateFailed("Cannot derive new keys: old keys missing")
         }
 
-        let nextContext = try deriveNextGeneration(
-            from: secretData,
+        let nextContext = try deriveNextGenerationContext(
+            readSecret: readSecret,
+            writeSecret: writeSecret,
             cipherSuite: cipherSuite
         )
 
@@ -631,30 +632,45 @@ package final class PacketProcessor: Sendable {
         return nextContext
     }
 
-    /// Derives the next generation of keys from the current secret
-    private func deriveNextGeneration(
-        from currentSecretData: Data,
+    /// Derives the next generation of keys from current secrets
+    private func deriveNextGenerationContext(
+        readSecret: Data,
+        writeSecret: Data,
         cipherSuite: QUICCipherSuite
     ) throws -> CryptoContext {
-        let currentSecret = SymmetricKey(data: currentSecretData)
+        let currentReadSecret = SymmetricKey(data: readSecret)
+        let currentWriteSecret = SymmetricKey(data: writeSecret)
 
-        // Derive next traffic secret
-        let nextSecretData = try hkdfExpandLabel(
-            secret: currentSecret,
+        // Derive next traffic secrets
+        let nextReadSecretData = try hkdfExpandLabel(
+            secret: currentReadSecret,
             label: "quic ku",
             context: Data(),
             length: 32  // Always 32 bytes for traffic secret (SHA-256)
         )
-        let nextSecret = SymmetricKey(data: nextSecretData)
+        let nextWriteSecretData = try hkdfExpandLabel(
+            secret: currentWriteSecret,
+            label: "quic ku",
+            context: Data(),
+            length: 32
+        )
+
+        let nextReadSecret = SymmetricKey(data: nextReadSecretData)
+        let nextWriteSecret = SymmetricKey(data: nextWriteSecretData)
 
         // Derive key material
-        let nextKeyMaterial = try KeyMaterial.derive(from: nextSecret, cipherSuite: cipherSuite)
-        let (opener, sealer) = try nextKeyMaterial.createCrypto()
+        let nextReadKeys = try KeyMaterial.derive(from: nextReadSecret, cipherSuite: cipherSuite)
+        let nextWriteKeys = try KeyMaterial.derive(from: nextWriteSecret, cipherSuite: cipherSuite)
+
+        // Create crypto
+        let (opener, _) = try nextReadKeys.createCrypto()
+        let (_, sealer) = try nextWriteKeys.createCrypto()
 
         return CryptoContext(
             opener: opener,
             sealer: sealer,
-            trafficSecret: nextSecretData,
+            readTrafficSecret: nextReadSecretData,
+            writeTrafficSecret: nextWriteSecretData,
             cipherSuite: cipherSuite
         )
     }
