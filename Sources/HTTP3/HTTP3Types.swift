@@ -873,7 +873,7 @@ public struct HTTP3BodyWriter: Sendable {
 
     public func write(_ bytes: ArraySlice<UInt8>) async throws {
         guard !bytes.isEmpty else { return }
-        try await _write(Data())
+        try await _write(Data(bytes))
     }
 }
 
