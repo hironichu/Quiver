@@ -177,7 +177,7 @@ func buildRouter() -> HTTP3Router {
     let startTime = Date()
 
     // GET /
-    router.get("/") { context in
+    router.get("/") { context, _ in
         log("Handler", "\(context.request.method) / [stream:\(context.streamID)]")
 
         let html = """
@@ -211,7 +211,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // GET /health
-    router.get("/health") { context in
+    router.get("/health") { context, _ in
         log("Handler", "\(context.request.method) /health [stream:\(context.streamID)]")
 
         let json = """
@@ -225,7 +225,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // GET /info
-    router.get("/info") { context in
+    router.get("/info") { context, _ in
         log("Handler", "\(context.request.method) /info [stream:\(context.streamID)]")
 
         let uptime = Date().timeIntervalSince(startTime)
@@ -240,7 +240,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // POST /echo
-    router.post("/echo") { context in
+    router.post("/echo") { context, _ in
         log("Handler", "\(context.request.method) /echo [stream:\(context.streamID)]")
 
         let body = try await context.body.data()
@@ -258,7 +258,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // POST /api/json
-    router.post("/api/json") { context in
+    router.post("/api/json") { context, _ in
         log("Handler", "\(context.request.method) /api/json [stream:\(context.streamID)]")
 
         let body = try await context.body.data()
@@ -285,7 +285,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // GET /headers
-    router.get("/headers") { context in
+    router.get("/headers") { context, _ in
         log("Handler", "\(context.request.method) /headers [stream:\(context.streamID)]")
 
         var entries: [String] = []
@@ -306,7 +306,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // GET /stream-info
-    router.get("/stream-info") { context in
+    router.get("/stream-info") { context, _ in
         log("Handler", "\(context.request.method) /stream-info [stream:\(context.streamID)]")
 
         let id = context.streamID
@@ -324,7 +324,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // ANY /api/method
-    router.route("/api/method") { context in
+    router.route("/api/method") { context, _ in
         log("Handler", "\(context.request.method) /api/method [stream:\(context.streamID)]")
 
         let json = """
@@ -338,7 +338,7 @@ func buildRouter() -> HTTP3Router {
     }
 
     // 404
-    router.setNotFound { context in
+    router.setNotFound { context, _ in
         log("Handler", "\(context.request.method) \(context.request.path) [stream:\(context.streamID)] -> 404")
 
         let json = """

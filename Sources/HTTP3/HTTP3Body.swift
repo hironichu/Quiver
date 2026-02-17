@@ -20,9 +20,9 @@
 /// ```
 
 #if canImport(FoundationEssentials)
-import FoundationEssentials
+    import FoundationEssentials
 #else
-import Foundation
+    import Foundation
 #endif
 
 // MARK: - Error
@@ -129,7 +129,9 @@ public struct HTTP3Body: ~Copyable, Sendable {
     /// - Returns: The decoded value.
     /// - Throws: `HTTP3BodyError.bodyTooLarge` if the body exceeds `maxBytes`.
     ///           `DecodingError` if JSON decoding fails.
-    public consuming func json<T: Decodable>(_ type: T.Type, maxBytes: Int = 104_857_600) async throws -> T {
+    public consuming func json<T: Decodable>(_ type: T.Type, maxBytes: Int = 104_857_600)
+        async throws -> T
+    {
         let rawData = try await data(maxBytes: maxBytes)
         return try JSONDecoder().decode(T.self, from: rawData)
     }

@@ -44,11 +44,11 @@
 /// concurrently via structured `Task`s.
 
 import Foundation
+import Logging
+import QPACK
 import QUIC
 import QUICCore
 import QUICCrypto
-import QPACK
-import Logging
 
 // MARK: - HTTP/3 Server
 
@@ -147,7 +147,8 @@ public actor HTTP3Server {
     /// receives an `ExtendedConnectContext` that allows accepting or
     /// rejecting the request. When accepted, the CONNECT stream remains
     /// open for session use (e.g., WebTransport).
-    public typealias ExtendedConnectHandler = @Sendable (ExtendedConnectContext) async throws -> Void
+    public typealias ExtendedConnectHandler =
+        @Sendable (ExtendedConnectContext) async throws -> Void
 
     /// Server state
     public enum State: Sendable, Hashable, CustomStringConvertible {
@@ -757,7 +758,7 @@ public actor HTTP3Server {
             try await gw.start()
             self.gateway = gw
             Self.logger.info(
-                "Alt-Svc gateway started",
+                "Proxy Gateway started",
                 metadata: [
                     "httpPort": "\(gatewayConfig.httpPort.map(String.init) ?? "disabled")",
                     "httpsPort": "\(gatewayConfig.httpsPort.map(String.init) ?? "disabled")",
@@ -995,13 +996,13 @@ public actor HTTP3Server {
 ///
 /// ```swift
 /// let router = HTTP3Router()
-/// router.get("/") { context in
+/// router.get("/") { context, _ in
 ///     try await context.respond(
 ///         status: 200,
 ///         Data("Home".utf8)
 ///     )
 /// }
-/// router.post("/api/data") { context in
+/// router.post("/api/data") { context, _ in
 ///     // handle POST
 /// }
 ///
@@ -1009,23 +1010,40 @@ public actor HTTP3Server {
 /// ```
 public final class HTTP3Router: Sendable {
 
+    public typealias RouteParams = [String: String]
+    public typealias RouteHandler = @Sendable (HTTP3RequestContext, RouteParams) async throws -> Void
+
+    private enum RouteSegment: Sendable {
+        case literal(String)
+        case parameter(name: String, constraint: ParameterConstraint)
+    }
+
+    private enum ParameterConstraint: Sendable {
+        case any
+        case uuid
+        case exactLength(Int)
+        case lengthRange(Int, Int)
+        case regex(String)
+    }
+
     /// Route entry
     private struct Route: Sendable {
         let method: HTTPMethod?  // nil = any method
         let path: String
-        let handler: HTTP3Server.RequestHandler
+        let segments: [RouteSegment]
+        let handler: RouteHandler
     }
 
     /// Registered routes
     private let routes: LockedBox<[Route]>
 
     /// Handler for unmatched routes (default: 404)
-    private let notFoundHandler: LockedBox<HTTP3Server.RequestHandler>
+    private let notFoundHandler: LockedBox<RouteHandler>
 
     /// Creates a new HTTP/3 router.
     public init() {
         self.routes = LockedBox([])
-        self.notFoundHandler = LockedBox({ context in
+        self.notFoundHandler = LockedBox({ context, _ in
             try await context.respond(
                 status: 404,
                 headers: [("content-type", "text/plain")],
@@ -1038,40 +1056,76 @@ public final class HTTP3Router: Sendable {
     ///
     /// - Parameters:
     ///   - path: The URL path to match
-    ///   - handler: The request handler
-    public func route(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: nil, path: path, handler: handler)) }
+    ///   - handler: The request handler `(context, params)`
+    public func route(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: nil,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a GET route.
-    public func get(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .get, path: path, handler: handler)) }
+    public func get(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .get,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a POST route.
-    public func post(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .post, path: path, handler: handler)) }
+    public func post(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .post,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a PUT route.
-    public func put(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .put, path: path, handler: handler)) }
+    public func put(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .put,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a DELETE route.
-    public func delete(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .delete, path: path, handler: handler)) }
+    public func delete(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .delete,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a PATCH route.
-    public func patch(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .patch, path: path, handler: handler)) }
+    public func patch(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .patch,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Sets the handler for unmatched routes.
     ///
     /// - Parameter handler: The fallback handler (default returns 404)
-    public func setNotFound(_ handler: @escaping HTTP3Server.RequestHandler) {
+    public func setNotFound(_ handler: @escaping RouteHandler) {
         notFoundHandler.withLock { $0 = handler }
     }
 
@@ -1082,25 +1136,154 @@ public final class HTTP3Router: Sendable {
     /// forwarded to the not-found handler.
     public var handler: HTTP3Server.RequestHandler {
         return { [self] context in
-            let matchingRoute = self.routes.withLock { routes -> Route? in
+            let pathSegments = Self.parsePathSegments(context.request.path)
+
+            let matchingRoute = self.routes.withLock {
+                routes -> (route: Route, parameters: [String: String])?
+            in
                 for route in routes {
                     // Check method (nil matches any)
                     if let method = route.method, method != context.request.method {
                         continue
                     }
-                    // Check path (exact match)
-                    if route.path == context.request.path {
-                        return route
+
+                    if let parameters = Self.match(
+                        routeSegments: route.segments,
+                        requestSegments: pathSegments
+                    ) {
+                        return (route, parameters)
                     }
                 }
                 return nil
             }
 
-            if let route = matchingRoute {
-                try await route.handler(context)
+            if let matchingRoute {
+                try await matchingRoute.route.handler(context, matchingRoute.parameters)
             } else {
                 let fallback = self.notFoundHandler.withLock { $0 }
-                try await fallback(context)
+                try await fallback(context, [:])
+            }
+        }
+    }
+
+    private static func parseRouteSegments(_ path: String) -> [RouteSegment] {
+        parsePathSegments(path).map(parseRouteSegment)
+    }
+
+    private static func parsePathSegments(_ path: String) -> [String] {
+        var normalized = path
+        if let queryIndex = normalized.firstIndex(of: "?") {
+            normalized = String(normalized[..<queryIndex])
+        }
+        if let fragmentIndex = normalized.firstIndex(of: "#") {
+            normalized = String(normalized[..<fragmentIndex])
+        }
+
+        let trimmed = normalized.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else { return [] }
+        return trimmed.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+    }
+
+    private static func parseRouteSegment(_ segment: String) -> RouteSegment {
+        guard segment.hasPrefix("{"), segment.hasSuffix("}") else {
+            return .literal(segment)
+        }
+
+        let inner = String(segment.dropFirst().dropLast())
+        guard !inner.isEmpty else {
+            return .literal(segment)
+        }
+
+        let pieces = inner.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = String(pieces[0])
+        guard !name.isEmpty else {
+            return .literal(segment)
+        }
+
+        let constraint: ParameterConstraint
+        if pieces.count == 1 {
+            constraint = .any
+        } else {
+            constraint = parseConstraint(String(pieces[1]))
+        }
+
+        return .parameter(name: name, constraint: constraint)
+    }
+
+    private static func parseConstraint(_ rawConstraint: String) -> ParameterConstraint {
+        let constraint = rawConstraint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = constraint.lowercased()
+
+        if lower == "uuid" {
+            return .uuid
+        }
+
+        if let exact = Int(constraint), exact >= 0 {
+            return .exactLength(exact)
+        }
+
+        if lower.hasPrefix("("), lower.hasSuffix(")") {
+            let rangeBody = String(lower.dropFirst().dropLast())
+            let parts = rangeBody.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: true)
+            if parts.count == 2,
+                let min = Int(parts[0]),
+                let max = Int(parts[1]),
+                min >= 0,
+                max >= min
+            {
+                return .lengthRange(min, max)
+            }
+        }
+
+        return .regex(constraint)
+    }
+
+    private static func match(
+        routeSegments: [RouteSegment],
+        requestSegments: [String]
+    ) -> [String: String]? {
+        guard routeSegments.count == requestSegments.count else {
+            return nil
+        }
+
+        var parameters: [String: String] = [:]
+        parameters.reserveCapacity(routeSegments.count)
+
+        for (routeSegment, requestSegment) in zip(routeSegments, requestSegments) {
+            switch routeSegment {
+            case .literal(let literal):
+                guard literal == requestSegment else {
+                    return nil
+                }
+            case .parameter(let name, let constraint):
+                guard matchesConstraint(constraint, value: requestSegment) else {
+                    return nil
+                }
+                parameters[name] = requestSegment
+            }
+        }
+
+        return parameters
+    }
+
+    private static func matchesConstraint(_ constraint: ParameterConstraint, value: String) -> Bool {
+        switch constraint {
+        case .any:
+            return true
+        case .uuid:
+            return UUID(uuidString: value) != nil
+        case .exactLength(let expected):
+            return value.count == expected
+        case .lengthRange(let min, let max):
+            let length = value.count
+            return length >= min && length <= max
+        case .regex(let pattern):
+            do {
+                let expression = try NSRegularExpression(pattern: "^\(pattern)$")
+                let range = NSRange(location: 0, length: value.utf16.count)
+                return expression.firstMatch(in: value, options: [], range: range) != nil
+            } catch {
+                return false
             }
         }
     }
