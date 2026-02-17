@@ -1858,9 +1858,13 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
         let opts = WebTransportOptions()
 
         if case .system = opts.caCertificates {
-            #expect(true)
+            #if os(macOS) || os(Linux) || os(Windows)
+            #expect(Bool(true))
+            #else
+            #expect(Bool(false))
+            #endif
         } else {
-            Issue.record("Expected default CA source to be .system")
+            Issue.record("Expected default CA source to be .system on Darwin, Linux, Windows, .der() on other")
         }
         #expect(opts.verifyPeer)
         #expect(opts.alpn == ["h3"])
@@ -2039,12 +2043,13 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
     // MARK: - WebTransport.connect URL parsing (via invalid URL)
 
     @Test func connectInvalidURL() async {
-        let opts = WebTransportOptions()
-
+        var opts = WebTransportOptions()
+        opts.caCertificates = .default
         do {
             _ = try await WebTransport.connect(url: "://invalid", options: opts)
             Issue.record("Expected error for invalid URL")
         } catch let error as WebTransportError {
+            print(error)
             if case .internalError(let msg, _) = error {
                 #expect(msg.contains("Invalid URL"))
             } else {

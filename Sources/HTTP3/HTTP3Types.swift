@@ -25,9 +25,9 @@
 /// MUST NOT appear in trailers (RFC 9114 Section 4.1.2).
 
 #if canImport(FoundationEssentials)
-import FoundationEssentials
+    import FoundationEssentials
 #else
-import Foundation
+    import Foundation
 #endif
 
 // MARK: - Trailer Validation
@@ -296,7 +296,9 @@ public struct HTTP3Request: Sendable, Hashable {
     /// - Parameter headers: The decoded header list from QPACK
     /// - Returns: The constructed request
     /// - Throws: `HTTP3TypeError` if required pseudo-headers are missing or invalid
-    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3Request {
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws
+        -> HTTP3Request
+    {
         var method: HTTPMethod?
         var scheme: String?
         var authority: String?
@@ -416,18 +418,14 @@ public struct HTTP3Request: Sendable, Hashable {
     // MARK: - Hashable
 
     public static func == (lhs: HTTP3Request, rhs: HTTP3Request) -> Bool {
-        lhs.method == rhs.method &&
-        lhs.scheme == rhs.scheme &&
-        lhs.authority == rhs.authority &&
-        lhs.path == rhs.path &&
-        lhs.connectProtocol == rhs.connectProtocol &&
-        lhs.body == rhs.body &&
-        lhs.headers.count == rhs.headers.count &&
-        zip(lhs.headers, rhs.headers).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 } &&
-        lhs.trailers?.count == rhs.trailers?.count &&
-        (lhs.trailers == nil && rhs.trailers == nil ||
-         lhs.trailers != nil && rhs.trailers != nil &&
-         zip(lhs.trailers!, rhs.trailers!).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 })
+        lhs.method == rhs.method && lhs.scheme == rhs.scheme && lhs.authority == rhs.authority
+            && lhs.path == rhs.path && lhs.connectProtocol == rhs.connectProtocol
+            && lhs.body == rhs.body && lhs.headers.count == rhs.headers.count
+            && zip(lhs.headers, rhs.headers).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
+            && lhs.trailers?.count == rhs.trailers?.count
+            && (lhs.trailers == nil && rhs.trailers == nil
+                || lhs.trailers != nil && rhs.trailers != nil
+                    && zip(lhs.trailers!, rhs.trailers!).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 })
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -536,7 +534,7 @@ extension HTTP3Request: CustomStringConvertible {
 ///     body: Data("Hello, World!".utf8)
 /// )
 /// ```
-public struct HTTP3Response:  ~Copyable, Sendable {
+public struct HTTP3Response: ~Copyable, Sendable {
     /// The HTTP status code (e.g., 200, 404, 500)
     public var status: Int
 
@@ -719,7 +717,9 @@ public struct HTTP3Response:  ~Copyable, Sendable {
     /// - Parameter headers: The decoded header list from QPACK
     /// - Returns: The constructed response (body is empty; fill in from DATA frames)
     /// - Throws: `HTTP3TypeError` if the `:status` pseudo-header is missing or invalid
-    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3Response {
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws
+        -> HTTP3Response
+    {
         var status: Int?
         var regularHeaders: [(String, String)] = []
 
@@ -801,7 +801,9 @@ public struct HTTP3ResponseHead: Sendable {
         return result
     }
 
-    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3ResponseHead {
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws
+        -> HTTP3ResponseHead
+    {
         var status: Int?
         var regularHeaders: [(String, String)] = []
         for (name, value) in headers {
@@ -860,7 +862,6 @@ public struct HTTP3ResponseHead: Sendable {
 public struct HTTP3BodyWriter: Sendable {
     /// Internal closure that encodes a DATA frame and writes it to the QUIC stream.
     internal let _write: @Sendable (Data) async throws -> Void
-
     /// Writes a chunk of body data as an HTTP/3 DATA frame.
     ///
     /// - Parameter data: The chunk to send. Empty data is a no-op.
@@ -868,6 +869,11 @@ public struct HTTP3BodyWriter: Sendable {
     public func write(_ data: Data) async throws {
         guard !data.isEmpty else { return }
         try await _write(data)
+    }
+
+    public func write(_ bytes: ArraySlice<UInt8>) async throws {
+        guard !bytes.isEmpty else { return }
+        try await _write(Data())
     }
 }
 
@@ -907,12 +913,15 @@ public struct HTTP3RequestContext: Sendable {
     }
 
     /// Closure to send a buffered response (status + headers + Data body + FIN).
-    internal let _respond: @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
+    internal let _respond:
+        @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
 
     /// Closure to send a streaming response (HEADERS, then chunked DATA via writer, then FIN).
-    internal let _respondStreaming: @Sendable (
-        Int, [(String, String)], [(String, String)]?, @Sendable (HTTP3BodyWriter) async throws -> Void
-    ) async throws -> Void
+    internal let _respondStreaming:
+        @Sendable (
+            Int, [(String, String)], [(String, String)]?,
+            @Sendable (HTTP3BodyWriter) async throws -> Void
+        ) async throws -> Void
 
     /// Creates a request context with body stream and response closures.
     ///
@@ -926,10 +935,14 @@ public struct HTTP3RequestContext: Sendable {
         request: HTTP3Request,
         streamID: UInt64,
         bodyStream: AsyncStream<Data>,
-        respond: @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void,
-        respondStreaming: @escaping @Sendable (
-            Int, [(String, String)], [(String, String)]?, @Sendable (HTTP3BodyWriter) async throws -> Void
-        ) async throws -> Void
+        respond:
+            @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws ->
+            Void,
+        respondStreaming:
+            @escaping @Sendable (
+                Int, [(String, String)], [(String, String)]?,
+                @Sendable (HTTP3BodyWriter) async throws -> Void
+            ) async throws -> Void
     ) {
         self.request = request
         self.streamID = streamID
@@ -945,7 +958,9 @@ public struct HTTP3RequestContext: Sendable {
     public init(
         request: HTTP3Request,
         streamID: UInt64,
-        respond: @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
+        respond:
+            @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws ->
+            Void
     ) {
         self.request = request
         self.streamID = streamID
@@ -954,7 +969,8 @@ public struct HTTP3RequestContext: Sendable {
         self._respondStreaming = { _, _, _, _ in
             throw HTTP3Error(
                 code: .internalError,
-                reason: "Streaming respond not available (context created without streaming support)"
+                reason:
+                    "Streaming respond not available (context created without streaming support)"
             )
         }
     }
@@ -1063,9 +1079,11 @@ public enum HTTP3TypeError: Error, Sendable, CustomStringConvertible {
         case .pseudoHeaderInTrailers(let name):
             return "Pseudo-header \(name) is not allowed in trailers (RFC 9114 §4.1.2)"
         case .protocolWithNonConnect(let proto):
-            return ":protocol pseudo-header ('\(proto)') is only allowed with :method=CONNECT (RFC 9220 §4)"
+            return
+                ":protocol pseudo-header ('\(proto)') is only allowed with :method=CONNECT (RFC 9220 §4)"
         case .connectWithForbiddenPseudoHeader(let name):
-            return "Regular CONNECT MUST NOT include \(name) (RFC 9114 §4.4). Use Extended CONNECT with :protocol instead."
+            return
+                "Regular CONNECT MUST NOT include \(name) (RFC 9114 §4.4). Use Extended CONNECT with :protocol instead."
         }
     }
 }

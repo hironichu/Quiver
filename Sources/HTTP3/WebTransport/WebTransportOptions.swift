@@ -39,13 +39,14 @@
 /// - [draft-ietf-webtrans-http3](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
 /// - [RFC 9220: Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html)
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
 import QUIC
 import QUICCore
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - CA Certificate Source
 
@@ -56,7 +57,7 @@ import QUICCore
 public enum CACertificateSource: Sendable {
     /// Use platform/system trust store.
     #if os(macOS) || os(Linux) || os(Windows)
-    case system
+        case system
     #endif
     /// Use explicit DER-encoded root CA certificate blobs.
     case der([Data])
@@ -92,6 +93,22 @@ public enum CACertificateSource: Sendable {
     public static func pem(url: URL) -> CACertificateSource {
         .pemURL(url)
     }
+    // MARK: - Platform-Aware Default
+
+    /// The default certificate source for the current platform.
+    ///
+    /// - On Darwin, Linux, and Windows: uses the system trust store (`.system`)
+    /// - On iOS and Android: uses an empty DER array (you must provide certificates)
+    public static var `default`: CACertificateSource {
+        #if os(macOS) || os(Linux) || os(Windows)
+            return .system
+        #else
+            // iOS, Android, and other platforms don't support .system
+            // Return empty DER - caller must provide certificates explicitly
+            return .der([])
+        #endif
+    }
+
 }
 
 // MARK: - WebTransport Client Options
@@ -223,7 +240,7 @@ public struct WebTransportOptions: Sendable {
     ///   - initialMaxStreamsUni: Max peer uni streams (default: 100)
     ///   - maxSessions: Max concurrent WT sessions (default: 1)
     public init(
-        caCertificates: CACertificateSource = .system,
+        caCertificates: CACertificateSource = .default,
         verifyPeer: Bool = true,
         alpn: [String] = ["h3"],
         headers: [(String, String)] = [],
@@ -276,7 +293,7 @@ public struct WebTransportOptions: Sendable {
         maxSessions: UInt64 = 1
     ) {
         self.init(
-            caCertificates: caCertificatesDER.map { .der($0) } ?? .system,
+            caCertificates: caCertificatesDER.map { .der($0) } ?? .default,
             verifyPeer: verifyPeer,
             alpn: alpn,
             headers: headers,

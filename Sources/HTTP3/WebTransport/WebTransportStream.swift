@@ -75,7 +75,7 @@ public let kWebTransportUniStreamType: UInt64 = 0x54
 /// The direction of a WebTransport stream.
 ///
 /// Determines whether the stream supports reading, writing, or both.
-public enum WebTransportStreamDirection: Sendable, Hashable {
+@frozen public enum WebTransportStreamDirection: Sendable, Hashable {
     /// Bidirectional stream — supports both reading and writing.
     case bidirectional
 
@@ -121,7 +121,7 @@ public struct WebTransportStream: Sendable {
     ///
     /// Exposed for advanced use cases (e.g., accessing stream ID for
     /// debugging). Prefer using the `WebTransportStream` API methods.
-    public let quicStream: any QUICStreamProtocol
+    private let quicStream: any QUICStreamProtocol
 
     /// The WebTransport session ID this stream belongs to.
     ///
@@ -303,7 +303,7 @@ extension WebTransportStream: CustomStringConvertible {
 ///
 /// These are used internally by `WebTransportSession` when opening or
 /// accepting streams. Application code should not need to use these directly.
-public enum WebTransportStreamFraming {
+package enum WebTransportStreamFraming {
 
     /// Writes the session ID framing for a new outgoing bidirectional stream.
     ///
@@ -314,7 +314,7 @@ public enum WebTransportStreamFraming {
     ///   - stream: The QUIC bidirectional stream
     ///   - sessionID: The WebTransport session ID
     /// - Throws: If writing fails
-    public static func writeBidirectionalHeader(
+    package static func writeBidirectionalHeader(
         to stream: any QUICStreamProtocol,
         sessionID: UInt64
     ) async throws {
@@ -334,7 +334,7 @@ public enum WebTransportStreamFraming {
     ///   - stream: The QUIC unidirectional stream
     ///   - sessionID: The WebTransport session ID
     /// - Throws: If writing fails
-    public static func writeUnidirectionalHeader(
+    package static func writeUnidirectionalHeader(
         to stream: any QUICStreamProtocol,
         sessionID: UInt64
     ) async throws {
@@ -353,7 +353,7 @@ public enum WebTransportStreamFraming {
     /// - Returns: A tuple of (sessionID, remaining data after the session ID varint),
     ///   or `nil` if the data is too short to contain a varint
     /// - Throws: If the varint is malformed
-    public static func readBidirectionalSessionID(
+    package static func readBidirectionalSessionID(
         from data: Data
     ) throws -> (sessionID: UInt64, remaining: Data)? {
         guard !data.isEmpty else { return nil }
