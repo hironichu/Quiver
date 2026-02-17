@@ -240,11 +240,12 @@ public struct HTTP3ServerOptions: Sendable {
     /// - Default: `nil` (gateway disabled)
     public var gatewayHTTPPort: UInt16?
 
-    /// HTTPS port for the Alt-Svc gateway (serves `Alt-Svc: h3` header).
+    /// HTTPS port for the Alt-Svc gateway.
     ///
     /// When non-nil, `listenAll()` starts a TLS-terminated TCP listener
-    /// on this port that responds with the `Alt-Svc` header pointing
-    /// browsers to the HTTP/3 QUIC port.
+    /// on this port that always includes `Alt-Svc: h3` and either
+    /// dispatches requests to the shared application handler or serves
+    /// an `HTTP/3 Required` page, depending on `gatewayHTTPSBehavior`.
     ///
     /// Requires `certificatePath` and `privateKeyPath` to be set (the
     /// same PEM files are reused for TCP TLS via NIOSSL).
@@ -259,6 +260,15 @@ public struct HTTP3ServerOptions: Sendable {
     ///
     /// - Default: `86400` (24 hours)
     public var altSvcMaxAge: UInt32
+
+    /// HTTPS behavior for the Alt-Svc gateway.
+    ///
+    /// Controls whether the HTTPS listener serves application resources
+    /// through the shared request handler, or returns the legacy
+    /// `HTTP/3 Required` informational page.
+    ///
+    /// - Default: `.serveApplication`
+    public var gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior
 
     // MARK: - Initialization (File Paths)
 
@@ -299,7 +309,8 @@ public struct HTTP3ServerOptions: Sendable {
         developmentMode: Bool = false,
         gatewayHTTPPort: UInt16? = nil,
         gatewayHTTPSPort: UInt16? = nil,
-        altSvcMaxAge: UInt32 = 86400
+        altSvcMaxAge: UInt32 = 86400,
+        gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior = .serveApplication
     ) {
         self.host = host
         self.port = port
@@ -328,6 +339,7 @@ public struct HTTP3ServerOptions: Sendable {
         self.gatewayHTTPPort = gatewayHTTPPort
         self.gatewayHTTPSPort = gatewayHTTPSPort
         self.altSvcMaxAge = altSvcMaxAge
+        self.gatewayHTTPSBehavior = gatewayHTTPSBehavior
     }
 
     // MARK: - Initialization (In-Memory)
@@ -369,7 +381,8 @@ public struct HTTP3ServerOptions: Sendable {
         developmentMode: Bool = false,
         gatewayHTTPPort: UInt16? = nil,
         gatewayHTTPSPort: UInt16? = nil,
-        altSvcMaxAge: UInt32 = 86400
+        altSvcMaxAge: UInt32 = 86400,
+        gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior = .serveApplication
     ) {
         self.host = host
         self.port = port
@@ -398,6 +411,7 @@ public struct HTTP3ServerOptions: Sendable {
         self.gatewayHTTPPort = gatewayHTTPPort
         self.gatewayHTTPSPort = gatewayHTTPSPort
         self.altSvcMaxAge = altSvcMaxAge
+        self.gatewayHTTPSBehavior = gatewayHTTPSBehavior
     }
 
     // MARK: - Initialization (Signing Key)
@@ -434,7 +448,8 @@ public struct HTTP3ServerOptions: Sendable {
         developmentMode: Bool = false,
         gatewayHTTPPort: UInt16? = nil,
         gatewayHTTPSPort: UInt16? = nil,
-        altSvcMaxAge: UInt32 = 86400
+        altSvcMaxAge: UInt32 = 86400,
+        gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior = .serveApplication
     ) {
         self.host = host
         self.port = port
@@ -463,6 +478,7 @@ public struct HTTP3ServerOptions: Sendable {
         self.gatewayHTTPPort = gatewayHTTPPort
         self.gatewayHTTPSPort = gatewayHTTPSPort
         self.altSvcMaxAge = altSvcMaxAge
+        self.gatewayHTTPSBehavior = gatewayHTTPSBehavior
     }
 
     // MARK: - Build Methods
@@ -585,6 +601,7 @@ public struct HTTP3ServerOptions: Sendable {
             httpsPort: gatewayHTTPSPort,
             h3Port: port,
             altSvcMaxAge: altSvcMaxAge,
+            httpsBehavior: gatewayHTTPSBehavior,
             certificatePath: certificatePath,
             privateKeyPath: privateKeyPath
         )

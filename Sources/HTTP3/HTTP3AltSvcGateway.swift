@@ -1,18 +1,19 @@
 /// Alt-Svc Gateway (RFC 7838 / RFC 9114 Section 3)
 ///
 /// A lightweight NIO-based HTTP/1.1 + HTTP/2 TCP server that runs
-/// alongside the HTTP/3 QUIC server. Its sole purpose is to advertise
-/// HTTP/3 availability via the `Alt-Svc` response header and redirect
-/// plain HTTP traffic to HTTPS.
+/// alongside the HTTP/3 QUIC server. It advertises HTTP/3 availability
+/// via the `Alt-Svc` response header and redirects plain HTTP traffic
+/// to HTTPS.
 ///
 /// ## Ports
 ///
 /// - **HTTP port** (default 80): Returns `301 Moved Permanently` to
 ///   the HTTPS equivalent URL.
 /// - **HTTPS port** (default 443): Terminates TLS (via NIOSSL),
-///   negotiates HTTP/2 or HTTP/1.1 via ALPN, and responds with
-///   `Alt-Svc: h3=":PORT"; ma=MAX_AGE` plus a minimal HTML body
-///   instructing the browser to upgrade.
+///   negotiates HTTP/1.1 via ALPN, and responds with
+///   `Alt-Svc: h3=":PORT"; ma=MAX_AGE`. In shared mode it dispatches
+///   to the application handler; in lock mode it serves an
+///   `HTTP/3 Required` informational page.
 ///
 /// ## References
 ///
@@ -37,6 +38,16 @@ import QUICCore
 /// Configuration for the Alt-Svc gateway.
 public struct AltSvcGatewayConfiguration: Sendable {
 
+    /// HTTPS gateway behavior.
+    public enum HTTPSBehavior: String, Sendable, Hashable {
+        /// Serve application resources by dispatching requests to the
+        /// same handler used by the HTTP/3 server.
+        case serveApplication
+
+        /// Return a static informational page requiring HTTP/3.
+        case requireHTTP3
+    }
+
     /// Host address to bind both HTTP and HTTPS listeners.
     public var host: String
 
@@ -52,6 +63,9 @@ public struct AltSvcGatewayConfiguration: Sendable {
     /// `ma=` value in the Alt-Svc header (seconds). Default: 86400 (24h).
     public var altSvcMaxAge: UInt32
 
+    /// Behavior for HTTPS gateway responses.
+    public var httpsBehavior: HTTPSBehavior
+
     /// Path to the TLS certificate file (PEM).
     public var certificatePath: String?
 
@@ -64,6 +78,7 @@ public struct AltSvcGatewayConfiguration: Sendable {
         httpsPort: UInt16? = 443,
         h3Port: UInt16 = 4433,
         altSvcMaxAge: UInt32 = 86400,
+        httpsBehavior: HTTPSBehavior = .serveApplication,
         certificatePath: String? = nil,
         privateKeyPath: String? = nil
     ) {
@@ -72,6 +87,7 @@ public struct AltSvcGatewayConfiguration: Sendable {
         self.httpsPort = httpsPort
         self.h3Port = h3Port
         self.altSvcMaxAge = altSvcMaxAge
+        self.httpsBehavior = httpsBehavior
         self.certificatePath = certificatePath
         self.privateKeyPath = privateKeyPath
     }
@@ -89,6 +105,10 @@ public enum AltSvcGatewayError: Error, Sendable, CustomStringConvertible {
     case tlsConfigurationFailed(String)
     /// The gateway is already running.
     case alreadyRunning
+
+    /// HTTPS shared-application mode requested but no request handler was provided.
+    case missingRequestHandler
+
     /// The gateway failed to bind.
     case bindFailed(String)
 
@@ -102,6 +122,8 @@ public enum AltSvcGatewayError: Error, Sendable, CustomStringConvertible {
             return "AltSvcGateway: TLS configuration failed: \(reason)"
         case .alreadyRunning:
             return "AltSvcGateway: gateway is already running"
+        case .missingRequestHandler:
+            return "AltSvcGateway: HTTPS behavior serveApplication requires a request handler"
         case .bindFailed(let reason):
             return "AltSvcGateway: failed to bind: \(reason)"
         }
@@ -122,6 +144,9 @@ public actor AltSvcGateway {
     /// Configuration snapshot (immutable after init).
     private let configuration: AltSvcGatewayConfiguration
 
+    /// Shared application request handler used in HTTPS serve-application mode.
+    private let requestHandler: HTTP3Server.RequestHandler?
+
     /// NIO event loop group for TCP listeners.
     private let group: MultiThreadedEventLoopGroup
 
@@ -136,9 +161,11 @@ public actor AltSvcGateway {
 
     public init(
         configuration: AltSvcGatewayConfiguration,
+        requestHandler: HTTP3Server.RequestHandler? = nil,
         eventLoopGroup: MultiThreadedEventLoopGroup? = nil
     ) {
         self.configuration = configuration
+        self.requestHandler = requestHandler
         if let elg = eventLoopGroup {
             self.group = elg
             self.ownsEventLoopGroup = false
@@ -179,6 +206,9 @@ public actor AltSvcGateway {
             guard configuration.privateKeyPath != nil else {
                 throw AltSvcGatewayError.missingPrivateKey
             }
+            if configuration.httpsBehavior == .serveApplication && requestHandler == nil {
+                throw AltSvcGatewayError.missingRequestHandler
+            }
             let channel = try await bootstrapHTTPS(port: httpsPort)
             self.httpsChannel = channel
             Self.logger.info(
@@ -188,6 +218,7 @@ public actor AltSvcGateway {
                     "port": "\(httpsPort)",
                     "h3Port": "\(configuration.h3Port)",
                     "altSvcMaxAge": "\(configuration.altSvcMaxAge)",
+                    "httpsBehavior": "\(configuration.httpsBehavior.rawValue)",
                 ]
             )
         }
@@ -269,6 +300,9 @@ public actor AltSvcGateway {
 
         let h3Port = configuration.h3Port
         let altSvcMaxAge = configuration.altSvcMaxAge
+        let httpsBehavior = configuration.httpsBehavior
+        let requestHandler = self.requestHandler
+        let host = configuration.host
 
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(.backlog, value: 64)
@@ -283,12 +317,27 @@ public actor AltSvcGateway {
                     let sslHandler = NIOSSLServerHandler(context: sslContext)
                     try channel.pipeline.syncOperations.addHandler(sslHandler)
                     try channel.pipeline.syncOperations.configureHTTPServerPipeline()
-                    try channel.pipeline.syncOperations.addHandler(
-                        AltSvcResponseHandler(
-                            h3Port: h3Port,
-                            altSvcMaxAge: altSvcMaxAge
+                    switch httpsBehavior {
+                    case .serveApplication:
+                        guard let requestHandler else {
+                            throw AltSvcGatewayError.missingRequestHandler
+                        }
+                        try channel.pipeline.syncOperations.addHandler(
+                            AltSvcApplicationProxyHandler(
+                                h3Port: h3Port,
+                                altSvcMaxAge: altSvcMaxAge,
+                                fallbackAuthority: host,
+                                requestHandler: requestHandler
+                            )
                         )
-                    )
+                    case .requireHTTP3:
+                        try channel.pipeline.syncOperations.addHandler(
+                            AltSvcRequiredResponseHandler(
+                                h3Port: h3Port,
+                                altSvcMaxAge: altSvcMaxAge
+                            )
+                        )
+                    }
                 }
             }
 
@@ -364,7 +413,7 @@ private final class HTTPRedirectHandler: ChannelInboundHandler, RemovableChannel
 /// All stored properties are immutable (`let`) and of `Sendable` types
 /// (`UInt16`, `UInt32`, `String`, `Data`), making this class genuinely
 /// `Sendable` without requiring `@unchecked`.
-private final class AltSvcResponseHandler: ChannelInboundHandler, RemovableChannelHandler, Sendable {
+private final class AltSvcRequiredResponseHandler: ChannelInboundHandler, RemovableChannelHandler, Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
@@ -421,5 +470,369 @@ private final class AltSvcResponseHandler: ChannelInboundHandler, RemovableChann
 
         context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
         context.close(promise: nil)
+    }
+}
+
+// MARK: - Alt-Svc Application Proxy Handler (port 443)
+
+/// Dispatches HTTPS gateway requests into the shared HTTP/3 request
+/// handler so HTTP/1.1 can serve the same resources as HTTP/3.
+private final class AltSvcApplicationProxyHandler: ChannelInboundHandler, RemovableChannelHandler {
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
+
+    private let requestHandler: HTTP3Server.RequestHandler
+    private let fallbackAuthority: String
+    private let altSvcHeaderValue: String
+
+    private var requestHead: HTTPRequestHead?
+    private var bodyContinuation: AsyncStream<Data>.Continuation?
+    private var dispatchTask: Task<Void, Never>?
+
+    init(
+        h3Port: UInt16,
+        altSvcMaxAge: UInt32,
+        fallbackAuthority: String,
+        requestHandler: @escaping HTTP3Server.RequestHandler
+    ) {
+        self.requestHandler = requestHandler
+        self.fallbackAuthority = fallbackAuthority
+        self.altSvcHeaderValue = "h3=\":\(h3Port)\"; ma=\(altSvcMaxAge)"
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let part = unwrapInboundIn(data)
+
+        switch part {
+        case .head(let request):
+            guard requestHead == nil else {
+                context.close(promise: nil)
+                return
+            }
+
+            requestHead = request
+
+            guard let method = HTTPMethod(rawValue: request.method.rawValue) else {
+                var headers = HTTPHeaders()
+                headers.add(name: "alt-svc", value: altSvcHeaderValue)
+                headers.add(name: "content-type", value: "text/plain; charset=utf-8")
+                headers.add(name: "content-length", value: "22")
+                headers.add(name: "connection", value: "close")
+
+                let head = HTTPResponseHead(
+                    version: request.version,
+                    status: HTTPResponseStatus(statusCode: 501),
+                    headers: headers
+                )
+
+                context.write(wrapOutboundOut(.head(head)), promise: nil)
+                var buffer = ByteBufferAllocator().buffer(capacity: 22)
+                buffer.writeString("Method Not Implemented")
+                context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+                context.close(promise: nil)
+                return
+            }
+
+            var bodyContinuation: AsyncStream<Data>.Continuation?
+            let bodyStream = AsyncStream<Data> { continuation in
+                bodyContinuation = continuation
+            }
+            self.bodyContinuation = bodyContinuation
+
+            let responder = HTTP1GatewayResponder(
+                context: context,
+                requestVersion: request.version,
+                altSvcHeaderValue: altSvcHeaderValue
+            )
+
+            let http3Request = Self.buildRequest(
+                from: request,
+                mappedMethod: method,
+                fallbackAuthority: fallbackAuthority
+            )
+
+            let requestContext = HTTP3RequestContext(
+                request: http3Request,
+                streamID: 0,
+                bodyStream: bodyStream,
+                respond: { status, headers, body, trailers in
+                    try await responder.sendBuffered(
+                        status: status,
+                        headers: headers,
+                        body: body,
+                        trailers: trailers
+                    )
+                },
+                respondStreaming: { status, headers, trailers, writer in
+                    try await responder.startStreaming(
+                        status: status,
+                        headers: headers,
+                        trailers: trailers
+                    )
+
+                    let bodyWriter = HTTP3BodyWriter(_write: { data in
+                        try await responder.sendStreamingChunk(data)
+                    })
+
+                    try await writer(bodyWriter)
+                    try await responder.finishStreaming()
+                }
+            )
+
+            let requestHandler = self.requestHandler
+            dispatchTask = Task {
+                do {
+                    try await requestHandler(requestContext)
+                } catch {
+                    await responder.sendInternalServerErrorIfNeeded()
+                }
+            }
+
+        case .body(var buffer):
+            if let bytes = buffer.readBytes(length: buffer.readableBytes), !bytes.isEmpty {
+                bodyContinuation?.yield(Data(bytes))
+            }
+
+        case .end:
+            bodyContinuation?.finish()
+            bodyContinuation = nil
+        }
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        bodyContinuation?.finish()
+        bodyContinuation = nil
+        dispatchTask?.cancel()
+        dispatchTask = nil
+        requestHead = nil
+        context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        bodyContinuation?.finish()
+        bodyContinuation = nil
+        dispatchTask?.cancel()
+        dispatchTask = nil
+        requestHead = nil
+        context.close(promise: nil)
+    }
+
+    private static func buildRequest(
+        from request: HTTPRequestHead,
+        mappedMethod: HTTPMethod,
+        fallbackAuthority: String
+    ) -> HTTP3Request {
+        let authority = (request.headers.first(name: "host")?.isEmpty == false)
+            ? request.headers.first(name: "host")!
+            : fallbackAuthority
+
+        let path = request.uri.isEmpty ? "/" : request.uri
+
+        var headers: [(String, String)] = []
+        headers.reserveCapacity(request.headers.count)
+        for header in request.headers {
+            let name = header.name.lowercased()
+            if name == "host" || name == "connection" || name == "keep-alive"
+                || name == "proxy-connection" || name == "transfer-encoding" || name == "upgrade"
+            {
+                continue
+            }
+            headers.append((name, header.value))
+        }
+
+        if !headers.contains(where: { $0.0 == "x-forwarded-proto" }) {
+            headers.append(("x-forwarded-proto", "https"))
+        }
+        if !headers.contains(where: { $0.0 == "x-forwarded-host" }) {
+            headers.append(("x-forwarded-host", authority))
+        }
+        headers.append(("x-quiver-gateway", "altsvc"))
+
+        return HTTP3Request(
+            method: mappedMethod,
+            scheme: "https",
+            authority: authority,
+            path: path,
+            headers: headers,
+            body: nil
+        )
+    }
+}
+
+// MARK: - HTTP/1.1 Response Bridge
+
+private final class HTTP1GatewayResponder: @unchecked Sendable {
+    private let context: ChannelHandlerContext
+    private let requestVersion: HTTPVersion
+    private let altSvcHeaderValue: String
+    private let lock = NSLock()
+
+    private var hasSentHead = false
+    private var hasFinished = false
+
+    init(
+        context: ChannelHandlerContext,
+        requestVersion: HTTPVersion,
+        altSvcHeaderValue: String
+    ) {
+        self.context = context
+        self.requestVersion = requestVersion
+        self.altSvcHeaderValue = altSvcHeaderValue
+    }
+
+    func sendBuffered(
+        status: Int,
+        headers: [(String, String)],
+        body: Data,
+        trailers: [(String, String)]?
+    ) async throws {
+        guard withLock({ !hasFinished }) else { return }
+
+        let responseHeaders = makeHeaders(
+            from: headers,
+            contentLength: body.count,
+            trailers: trailers,
+            streaming: false
+        )
+        let responseHead = HTTPResponseHead(
+            version: requestVersion,
+            status: HTTPResponseStatus(statusCode: status),
+            headers: responseHeaders
+        )
+
+        try await writeOnEventLoop(.head(responseHead), flush: false)
+
+        if !body.isEmpty {
+            try await writeBodyOnEventLoop(body, flush: false)
+        }
+
+        try await writeOnEventLoop(.end(nil), flush: true)
+        withLock {
+            hasSentHead = true
+            hasFinished = true
+        }
+        _ = try? await context.eventLoop.submit { self.context.close(promise: nil) }.get()
+    }
+
+    func startStreaming(
+        status: Int,
+        headers: [(String, String)],
+        trailers: [(String, String)]?
+    ) async throws {
+        guard withLock({ !hasSentHead }) else { return }
+
+        let responseHeaders = makeHeaders(
+            from: headers,
+            contentLength: nil,
+            trailers: trailers,
+            streaming: true
+        )
+        let responseHead = HTTPResponseHead(
+            version: requestVersion,
+            status: HTTPResponseStatus(statusCode: status),
+            headers: responseHeaders
+        )
+
+        try await writeOnEventLoop(.head(responseHead), flush: true)
+        withLock { hasSentHead = true }
+    }
+
+    func sendStreamingChunk(_ data: Data) async throws {
+        guard withLock({ hasSentHead && !hasFinished }) else { return }
+        guard !data.isEmpty else { return }
+
+        try await writeBodyOnEventLoop(data, flush: true)
+    }
+
+    func finishStreaming() async throws {
+        guard withLock({ !hasFinished }) else { return }
+        if withLock({ !hasSentHead }) {
+            try await startStreaming(status: 200, headers: [], trailers: nil)
+        }
+        try await writeOnEventLoop(.end(nil), flush: true)
+        withLock { hasFinished = true }
+        _ = try? await context.eventLoop.submit { self.context.close(promise: nil) }.get()
+    }
+
+    func sendInternalServerErrorIfNeeded() async {
+        guard withLock({ !hasFinished }) else { return }
+        try? await sendBuffered(
+            status: 500,
+            headers: [("content-type", "text/plain; charset=utf-8")],
+            body: Data("Internal Server Error".utf8),
+            trailers: nil
+        )
+    }
+
+    private func makeHeaders(
+        from headers: [(String, String)],
+        contentLength: Int?,
+        trailers: [(String, String)]?,
+        streaming: Bool
+    ) -> HTTPHeaders {
+        var httpHeaders = HTTPHeaders()
+
+        for (name, value) in headers {
+            httpHeaders.add(name: name, value: value)
+        }
+
+        if httpHeaders.first(name: "alt-svc") == nil {
+            httpHeaders.add(name: "alt-svc", value: altSvcHeaderValue)
+        }
+
+        if let contentLength {
+            if httpHeaders.first(name: "content-length") == nil {
+                httpHeaders.add(name: "content-length", value: "\(contentLength)")
+            }
+        } else if streaming {
+            if httpHeaders.first(name: "transfer-encoding") == nil {
+                httpHeaders.add(name: "transfer-encoding", value: "chunked")
+            }
+        }
+
+        if let trailers, !trailers.isEmpty {
+            let trailerNames = trailers.map { $0.0.lowercased() }.joined(separator: ", ")
+            if !trailerNames.isEmpty {
+                httpHeaders.add(name: "trailer", value: trailerNames)
+            }
+        }
+
+        httpHeaders.replaceOrAdd(name: "connection", value: "close")
+        return httpHeaders
+    }
+
+    private func writeOnEventLoop(_ part: HTTPServerResponsePart, flush: Bool) async throws {
+        if flush {
+            try await context.eventLoop.submit {
+                self.context.writeAndFlush(NIOAny(part), promise: nil)
+            }.get()
+        } else {
+            try await context.eventLoop.submit {
+                self.context.write(NIOAny(part), promise: nil)
+            }.get()
+        }
+    }
+
+    private func writeBodyOnEventLoop(_ body: Data, flush: Bool) async throws {
+        if flush {
+            try await context.eventLoop.submit {
+                var buffer = ByteBufferAllocator().buffer(capacity: body.count)
+                buffer.writeBytes(body)
+                self.context.writeAndFlush(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            }.get()
+        } else {
+            try await context.eventLoop.submit {
+                var buffer = ByteBufferAllocator().buffer(capacity: body.count)
+                buffer.writeBytes(body)
+                self.context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            }.get()
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
     }
 }

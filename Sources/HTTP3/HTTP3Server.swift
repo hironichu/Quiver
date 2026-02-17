@@ -741,7 +741,19 @@ public actor HTTP3Server {
 
         // Start the Alt-Svc gateway if configured
         if let gatewayConfig = options.buildGatewayConfiguration() {
-            let gw = AltSvcGateway(configuration: gatewayConfig)
+            let currentHandler = self.handler
+            if gatewayConfig.httpsBehavior == .serveApplication, currentHandler == nil {
+                throw HTTP3Error(
+                    code: .internalError,
+                    reason: "listenAll() in serveApplication mode requires a request handler. "
+                        + "Call onRequest() before listenAll()."
+                )
+            }
+
+            let gw = AltSvcGateway(
+                configuration: gatewayConfig,
+                requestHandler: currentHandler
+            )
             try await gw.start()
             self.gateway = gw
             Self.logger.info(
@@ -750,6 +762,7 @@ public actor HTTP3Server {
                     "httpPort": "\(gatewayConfig.httpPort.map(String.init) ?? "disabled")",
                     "httpsPort": "\(gatewayConfig.httpsPort.map(String.init) ?? "disabled")",
                     "h3Port": "\(gatewayConfig.h3Port)",
+                    "httpsBehavior": "\(gatewayConfig.httpsBehavior.rawValue)",
                 ]
             )
         }

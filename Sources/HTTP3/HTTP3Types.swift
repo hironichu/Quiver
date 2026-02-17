@@ -912,6 +912,35 @@ public struct HTTP3RequestContext: Sendable {
         HTTP3Body(stream: _bodyStream)
     }
 
+    /// Whether this request was forwarded by the Alt-Svc gateway.
+    ///
+    /// Returns `true` when the gateway marker header
+    /// `x-quiver-gateway: altsvc` is present.
+    public var isFromAltSvcGateway: Bool {
+        request.headers.contains {
+            $0.0.caseInsensitiveCompare("x-quiver-gateway") == .orderedSame
+                && $0.1.caseInsensitiveCompare("altsvc") == .orderedSame
+        }
+    }
+
+    /// Forwarded protocol reported by an upstream gateway/proxy.
+    ///
+    /// Reads the first `x-forwarded-proto` header value, if present.
+    public var forwardedProto: String? {
+        request.headers.first {
+            $0.0.caseInsensitiveCompare("x-forwarded-proto") == .orderedSame
+        }?.1
+    }
+
+    /// Forwarded host reported by an upstream gateway/proxy.
+    ///
+    /// Reads the first `x-forwarded-host` header value, if present.
+    public var forwardedHost: String? {
+        request.headers.first {
+            $0.0.caseInsensitiveCompare("x-forwarded-host") == .orderedSame
+        }?.1
+    }
+
     /// Closure to send a buffered response (status + headers + Data body + FIN).
     internal let _respond:
         @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
