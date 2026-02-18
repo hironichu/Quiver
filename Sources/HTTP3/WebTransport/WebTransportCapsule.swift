@@ -56,7 +56,7 @@ import QUICCore
 ///
 /// These are the capsule types defined by the WebTransport over HTTP/3 draft.
 /// Unknown capsule types on the CONNECT stream MUST be ignored per RFC 9297.
-public enum WebTransportCapsuleType: UInt64, Sendable, Hashable {
+@frozen public enum WebTransportCapsuleType: UInt64, Sendable, Hashable {
     /// CLOSE_WEBTRANSPORT_SESSION capsule (draft-ietf-webtrans-http3)
     ///
     /// Signals that the WebTransport session is being closed. Contains
@@ -168,7 +168,7 @@ extension WebTransportCapsule: CustomStringConvertible {
 ///     }
 /// }
 /// ```
-public enum WebTransportCapsuleCodec {
+package enum WebTransportCapsuleCodec {
 
     // MARK: - Encoding
 
@@ -178,7 +178,7 @@ public enum WebTransportCapsuleCodec {
     ///
     /// - Parameter capsule: The capsule to encode
     /// - Returns: The encoded bytes
-    public static func encode(_ capsule: WebTransportCapsule) -> Data {
+    package static func encode(_ capsule: WebTransportCapsule) -> Data {
         var data = Data()
         encode(capsule, into: &data)
         return data
@@ -189,7 +189,7 @@ public enum WebTransportCapsuleCodec {
     /// - Parameters:
     ///   - capsule: The capsule to encode
     ///   - buffer: The buffer to append to
-    public static func encode(_ capsule: WebTransportCapsule, into buffer: inout Data) {
+    package static func encode(_ capsule: WebTransportCapsule, into buffer: inout Data) {
         let (type, payload) = encodePayload(capsule)
 
         // Type (varint)
@@ -249,7 +249,7 @@ public enum WebTransportCapsuleCodec {
     /// - Returns: A tuple of (decoded capsule, total bytes consumed), or `nil`
     ///   if insufficient data is available for a complete capsule
     /// - Throws: `WebTransportCapsuleError` if the capsule data is malformed
-    public static func decode(from data: Data) throws -> (WebTransportCapsule, Int)? {
+    package static func decode(from data: Data) throws -> (WebTransportCapsule, Int)? {
         var offset = 0
 
         // Try to read Type (varint)
@@ -290,7 +290,7 @@ public enum WebTransportCapsuleCodec {
     /// - Parameter data: The data to decode from
     /// - Returns: A tuple of (decoded capsules, total bytes consumed)
     /// - Throws: `WebTransportCapsuleError` if any capsule data is malformed
-    public static func decodeAll(from data: Data) throws -> ([WebTransportCapsule], Int) {
+    package static func decodeAll(from data: Data) throws -> ([WebTransportCapsule], Int) {
         var capsules: [WebTransportCapsule] = []
         var totalConsumed = 0
         var remaining = data

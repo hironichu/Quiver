@@ -265,7 +265,7 @@ extension WebTransportSessionState: CustomStringConvertible {
 /// These are not mandated by the spec but represent common conventions
 /// used across WebTransport implementations. Applications are free to
 /// define their own error code space.
-public enum WebTransportErrorCode {
+@frozen public enum WebTransportErrorCode {
     /// No error — clean session closure.
     public static let noError: UInt32 = 0x00
 

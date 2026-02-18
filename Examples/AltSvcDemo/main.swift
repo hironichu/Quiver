@@ -386,7 +386,7 @@ func helloWorldPage(h3Port: UInt16, httpsPort: UInt16, httpPort: UInt16?) -> Str
         \(httpInfo)
                     </table>
                 </div>
-
+                
                 <div class="card">
                     <h2>Alt-Svc Header</h2>
                     <p class="alt-svc-value">h3=":\(h3Port)"; ma=86400</p>
@@ -440,10 +440,19 @@ func runServer(args: Arguments) async throws {
     let htmlData = Data(html.utf8)
 
     await server.onRequest { context in
+        let source: String
+        if context.isFromAltSvcGateway {
+            let proto = context.forwardedProto ?? "unknown"
+            let host = context.forwardedHost ?? "unknown"
+            source = "gateway proto=\(proto) host=\(host)"
+        } else {
+            source = "h3-direct"
+        }
+
         log(
             "Request",
             "\(context.request.method) \(context.request.path) "
-                + "[stream:\(context.streamID)]")
+                + "[stream:\(context.streamID)] [source:\(source)]")
 
         try await context.respond(
             status: 200,

@@ -27,7 +27,7 @@ extension HTTP3Connection {
     /// Datagrams with a matching quarter stream ID will also be routed.
     ///
     /// - Parameter session: The WebTransport session to register
-    public func registerWebTransportSession(_ session: WebTransportSession) {
+    func registerWebTransportSession(_ session: WebTransportSession) {
         let sessionID = session.sessionID
         webTransportSessions[sessionID] = session
 
@@ -109,7 +109,7 @@ extension HTTP3Connection {
     ///
     /// - Parameter sessionID: The session ID to look up
     /// - Returns: The session, or `nil` if no session is registered with that ID
-    public func webTransportSession(for sessionID: UInt64) -> WebTransportSession? {
+    borrowing public func webTransportSession(for sessionID: UInt64) -> WebTransportSession? {
         webTransportSessions[sessionID]
     }
 
@@ -133,7 +133,7 @@ extension HTTP3Connection {
     ///   - role: The role of this endpoint (default: `.server`)
     /// - Returns: The started `WebTransportSession`
     /// - Throws: `WebTransportError` if the session cannot be created or started
-    public func createWebTransportSession(
+    package func createWebTransportSession(
         from context: ExtendedConnectContext,
         role: WebTransportSession.Role = .server
     ) async throws -> WebTransportSession {
@@ -213,7 +213,7 @@ extension HTTP3Connection {
     ///
     /// - Parameter streamID: The QUIC stream ID to look up
     /// - Returns: `true` if this connection owns the stream
-    public func ownsStream(_ streamID: UInt64) -> Bool {
+    public func hasSession(_ streamID: UInt64) -> Bool {
         // Check if the stream matches our QUIC connection's stream ID space.
         // Client-initiated bidi streams are even (0, 4, 8, ...),
         // Server-initiated bidi streams are 1, 5, 9, ...

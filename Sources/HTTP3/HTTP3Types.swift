@@ -25,9 +25,9 @@
 /// MUST NOT appear in trailers (RFC 9114 Section 4.1.2).
 
 #if canImport(FoundationEssentials)
-import FoundationEssentials
+    import FoundationEssentials
 #else
-import Foundation
+    import Foundation
 #endif
 
 // MARK: - Trailer Validation
@@ -296,7 +296,9 @@ public struct HTTP3Request: Sendable, Hashable {
     /// - Parameter headers: The decoded header list from QPACK
     /// - Returns: The constructed request
     /// - Throws: `HTTP3TypeError` if required pseudo-headers are missing or invalid
-    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3Request {
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws
+        -> HTTP3Request
+    {
         var method: HTTPMethod?
         var scheme: String?
         var authority: String?
@@ -416,18 +418,14 @@ public struct HTTP3Request: Sendable, Hashable {
     // MARK: - Hashable
 
     public static func == (lhs: HTTP3Request, rhs: HTTP3Request) -> Bool {
-        lhs.method == rhs.method &&
-        lhs.scheme == rhs.scheme &&
-        lhs.authority == rhs.authority &&
-        lhs.path == rhs.path &&
-        lhs.connectProtocol == rhs.connectProtocol &&
-        lhs.body == rhs.body &&
-        lhs.headers.count == rhs.headers.count &&
-        zip(lhs.headers, rhs.headers).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 } &&
-        lhs.trailers?.count == rhs.trailers?.count &&
-        (lhs.trailers == nil && rhs.trailers == nil ||
-         lhs.trailers != nil && rhs.trailers != nil &&
-         zip(lhs.trailers!, rhs.trailers!).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 })
+        lhs.method == rhs.method && lhs.scheme == rhs.scheme && lhs.authority == rhs.authority
+            && lhs.path == rhs.path && lhs.connectProtocol == rhs.connectProtocol
+            && lhs.body == rhs.body && lhs.headers.count == rhs.headers.count
+            && zip(lhs.headers, rhs.headers).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
+            && lhs.trailers?.count == rhs.trailers?.count
+            && (lhs.trailers == nil && rhs.trailers == nil
+                || lhs.trailers != nil && rhs.trailers != nil
+                    && zip(lhs.trailers!, rhs.trailers!).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 })
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -536,7 +534,7 @@ extension HTTP3Request: CustomStringConvertible {
 ///     body: Data("Hello, World!".utf8)
 /// )
 /// ```
-public struct HTTP3Response:  ~Copyable, Sendable {
+public struct HTTP3Response: ~Copyable, Sendable {
     /// The HTTP status code (e.g., 200, 404, 500)
     public var status: Int
 
@@ -719,7 +717,9 @@ public struct HTTP3Response:  ~Copyable, Sendable {
     /// - Parameter headers: The decoded header list from QPACK
     /// - Returns: The constructed response (body is empty; fill in from DATA frames)
     /// - Throws: `HTTP3TypeError` if the `:status` pseudo-header is missing or invalid
-    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3Response {
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws
+        -> HTTP3Response
+    {
         var status: Int?
         var regularHeaders: [(String, String)] = []
 
@@ -801,7 +801,9 @@ public struct HTTP3ResponseHead: Sendable {
         return result
     }
 
-    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws -> HTTP3ResponseHead {
+    public static func fromHeaderList(_ headers: [(name: String, value: String)]) throws
+        -> HTTP3ResponseHead
+    {
         var status: Int?
         var regularHeaders: [(String, String)] = []
         for (name, value) in headers {
@@ -860,7 +862,6 @@ public struct HTTP3ResponseHead: Sendable {
 public struct HTTP3BodyWriter: Sendable {
     /// Internal closure that encodes a DATA frame and writes it to the QUIC stream.
     internal let _write: @Sendable (Data) async throws -> Void
-
     /// Writes a chunk of body data as an HTTP/3 DATA frame.
     ///
     /// - Parameter data: The chunk to send. Empty data is a no-op.
@@ -868,6 +869,292 @@ public struct HTTP3BodyWriter: Sendable {
     public func write(_ data: Data) async throws {
         guard !data.isEmpty else { return }
         try await _write(data)
+    }
+
+    public func write(_ bytes: ArraySlice<UInt8>) async throws {
+        guard !bytes.isEmpty else { return }
+        try await _write(Data(bytes))
+    }
+}
+
+public enum HTTP3SessionValue: Sendable, Hashable, Codable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case array([HTTP3SessionValue])
+    case object([String: HTTP3SessionValue])
+    case null
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self = .null
+            return
+        }
+        if let bool = try? container.decode(Bool.self) {
+            self = .bool(bool)
+            return
+        }
+        if let int = try? container.decode(Int.self) {
+            self = .number(Double(int))
+            return
+        }
+        if let double = try? container.decode(Double.self) {
+            self = .number(double)
+            return
+        }
+        if let string = try? container.decode(String.self) {
+            self = .string(string)
+            return
+        }
+        if let array = try? container.decode([HTTP3SessionValue].self) {
+            self = .array(array)
+            return
+        }
+        if let object = try? container.decode([String: HTTP3SessionValue].self) {
+            self = .object(object)
+            return
+        }
+
+        throw DecodingError.dataCorruptedError(
+            in: container,
+            debugDescription: "Unsupported HTTP3SessionValue payload"
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+}
+
+public struct HTTP3SessionEntry: Sendable, Hashable {
+    public let namespace: String
+    public let key: String
+    public let value: HTTP3SessionValue
+
+    public init(namespace: String, key: String, value: HTTP3SessionValue) {
+        self.namespace = namespace
+        self.key = key
+        self.value = value
+    }
+}
+
+public enum HTTP3SessionDecodeError: Error, Sendable {
+    case missingNamespace(String)
+}
+
+actor HTTP3SessionClearState {
+    private var didClear = false
+
+    func run(_ action: @escaping @Sendable () async -> Void) async {
+        guard !didClear else { return }
+        didClear = true
+        await action()
+    }
+}
+
+public struct HTTP3Session: Sendable {
+    private struct TypedPayloadBox: @unchecked Sendable {
+        let value: Any
+
+        init<T: Sendable>(_ value: T) {
+            self.value = value
+        }
+    }
+
+    private let namespaces: [String: [String: HTTP3SessionValue]]
+    private let typedPayloads: [String: TypedPayloadBox]
+    private let clearState: HTTP3SessionClearState?
+    private let clearHandler: (@Sendable () async -> Void)?
+
+    public static let empty = HTTP3Session()
+
+    public init(
+        namespaces: [String: [String: HTTP3SessionValue]] = [:]
+    ) {
+        self.namespaces = namespaces
+        self.typedPayloads = [:]
+        self.clearState = nil
+        self.clearHandler = nil
+    }
+
+    private init(
+        namespaces: [String: [String: HTTP3SessionValue]],
+        typedPayloads: [String: TypedPayloadBox],
+        clearState: HTTP3SessionClearState?,
+        clearHandler: (@Sendable () async -> Void)?
+    ) {
+        self.namespaces = namespaces
+        self.typedPayloads = typedPayloads
+        self.clearState = clearState
+        self.clearHandler = clearHandler
+    }
+
+    public func get(_ key: String, namespace: String) -> HTTP3SessionValue? {
+        namespaces[namespace]?[key]
+    }
+
+    public func get(_ namespace: String) -> [String: HTTP3SessionValue]? {
+        namespaces[namespace]
+    }
+
+    public func get<T: Sendable>(_ namespace: String, as: T.Type) -> T? {
+        typedPayloads[namespace]?.value as? T
+    }
+
+    public func getAll(namespace: String? = nil) -> [HTTP3SessionEntry] {
+        if let namespace {
+            return (namespaces[namespace] ?? [:]).map { HTTP3SessionEntry(namespace: namespace, key: $0.key, value: $0.value) }
+        }
+
+        return namespaces.flatMap { namespace, values in
+            values.map { HTTP3SessionEntry(namespace: namespace, key: $0.key, value: $0.value) }
+        }
+    }
+
+    public func decode<T: Decodable>(
+        _ type: T.Type,
+        namespace: String = "default",
+        decoder: JSONDecoder = JSONDecoder()
+    ) throws -> T {
+        if let cached = typedPayloads[namespace]?.value as? T {
+            return cached
+        }
+
+        guard let payload = namespaces[namespace] else {
+            throw HTTP3SessionDecodeError.missingNamespace(namespace)
+        }
+
+        let data = try JSONEncoder().encode(payload)
+        return try decoder.decode(T.self, from: data)
+    }
+
+    public func setting(
+        _ value: HTTP3SessionValue,
+        forKey key: String,
+        namespace: String = "default"
+    ) -> HTTP3Session {
+        var updatedNamespaces = namespaces
+        var namespaceValues = updatedNamespaces[namespace] ?? [:]
+        namespaceValues[key] = value
+        updatedNamespaces[namespace] = namespaceValues
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads.removeValue(forKey: namespace)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func setting(
+        namespace: String,
+        values: [String: HTTP3SessionValue]
+    ) -> HTTP3Session {
+        var updatedNamespaces = namespaces
+        updatedNamespaces[namespace] = values
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads.removeValue(forKey: namespace)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func setting<T: Encodable & Sendable>(
+        namespace: String,
+        payload: T
+    ) -> HTTP3Session {
+        guard
+            let encodedData = try? JSONEncoder().encode(payload),
+            let encodedValue = try? JSONDecoder().decode(HTTP3SessionValue.self, from: encodedData),
+            case .object(let namespaceValues) = encodedValue
+        else {
+            return self
+        }
+
+        var updatedNamespaces = namespaces
+        updatedNamespaces[namespace] = namespaceValues
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads[namespace] = TypedPayloadBox(payload)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func settingTyped<T: Sendable>(
+        namespace: String,
+        payload: T
+    ) -> HTTP3Session {
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads[namespace] = TypedPayloadBox(payload)
+
+        return HTTP3Session(
+            namespaces: namespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func removing(namespace: String) -> HTTP3Session {
+        var updatedNamespaces = namespaces
+        updatedNamespaces.removeValue(forKey: namespace)
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads.removeValue(forKey: namespace)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func withClearHandler(_ handler: @escaping @Sendable () async -> Void) -> HTTP3Session {
+        let mergedHandler: (@Sendable () async -> Void)
+        if let existing = clearHandler {
+            mergedHandler = {
+                await existing()
+                await handler()
+            }
+        } else {
+            mergedHandler = handler
+        }
+
+        return HTTP3Session(
+            namespaces: namespaces,
+            typedPayloads: typedPayloads,
+            clearState: clearState ?? HTTP3SessionClearState(),
+            clearHandler: mergedHandler
+        )
+    }
+
+    public func clear() async {
+        guard let clearState, let clearHandler else { return }
+        await clearState.run(clearHandler)
     }
 }
 
@@ -882,6 +1169,9 @@ public struct HTTP3RequestContext: Sendable {
 
     /// The QUIC stream ID this request arrived on.
     public let streamID: UInt64
+
+    /// Immutable, extension-filled session snapshot for this request.
+    public let session: HTTP3Session
 
     /// Internal stream backing the request body.
     /// Copyable + Sendable — allows HTTP3RequestContext to flow through AsyncStream.
@@ -906,13 +1196,45 @@ public struct HTTP3RequestContext: Sendable {
         HTTP3Body(stream: _bodyStream)
     }
 
+    /// Whether this request was forwarded by the Alt-Svc gateway.
+    ///
+    /// Returns `true` when the gateway marker header
+    /// `x-quiver-gateway: altsvc` is present.
+    public var isFromAltSvcGateway: Bool {
+        request.headers.contains {
+            $0.0.caseInsensitiveCompare("x-quiver-gateway") == .orderedSame
+                && $0.1.caseInsensitiveCompare("altsvc") == .orderedSame
+        }
+    }
+
+    /// Forwarded protocol reported by an upstream gateway/proxy.
+    ///
+    /// Reads the first `x-forwarded-proto` header value, if present.
+    public var forwardedProto: String? {
+        request.headers.first {
+            $0.0.caseInsensitiveCompare("x-forwarded-proto") == .orderedSame
+        }?.1
+    }
+
+    /// Forwarded host reported by an upstream gateway/proxy.
+    ///
+    /// Reads the first `x-forwarded-host` header value, if present.
+    public var forwardedHost: String? {
+        request.headers.first {
+            $0.0.caseInsensitiveCompare("x-forwarded-host") == .orderedSame
+        }?.1
+    }
+
     /// Closure to send a buffered response (status + headers + Data body + FIN).
-    internal let _respond: @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
+    internal let _respond:
+        @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
 
     /// Closure to send a streaming response (HEADERS, then chunked DATA via writer, then FIN).
-    internal let _respondStreaming: @Sendable (
-        Int, [(String, String)], [(String, String)]?, @Sendable (HTTP3BodyWriter) async throws -> Void
-    ) async throws -> Void
+    internal let _respondStreaming:
+        @Sendable (
+            Int, [(String, String)], [(String, String)]?,
+            @Sendable (HTTP3BodyWriter) async throws -> Void
+        ) async throws -> Void
 
     /// Creates a request context with body stream and response closures.
     ///
@@ -925,14 +1247,20 @@ public struct HTTP3RequestContext: Sendable {
     public init(
         request: HTTP3Request,
         streamID: UInt64,
+        session: HTTP3Session = .empty,
         bodyStream: AsyncStream<Data>,
-        respond: @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void,
-        respondStreaming: @escaping @Sendable (
-            Int, [(String, String)], [(String, String)]?, @Sendable (HTTP3BodyWriter) async throws -> Void
-        ) async throws -> Void
+        respond:
+            @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws ->
+            Void,
+        respondStreaming:
+            @escaping @Sendable (
+                Int, [(String, String)], [(String, String)]?,
+                @Sendable (HTTP3BodyWriter) async throws -> Void
+            ) async throws -> Void
     ) {
         self.request = request
         self.streamID = streamID
+        self.session = session
         self._bodyStream = bodyStream
         self._respond = respond
         self._respondStreaming = respondStreaming
@@ -945,18 +1273,34 @@ public struct HTTP3RequestContext: Sendable {
     public init(
         request: HTTP3Request,
         streamID: UInt64,
-        respond: @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws -> Void
+        session: HTTP3Session = .empty,
+        respond:
+            @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws ->
+            Void
     ) {
         self.request = request
         self.streamID = streamID
+        self.session = session
         self._bodyStream = AsyncStream<Data> { $0.finish() }
         self._respond = respond
         self._respondStreaming = { _, _, _, _ in
             throw HTTP3Error(
                 code: .internalError,
-                reason: "Streaming respond not available (context created without streaming support)"
+                reason:
+                    "Streaming respond not available (context created without streaming support)"
             )
         }
+    }
+
+    public func withSession(_ session: HTTP3Session) -> HTTP3RequestContext {
+        HTTP3RequestContext(
+            request: request,
+            streamID: streamID,
+            session: session,
+            bodyStream: _bodyStream,
+            respond: _respond,
+            respondStreaming: _respondStreaming
+        )
     }
 
     // MARK: - Response Sending
@@ -1063,9 +1407,11 @@ public enum HTTP3TypeError: Error, Sendable, CustomStringConvertible {
         case .pseudoHeaderInTrailers(let name):
             return "Pseudo-header \(name) is not allowed in trailers (RFC 9114 §4.1.2)"
         case .protocolWithNonConnect(let proto):
-            return ":protocol pseudo-header ('\(proto)') is only allowed with :method=CONNECT (RFC 9220 §4)"
+            return
+                ":protocol pseudo-header ('\(proto)') is only allowed with :method=CONNECT (RFC 9220 §4)"
         case .connectWithForbiddenPseudoHeader(let name):
-            return "Regular CONNECT MUST NOT include \(name) (RFC 9114 §4.4). Use Extended CONNECT with :protocol instead."
+            return
+                "Regular CONNECT MUST NOT include \(name) (RFC 9114 §4.4). Use Extended CONNECT with :protocol instead."
         }
     }
 }

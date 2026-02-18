@@ -870,10 +870,10 @@ private func makeServerSession(
         )
         await h3Conn.registerWebTransportSession(session)
 
-        let owns = await h3Conn.ownsStream(4)
+        let owns = await h3Conn.hasSession(4)
         #expect(owns, "Connection should own stream 4 (registered session)")
 
-        let doesNotOwn = await h3Conn.ownsStream(999)
+        let doesNotOwn = await h3Conn.hasSession(999)
         #expect(!doesNotOwn, "Connection should not own stream 999")
 
         mockConn.finish()

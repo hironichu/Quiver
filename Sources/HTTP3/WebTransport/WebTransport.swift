@@ -55,15 +55,16 @@
 /// - [RFC 9220: Bootstrapping WebSockets with HTTP/3](https://www.rfc-editor.org/rfc/rfc9220.html)
 /// - [RFC 9297: HTTP Datagrams and the Capsule Protocol](https://www.rfc-editor.org/rfc/rfc9297.html)
 
-#if canImport(FoundationEssentials)
-import FoundationEssentials
-#else
-import Foundation
-#endif
 import Logging
 import QUIC
 import QUICCore
 import QUICCrypto
+
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
 
 // MARK: - WebTransport Namespace
 
@@ -97,14 +98,16 @@ public enum WebTransport {
         let (scheme, authority, host, port, path) = try parseURL(url)
 
         var quicConfig = options.buildQUICConfiguration()
-
-        // Pass TLS trust source intent to QUIC/TLS layer (resolved there)
         quicConfig.verifyPeer = options.verifyPeer
+
         switch options.caCertificates {
-        case .system:
-            quicConfig.useSystemTrustStore = true
-            quicConfig.userTrustedCACertificatesDER = nil
-            quicConfig.userTrustedCAsPEMPath = nil
+        #if os(macOS) || os(Linux) || os(Windows)
+            case .system:
+                quicConfig.useSystemTrustStore = true
+                quicConfig.userTrustedCACertificatesDER = nil
+                quicConfig.userTrustedCAsPEMPath = nil
+        #endif
+
         case .der(let certs):
             quicConfig.useSystemTrustStore = false
             quicConfig.userTrustedCACertificatesDER = certs
@@ -116,49 +119,54 @@ public enum WebTransport {
         case .pemURL(let url):
             quicConfig.useSystemTrustStore = false
             quicConfig.userTrustedCAsPEMPath = nil
-            
+
             do {
                 let data = try Data(contentsOf: url)
                 if let pemString = String(data: data, encoding: .utf8) {
                     let derCerts = try PEMLoader.parseCertificates(from: pemString)
                     quicConfig.userTrustedCACertificatesDER = derCerts
                 } else {
-                     throw WebTransportError.internalError(
+                    throw WebTransportError.internalError(
                         "PEM data from URL is not valid UTF-8 string",
                         underlying: nil
-                     )
+                    )
                 }
             } catch {
-                 throw WebTransportError.internalError(
+                throw WebTransportError.internalError(
                     "Failed to load/parse PEM certificate from URL: \(url)",
                     underlying: error
-                 )
+                )
             }
         case .pemData(let data):
             quicConfig.useSystemTrustStore = false
             quicConfig.userTrustedCAsPEMPath = nil
-            
+
             if let pemString = String(data: data, encoding: .utf8) {
                 do {
                     // key lines: parse PEM string to [Data] (DER)
                     let derCerts = try PEMLoader.parseCertificates(from: pemString)
                     quicConfig.userTrustedCACertificatesDER = derCerts
                 } catch {
-                     // If parsing fails, we log it (if logger were available in this context easily) or just throw/warn.
-                     // Since this is a config step, throwing might be aggressive if user provided partial data,
-                     // but `PEMLoader` throws on bad format.
-                     // For now, let's propagate the error by throwing it as a WebTransportError.
-                     throw WebTransportError.internalError(
+                    // If parsing fails, we log it (if logger were available in this context easily) or just throw/warn.
+                    // Since this is a config step, throwing might be aggressive if user provided partial data,
+                    // but `PEMLoader` throws on bad format.
+                    // For now, let's propagate the error by throwing it as a WebTransportError.
+                    throw WebTransportError.internalError(
                         "Failed to parse PEM certificate data",
                         underlying: error
-                     )
+                    )
                 }
             } else {
-                 throw WebTransportError.internalError(
+                throw WebTransportError.internalError(
                     "PEM data is not valid UTF-8 string",
                     underlying: nil
-                 )
+                )
             }
+        @unknown default:
+            throw WebTransportError.internalError(
+                "Unsupported certificate source on this platform",
+                underlying: nil
+            )
         }
 
         let h3Settings = options.buildHTTP3Settings()

@@ -44,11 +44,11 @@
 /// concurrently via structured `Task`s.
 
 import Foundation
+import Logging
+import QPACK
 import QUIC
 import QUICCore
 import QUICCrypto
-import QPACK
-import Logging
 
 // MARK: - HTTP/3 Server
 
@@ -141,13 +141,27 @@ public actor HTTP3Server {
     /// to send back a response.
     public typealias RequestHandler = @Sendable (HTTP3RequestContext) async throws -> Void
 
+    /// Optional request-session resolver closure type.
+    ///
+    /// Called before each request handler invocation to produce
+    /// an immutable `HTTP3Session` snapshot attached to the context.
+    public typealias RequestSessionResolver = @Sendable (HTTP3RequestContext) async -> HTTP3Session
+
     /// Extended CONNECT handler closure type (RFC 9220)
     ///
     /// Called for each incoming Extended CONNECT request. The handler
     /// receives an `ExtendedConnectContext` that allows accepting or
     /// rejecting the request. When accepted, the CONNECT stream remains
     /// open for session use (e.g., WebTransport).
-    public typealias ExtendedConnectHandler = @Sendable (ExtendedConnectContext) async throws -> Void
+    public typealias ExtendedConnectHandler =
+        @Sendable (ExtendedConnectContext) async throws -> Void
+
+    /// Optional Extended CONNECT session resolver closure type.
+    ///
+    /// Called before each Extended CONNECT handler invocation to produce
+    /// an immutable `HTTP3Session` snapshot attached to the context.
+    public typealias ExtendedConnectSessionResolver =
+        @Sendable (ExtendedConnectContext) async -> HTTP3Session
 
     /// Server state
     public enum State: Sendable, Hashable, CustomStringConvertible {
@@ -189,6 +203,12 @@ public actor HTTP3Server {
 
     /// The registered Extended CONNECT handler (RFC 9220)
     private var extendedConnectHandler: ExtendedConnectHandler?
+
+    /// Optional resolver for filling request session snapshots.
+    private var requestSessionResolver: RequestSessionResolver?
+
+    /// Optional resolver for filling Extended CONNECT session snapshots.
+    private var extendedConnectSessionResolver: ExtendedConnectSessionResolver?
 
     /// Active HTTP/3 connections managed by this server
     private var connections: [ObjectIdentifier: HTTP3Connection] = [:]
@@ -313,6 +333,17 @@ public actor HTTP3Server {
         self.handler = handler
     }
 
+    /// Registers a request-session resolver.
+    ///
+    /// If registered, the resolver is called before each request handler.
+    /// The returned session snapshot is attached to `context.session`.
+    /// Calling this again replaces the previous resolver.
+    ///
+    /// - Parameter resolver: Closure that returns a session snapshot for each request
+    public func onRequestSession(_ resolver: @escaping RequestSessionResolver) {
+        self.requestSessionResolver = resolver
+    }
+
     /// Registers an Extended CONNECT handler (RFC 9220).
     ///
     /// The handler is called for each incoming Extended CONNECT request
@@ -338,6 +369,17 @@ public actor HTTP3Server {
     /// ```
     public func onExtendedConnect(_ handler: @escaping ExtendedConnectHandler) {
         self.extendedConnectHandler = handler
+    }
+
+    /// Registers an Extended CONNECT session resolver.
+    ///
+    /// If registered, the resolver is called before each Extended CONNECT
+    /// handler. The returned session snapshot is attached to `context.session`.
+    /// Calling this again replaces the previous resolver.
+    ///
+    /// - Parameter resolver: Closure that returns a session snapshot for each CONNECT request
+    public func onExtendedConnectSession(_ resolver: @escaping ExtendedConnectSessionResolver) {
+        self.extendedConnectSessionResolver = resolver
     }
 
     // MARK: - Server Lifecycle
@@ -521,13 +563,20 @@ public actor HTTP3Server {
 
                 // Dispatch to handler in a separate task for concurrency
                 if let handler = self.handler {
+                    let resolvedContext: HTTP3RequestContext
+                    if let requestSessionResolver = self.requestSessionResolver {
+                        resolvedContext = context.withSession(await requestSessionResolver(context))
+                    } else {
+                        resolvedContext = context
+                    }
+
                     let capturedHandler = handler
                     Task {
                         do {
-                            try await capturedHandler(context)
+                            try await capturedHandler(resolvedContext)
                         } catch {
                             // Handler threw an error — send 500 if possible
-                            try? await context.respond(
+                            try? await resolvedContext.respond(
                                 status: 500,
                                 headers: [("content-type", "text/plain")],
                                 Data("Internal Server Error".utf8)
@@ -562,13 +611,20 @@ public actor HTTP3Server {
             totalRequestsHandled += 1
 
             if let extHandler = self.extendedConnectHandler {
+                let resolvedContext: ExtendedConnectContext
+                if let extendedConnectSessionResolver = self.extendedConnectSessionResolver {
+                    resolvedContext = context.withSession(await extendedConnectSessionResolver(context))
+                } else {
+                    resolvedContext = context
+                }
+
                 let capturedHandler = extHandler
                 Task {
                     do {
-                        try await capturedHandler(context)
+                        try await capturedHandler(resolvedContext)
                     } catch {
                         // Handler threw an error — reject with 500 if possible
-                        try? await context.reject(
+                        try? await resolvedContext.reject(
                             status: 500,
                             headers: [("content-type", "text/plain")],
                             // body: Data("Internal Server Error".utf8)
@@ -741,15 +797,43 @@ public actor HTTP3Server {
 
         // Start the Alt-Svc gateway if configured
         if let gatewayConfig = options.buildGatewayConfiguration() {
-            let gw = AltSvcGateway(configuration: gatewayConfig)
+            let currentHandler = self.handler
+            let currentRequestSessionResolver = self.requestSessionResolver
+            if gatewayConfig.httpsBehavior == .serveApplication, currentHandler == nil {
+                throw HTTP3Error(
+                    code: .internalError,
+                    reason: "listenAll() in serveApplication mode requires a request handler. "
+                        + "Call onRequest() before listenAll()."
+                )
+            }
+
+            let gatewayRequestHandler: RequestHandler?
+            if let currentHandler {
+                gatewayRequestHandler = { context in
+                    if let currentRequestSessionResolver {
+                        let resolvedContext = context.withSession(await currentRequestSessionResolver(context))
+                        try await currentHandler(resolvedContext)
+                    } else {
+                        try await currentHandler(context)
+                    }
+                }
+            } else {
+                gatewayRequestHandler = nil
+            }
+
+            let gw = AltSvcGateway(
+                configuration: gatewayConfig,
+                requestHandler: gatewayRequestHandler
+            )
             try await gw.start()
             self.gateway = gw
             Self.logger.info(
-                "Alt-Svc gateway started",
+                "Proxy Gateway started",
                 metadata: [
                     "httpPort": "\(gatewayConfig.httpPort.map(String.init) ?? "disabled")",
                     "httpsPort": "\(gatewayConfig.httpsPort.map(String.init) ?? "disabled")",
                     "h3Port": "\(gatewayConfig.h3Port)",
+                    "httpsBehavior": "\(gatewayConfig.httpsBehavior.rawValue)",
                 ]
             )
         }
@@ -982,13 +1066,13 @@ public actor HTTP3Server {
 ///
 /// ```swift
 /// let router = HTTP3Router()
-/// router.get("/") { context in
+/// router.get("/") { context, _ in
 ///     try await context.respond(
 ///         status: 200,
 ///         Data("Home".utf8)
 ///     )
 /// }
-/// router.post("/api/data") { context in
+/// router.post("/api/data") { context, _ in
 ///     // handle POST
 /// }
 ///
@@ -996,23 +1080,40 @@ public actor HTTP3Server {
 /// ```
 public final class HTTP3Router: Sendable {
 
+    public typealias RouteParams = [String: String]
+    public typealias RouteHandler = @Sendable (HTTP3RequestContext, RouteParams) async throws -> Void
+
+    private enum RouteSegment: Sendable {
+        case literal(String)
+        case parameter(name: String, constraint: ParameterConstraint)
+    }
+
+    private enum ParameterConstraint: Sendable {
+        case any
+        case uuid
+        case exactLength(Int)
+        case lengthRange(Int, Int)
+        case regex(String)
+    }
+
     /// Route entry
     private struct Route: Sendable {
         let method: HTTPMethod?  // nil = any method
         let path: String
-        let handler: HTTP3Server.RequestHandler
+        let segments: [RouteSegment]
+        let handler: RouteHandler
     }
 
     /// Registered routes
     private let routes: LockedBox<[Route]>
 
     /// Handler for unmatched routes (default: 404)
-    private let notFoundHandler: LockedBox<HTTP3Server.RequestHandler>
+    private let notFoundHandler: LockedBox<RouteHandler>
 
     /// Creates a new HTTP/3 router.
     public init() {
         self.routes = LockedBox([])
-        self.notFoundHandler = LockedBox({ context in
+        self.notFoundHandler = LockedBox({ context, _ in
             try await context.respond(
                 status: 404,
                 headers: [("content-type", "text/plain")],
@@ -1025,40 +1126,76 @@ public final class HTTP3Router: Sendable {
     ///
     /// - Parameters:
     ///   - path: The URL path to match
-    ///   - handler: The request handler
-    public func route(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: nil, path: path, handler: handler)) }
+    ///   - handler: The request handler `(context, params)`
+    public func route(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: nil,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a GET route.
-    public func get(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .get, path: path, handler: handler)) }
+    public func get(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .get,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a POST route.
-    public func post(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .post, path: path, handler: handler)) }
+    public func post(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .post,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a PUT route.
-    public func put(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .put, path: path, handler: handler)) }
+    public func put(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .put,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a DELETE route.
-    public func delete(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .delete, path: path, handler: handler)) }
+    public func delete(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .delete,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Registers a PATCH route.
-    public func patch(_ path: String, handler: @escaping HTTP3Server.RequestHandler) {
-        routes.withLock { $0.append(Route(method: .patch, path: path, handler: handler)) }
+    public func patch(_ path: String, handler: @escaping RouteHandler) {
+        let route = Route(
+            method: .patch,
+            path: path,
+            segments: Self.parseRouteSegments(path),
+            handler: handler
+        )
+        routes.withLock { $0.append(route) }
     }
 
     /// Sets the handler for unmatched routes.
     ///
     /// - Parameter handler: The fallback handler (default returns 404)
-    public func setNotFound(_ handler: @escaping HTTP3Server.RequestHandler) {
+    public func setNotFound(_ handler: @escaping RouteHandler) {
         notFoundHandler.withLock { $0 = handler }
     }
 
@@ -1069,25 +1206,154 @@ public final class HTTP3Router: Sendable {
     /// forwarded to the not-found handler.
     public var handler: HTTP3Server.RequestHandler {
         return { [self] context in
-            let matchingRoute = self.routes.withLock { routes -> Route? in
+            let pathSegments = Self.parsePathSegments(context.request.path)
+
+            let matchingRoute = self.routes.withLock {
+                routes -> (route: Route, parameters: [String: String])?
+            in
                 for route in routes {
                     // Check method (nil matches any)
                     if let method = route.method, method != context.request.method {
                         continue
                     }
-                    // Check path (exact match)
-                    if route.path == context.request.path {
-                        return route
+
+                    if let parameters = Self.match(
+                        routeSegments: route.segments,
+                        requestSegments: pathSegments
+                    ) {
+                        return (route, parameters)
                     }
                 }
                 return nil
             }
 
-            if let route = matchingRoute {
-                try await route.handler(context)
+            if let matchingRoute {
+                try await matchingRoute.route.handler(context, matchingRoute.parameters)
             } else {
                 let fallback = self.notFoundHandler.withLock { $0 }
-                try await fallback(context)
+                try await fallback(context, [:])
+            }
+        }
+    }
+
+    private static func parseRouteSegments(_ path: String) -> [RouteSegment] {
+        parsePathSegments(path).map(parseRouteSegment)
+    }
+
+    private static func parsePathSegments(_ path: String) -> [String] {
+        var normalized = path
+        if let queryIndex = normalized.firstIndex(of: "?") {
+            normalized = String(normalized[..<queryIndex])
+        }
+        if let fragmentIndex = normalized.firstIndex(of: "#") {
+            normalized = String(normalized[..<fragmentIndex])
+        }
+
+        let trimmed = normalized.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else { return [] }
+        return trimmed.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+    }
+
+    private static func parseRouteSegment(_ segment: String) -> RouteSegment {
+        guard segment.hasPrefix("{"), segment.hasSuffix("}") else {
+            return .literal(segment)
+        }
+
+        let inner = String(segment.dropFirst().dropLast())
+        guard !inner.isEmpty else {
+            return .literal(segment)
+        }
+
+        let pieces = inner.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = String(pieces[0])
+        guard !name.isEmpty else {
+            return .literal(segment)
+        }
+
+        let constraint: ParameterConstraint
+        if pieces.count == 1 {
+            constraint = .any
+        } else {
+            constraint = parseConstraint(String(pieces[1]))
+        }
+
+        return .parameter(name: name, constraint: constraint)
+    }
+
+    private static func parseConstraint(_ rawConstraint: String) -> ParameterConstraint {
+        let constraint = rawConstraint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = constraint.lowercased()
+
+        if lower == "uuid" {
+            return .uuid
+        }
+
+        if let exact = Int(constraint), exact >= 0 {
+            return .exactLength(exact)
+        }
+
+        if lower.hasPrefix("("), lower.hasSuffix(")") {
+            let rangeBody = String(lower.dropFirst().dropLast())
+            let parts = rangeBody.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: true)
+            if parts.count == 2,
+                let min = Int(parts[0]),
+                let max = Int(parts[1]),
+                min >= 0,
+                max >= min
+            {
+                return .lengthRange(min, max)
+            }
+        }
+
+        return .regex(constraint)
+    }
+
+    private static func match(
+        routeSegments: [RouteSegment],
+        requestSegments: [String]
+    ) -> [String: String]? {
+        guard routeSegments.count == requestSegments.count else {
+            return nil
+        }
+
+        var parameters: [String: String] = [:]
+        parameters.reserveCapacity(routeSegments.count)
+
+        for (routeSegment, requestSegment) in zip(routeSegments, requestSegments) {
+            switch routeSegment {
+            case .literal(let literal):
+                guard literal == requestSegment else {
+                    return nil
+                }
+            case .parameter(let name, let constraint):
+                guard matchesConstraint(constraint, value: requestSegment) else {
+                    return nil
+                }
+                parameters[name] = requestSegment
+            }
+        }
+
+        return parameters
+    }
+
+    private static func matchesConstraint(_ constraint: ParameterConstraint, value: String) -> Bool {
+        switch constraint {
+        case .any:
+            return true
+        case .uuid:
+            return UUID(uuidString: value) != nil
+        case .exactLength(let expected):
+            return value.count == expected
+        case .lengthRange(let min, let max):
+            let length = value.count
+            return length >= min && length <= max
+        case .regex(let pattern):
+            do {
+                let expression = try NSRegularExpression(pattern: "^\(pattern)$")
+                let range = NSRange(location: 0, length: value.utf16.count)
+                return expression.firstMatch(in: value, options: [], range: range) != nil
+            } catch {
+                return false
             }
         }
     }

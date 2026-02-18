@@ -328,7 +328,7 @@ public actor WebTransportSession {
     /// begins reading capsules from the CONNECT stream in the background.
     ///
     /// - Throws: `WebTransportError` if the session is in an invalid state
-    public func start() throws {
+    package func start() throws {
         guard state == .connecting else {
             throw WebTransportError.internalError(
                 "Cannot start session in state \(state)",
@@ -607,10 +607,7 @@ public actor WebTransportSession {
         }
 
         // Construct the datagram payload: quarter stream ID + data
-        var payload = Data()
-        Varint(quarterStreamID).encode(to: &payload)
-        payload.append(data)
-
+        let payload = Self.frameDatagram(payload: data, quarterStreamID: quarterStreamID)
         // Send via the QUIC connection's datagram API (RFC 9221)
         do {
             try await connection.quicConnection.sendDatagram(payload, strategy: strategy)
@@ -640,7 +637,7 @@ public actor WebTransportSession {
     /// stripped — `data` is the application payload only.
     ///
     /// - Parameter data: The application datagram payload (without quarter stream ID prefix)
-    public func deliverDatagram(_ data: Data) {
+    package func deliverDatagram(_ data: Data) {
         guard state == .established || state == .draining else {
             return
         }
@@ -659,7 +656,7 @@ public actor WebTransportSession {
     /// - Parameters:
     ///   - quicStream: The underlying QUIC stream
     ///   - initialData: Any data already read after the session ID varint
-    public func deliverIncomingBidirectionalStream(
+    package func deliverIncomingBidirectionalStream(
         _ quicStream: any QUICStreamProtocol,
         initialData: Data = Data()
     ) {
@@ -712,7 +709,7 @@ public actor WebTransportSession {
     /// - Parameters:
     ///   - quicStream: The underlying QUIC stream
     ///   - initialData: Any data already read after the session ID varint
-    public func deliverIncomingUnidirectionalStream(
+    package func deliverIncomingUnidirectionalStream(
         _ quicStream: any QUICStreamProtocol,
         initialData: Data = Data()
     ) {
@@ -914,7 +911,7 @@ public actor WebTransportSession {
     ///
     /// Capsules are framed messages on the CONNECT stream's data portion.
     /// This loop accumulates data and decodes capsules incrementally.
-    private func readCapsuleLoop() async {
+    package func readCapsuleLoop() async {
         Self.logger.trace(
             "Capsule reader started",
             metadata: ["sessionID": "\(sessionID)"]
