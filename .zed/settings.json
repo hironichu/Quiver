@@ -1,0 +1,8 @@
+{
+  "languages": {
+    "Swift": {
+      "show_edit_predictions": false,
+      "format_on_save": "off"
+    }
+  }
+}
