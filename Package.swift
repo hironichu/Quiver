@@ -34,6 +34,11 @@ let package = Package(
             name: "HTTP3",
             targets: ["HTTP3"]
         ),
+        // Auth extensions for HTTP/3 / Extended CONNECT
+        .library(
+            name: "QuiverAuth",
+            targets: ["QuiverAuth"]
+        ),
         // Media Over QUIC (MOQ)
         .library(
             name: "MOQCore",
@@ -72,6 +77,11 @@ let package = Package(
             name: "AltSvcDemo",
             targets: ["AltSvcDemo"]
         ),
+        // Example: Minimal HTTP/3 Auth Demo (request + Extended CONNECT)
+        .executable(
+            name: "HTTP3AuthDemo",
+            targets: ["HTTP3AuthDemo"]
+        ),
     ],
     dependencies: [
         // NIO (used by NIOUDPTransport and other targets)
@@ -89,6 +99,9 @@ let package = Package(
 
         // Logging
         .package(url: "https://github.com/apple/swift-log.git", from: "1.9.1"),
+
+        // JWT / JWK verification (cross-platform, maintained)
+        .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.3.0"),
 
         // Documentation
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
@@ -223,6 +236,18 @@ let package = Package(
             path: "Sources/HTTP3"
         ),
 
+        .target(
+            name: "QuiverAuth",
+            dependencies: [
+                "HTTP3",
+                "QUIC",
+                "QUICCore",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "JWTKit", package: "jwt-kit"),
+            ],
+            path: "Sources/QuiverAuth"
+        ),
+
         // MARK: - MOQ Core
 
         .target(
@@ -352,6 +377,15 @@ let package = Package(
             path: "Tests/WebTransportTests"
         ),
 
+        .testTarget(
+            name: "QuiverAuthTests",
+            dependencies: [
+                "QuiverAuth",
+                "HTTP3",
+            ],
+            path: "Tests/QuiverAuthTests"
+        ),
+
         // MARK: - Benchmarks (run separately with: swift test --filter QUICBenchmarks)
 
         .testTarget(
@@ -430,6 +464,18 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/AltSvcDemo"
+        ),
+        .executableTarget(
+            name: "HTTP3AuthDemo",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "HTTP3",
+                "QuiverAuth",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/HTTP3AuthDemo"
         ),
     ]
 )

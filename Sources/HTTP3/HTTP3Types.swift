@@ -877,6 +877,287 @@ public struct HTTP3BodyWriter: Sendable {
     }
 }
 
+public enum HTTP3SessionValue: Sendable, Hashable, Codable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case array([HTTP3SessionValue])
+    case object([String: HTTP3SessionValue])
+    case null
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self = .null
+            return
+        }
+        if let bool = try? container.decode(Bool.self) {
+            self = .bool(bool)
+            return
+        }
+        if let int = try? container.decode(Int.self) {
+            self = .number(Double(int))
+            return
+        }
+        if let double = try? container.decode(Double.self) {
+            self = .number(double)
+            return
+        }
+        if let string = try? container.decode(String.self) {
+            self = .string(string)
+            return
+        }
+        if let array = try? container.decode([HTTP3SessionValue].self) {
+            self = .array(array)
+            return
+        }
+        if let object = try? container.decode([String: HTTP3SessionValue].self) {
+            self = .object(object)
+            return
+        }
+
+        throw DecodingError.dataCorruptedError(
+            in: container,
+            debugDescription: "Unsupported HTTP3SessionValue payload"
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+}
+
+public struct HTTP3SessionEntry: Sendable, Hashable {
+    public let namespace: String
+    public let key: String
+    public let value: HTTP3SessionValue
+
+    public init(namespace: String, key: String, value: HTTP3SessionValue) {
+        self.namespace = namespace
+        self.key = key
+        self.value = value
+    }
+}
+
+public enum HTTP3SessionDecodeError: Error, Sendable {
+    case missingNamespace(String)
+}
+
+actor HTTP3SessionClearState {
+    private var didClear = false
+
+    func run(_ action: @escaping @Sendable () async -> Void) async {
+        guard !didClear else { return }
+        didClear = true
+        await action()
+    }
+}
+
+public struct HTTP3Session: Sendable {
+    private struct TypedPayloadBox: @unchecked Sendable {
+        let value: Any
+
+        init<T: Sendable>(_ value: T) {
+            self.value = value
+        }
+    }
+
+    private let namespaces: [String: [String: HTTP3SessionValue]]
+    private let typedPayloads: [String: TypedPayloadBox]
+    private let clearState: HTTP3SessionClearState?
+    private let clearHandler: (@Sendable () async -> Void)?
+
+    public static let empty = HTTP3Session()
+
+    public init(
+        namespaces: [String: [String: HTTP3SessionValue]] = [:]
+    ) {
+        self.namespaces = namespaces
+        self.typedPayloads = [:]
+        self.clearState = nil
+        self.clearHandler = nil
+    }
+
+    private init(
+        namespaces: [String: [String: HTTP3SessionValue]],
+        typedPayloads: [String: TypedPayloadBox],
+        clearState: HTTP3SessionClearState?,
+        clearHandler: (@Sendable () async -> Void)?
+    ) {
+        self.namespaces = namespaces
+        self.typedPayloads = typedPayloads
+        self.clearState = clearState
+        self.clearHandler = clearHandler
+    }
+
+    public func get(_ key: String, namespace: String) -> HTTP3SessionValue? {
+        namespaces[namespace]?[key]
+    }
+
+    public func get(_ namespace: String) -> [String: HTTP3SessionValue]? {
+        namespaces[namespace]
+    }
+
+    public func get<T: Sendable>(_ namespace: String, as: T.Type) -> T? {
+        typedPayloads[namespace]?.value as? T
+    }
+
+    public func getAll(namespace: String? = nil) -> [HTTP3SessionEntry] {
+        if let namespace {
+            return (namespaces[namespace] ?? [:]).map { HTTP3SessionEntry(namespace: namespace, key: $0.key, value: $0.value) }
+        }
+
+        return namespaces.flatMap { namespace, values in
+            values.map { HTTP3SessionEntry(namespace: namespace, key: $0.key, value: $0.value) }
+        }
+    }
+
+    public func decode<T: Decodable>(
+        _ type: T.Type,
+        namespace: String = "default",
+        decoder: JSONDecoder = JSONDecoder()
+    ) throws -> T {
+        if let cached = typedPayloads[namespace]?.value as? T {
+            return cached
+        }
+
+        guard let payload = namespaces[namespace] else {
+            throw HTTP3SessionDecodeError.missingNamespace(namespace)
+        }
+
+        let data = try JSONEncoder().encode(payload)
+        return try decoder.decode(T.self, from: data)
+    }
+
+    public func setting(
+        _ value: HTTP3SessionValue,
+        forKey key: String,
+        namespace: String = "default"
+    ) -> HTTP3Session {
+        var updatedNamespaces = namespaces
+        var namespaceValues = updatedNamespaces[namespace] ?? [:]
+        namespaceValues[key] = value
+        updatedNamespaces[namespace] = namespaceValues
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads.removeValue(forKey: namespace)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func setting(
+        namespace: String,
+        values: [String: HTTP3SessionValue]
+    ) -> HTTP3Session {
+        var updatedNamespaces = namespaces
+        updatedNamespaces[namespace] = values
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads.removeValue(forKey: namespace)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func setting<T: Encodable & Sendable>(
+        namespace: String,
+        payload: T
+    ) -> HTTP3Session {
+        guard
+            let encodedData = try? JSONEncoder().encode(payload),
+            let encodedValue = try? JSONDecoder().decode(HTTP3SessionValue.self, from: encodedData),
+            case .object(let namespaceValues) = encodedValue
+        else {
+            return self
+        }
+
+        var updatedNamespaces = namespaces
+        updatedNamespaces[namespace] = namespaceValues
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads[namespace] = TypedPayloadBox(payload)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func settingTyped<T: Sendable>(
+        namespace: String,
+        payload: T
+    ) -> HTTP3Session {
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads[namespace] = TypedPayloadBox(payload)
+
+        return HTTP3Session(
+            namespaces: namespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func removing(namespace: String) -> HTTP3Session {
+        var updatedNamespaces = namespaces
+        updatedNamespaces.removeValue(forKey: namespace)
+
+        var updatedTypedPayloads = typedPayloads
+        updatedTypedPayloads.removeValue(forKey: namespace)
+
+        return HTTP3Session(
+            namespaces: updatedNamespaces,
+            typedPayloads: updatedTypedPayloads,
+            clearState: clearState,
+            clearHandler: clearHandler
+        )
+    }
+
+    public func withClearHandler(_ handler: @escaping @Sendable () async -> Void) -> HTTP3Session {
+        let mergedHandler: (@Sendable () async -> Void)
+        if let existing = clearHandler {
+            mergedHandler = {
+                await existing()
+                await handler()
+            }
+        } else {
+            mergedHandler = handler
+        }
+
+        return HTTP3Session(
+            namespaces: namespaces,
+            typedPayloads: typedPayloads,
+            clearState: clearState ?? HTTP3SessionClearState(),
+            clearHandler: mergedHandler
+        )
+    }
+
+    public func clear() async {
+        guard let clearState, let clearHandler else { return }
+        await clearState.run(clearHandler)
+    }
+}
+
 // MARK: - Request Context
 
 public struct HTTP3RequestContext: Sendable {
@@ -888,6 +1169,9 @@ public struct HTTP3RequestContext: Sendable {
 
     /// The QUIC stream ID this request arrived on.
     public let streamID: UInt64
+
+    /// Immutable, extension-filled session snapshot for this request.
+    public let session: HTTP3Session
 
     /// Internal stream backing the request body.
     /// Copyable + Sendable — allows HTTP3RequestContext to flow through AsyncStream.
@@ -963,6 +1247,7 @@ public struct HTTP3RequestContext: Sendable {
     public init(
         request: HTTP3Request,
         streamID: UInt64,
+        session: HTTP3Session = .empty,
         bodyStream: AsyncStream<Data>,
         respond:
             @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws ->
@@ -975,6 +1260,7 @@ public struct HTTP3RequestContext: Sendable {
     ) {
         self.request = request
         self.streamID = streamID
+        self.session = session
         self._bodyStream = bodyStream
         self._respond = respond
         self._respondStreaming = respondStreaming
@@ -987,12 +1273,14 @@ public struct HTTP3RequestContext: Sendable {
     public init(
         request: HTTP3Request,
         streamID: UInt64,
+        session: HTTP3Session = .empty,
         respond:
             @escaping @Sendable (Int, [(String, String)], Data, [(String, String)]?) async throws ->
             Void
     ) {
         self.request = request
         self.streamID = streamID
+        self.session = session
         self._bodyStream = AsyncStream<Data> { $0.finish() }
         self._respond = respond
         self._respondStreaming = { _, _, _, _ in
@@ -1002,6 +1290,17 @@ public struct HTTP3RequestContext: Sendable {
                     "Streaming respond not available (context created without streaming support)"
             )
         }
+    }
+
+    public func withSession(_ session: HTTP3Session) -> HTTP3RequestContext {
+        HTTP3RequestContext(
+            request: request,
+            streamID: streamID,
+            session: session,
+            bodyStream: _bodyStream,
+            respond: _respond,
+            respondStreaming: _respondStreaming
+        )
     }
 
     // MARK: - Response Sending
