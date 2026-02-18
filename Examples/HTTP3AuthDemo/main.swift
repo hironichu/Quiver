@@ -98,6 +98,14 @@ struct APIResponse: Encodable {
     let data: [String: String]
 }
 
+struct APIDebugResponse: Encodable {
+    let ok: Bool
+    let message: String
+    let tokenClaims: [String: HTTP3SessionValue]
+    let userInfoClaims: [String: HTTP3SessionValue]
+    let mergedClaims: [String: HTTP3SessionValue]
+}
+
 struct AuthSession: Codable, Sendable {
     let subject: String?
     let source: String?
@@ -105,6 +113,7 @@ struct AuthSession: Codable, Sendable {
     let sub: String?
     let iss: String?
     let aud: String?
+    let prefered_username: String?
 
     enum CodingKeys: String, CodingKey {
         case subject
@@ -113,6 +122,7 @@ struct AuthSession: Codable, Sendable {
         case sub
         case iss
         case aud
+        case prefered_username
     }
 
     init(
@@ -121,7 +131,8 @@ struct AuthSession: Codable, Sendable {
         email: String?,
         sub: String?,
         iss: String?,
-        aud: String?
+        aud: String?,
+        prefered_username: String? = nil
     ) {
         self.subject = subject
         self.source = source
@@ -129,6 +140,7 @@ struct AuthSession: Codable, Sendable {
         self.sub = sub
         self.iss = iss
         self.aud = aud
+        self.prefered_username = prefered_username
     }
 
     init(from decoder: any Decoder) throws {
@@ -138,7 +150,7 @@ struct AuthSession: Codable, Sendable {
         email = try container.decodeIfPresent(String.self, forKey: .email)
         sub = try container.decodeIfPresent(String.self, forKey: .sub)
         iss = try container.decodeIfPresent(String.self, forKey: .iss)
-
+        prefered_username = try container.decodeIfPresent(String.self, forKey: .prefered_username)
         if let singleAud = try? container.decode(String.self, forKey: .aud) {
             aud = singleAud
         } else if let audArray = try? container.decode([String].self, forKey: .aud) {
@@ -208,15 +220,7 @@ struct HTTP3AuthDemo {
                 )
                 return
             }
-           if let auth = context.session.get("auth"),
-            let value = auth["mom"] {
-                switch value {
-                case .string(let v): print(v)
-                case .array(let a): print(a)
-                case .object(let o): print(o)
-                default: break
-                }
-            }
+
             let claims: [String: String] = [
                 "subject": session.subject ?? "",
                 "source": session.source ?? "",
@@ -224,11 +228,57 @@ struct HTTP3AuthDemo {
                 "sub": session.sub ?? "",
                 "iss": session.iss ?? "",
                 "aud": session.aud ?? "",
+                "prefered_username": session.prefered_username ?? "",
             ]
 
             try await context.respondJSON(
                 status: 200,
                 APIResponse(ok: true, message: "auth session", data: claims.filter { !$0.value.isEmpty })
+            )
+        }
+
+        router.get("/me-debug") { context, _ in
+            guard let authNamespace = context.session.get("auth") else {
+                try await context.respondJSON(
+                    status: 500,
+                    APIDebugResponse(
+                        ok: false,
+                        message: "auth session not available",
+                        tokenClaims: [:],
+                        userInfoClaims: [:],
+                        mergedClaims: [:]
+                    )
+                )
+                return
+            }
+
+            let tokenClaims: [String: HTTP3SessionValue]
+            if case .object(let value)? = authNamespace["_token_claims"] {
+                tokenClaims = value
+            } else {
+                tokenClaims = [:]
+            }
+
+            let userInfoClaims: [String: HTTP3SessionValue]
+            if case .object(let value)? = authNamespace["_userinfo_claims"] {
+                userInfoClaims = value
+            } else {
+                userInfoClaims = [:]
+            }
+
+            let mergedClaims = authNamespace.filter { entry in
+                entry.key != "_token_claims" && entry.key != "_userinfo_claims"
+            }
+
+            try await context.respondJSON(
+                status: 200,
+                APIDebugResponse(
+                    ok: true,
+                    message: "auth debug",
+                    tokenClaims: tokenClaims,
+                    userInfoClaims: userInfoClaims,
+                    mergedClaims: mergedClaims
+                )
             )
         }
 
@@ -241,7 +291,7 @@ struct HTTP3AuthDemo {
         print("HTTP3AuthDemo listening")
         print("- H3: \(args.host):\(args.h3Port)")
         print("- Gateway HTTPS: \(args.httpsPort.map(String.init) ?? "disabled")")
-        print("- Routes: GET /health (public), GET /private (protected), GET /me (protected)")
+        print("- Routes: GET /health (public), GET /private (protected), GET /me (protected), GET /me-debug (protected)")
 
         if let issuer = args.oidcIssuer {
             print("- OIDC issuer: \(issuer)")

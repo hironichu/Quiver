@@ -150,6 +150,7 @@ public struct OIDCLoginConfiguration: Sendable {
     public var sessionCookieHTTPOnly: Bool
     public var sessionCookieSameSite: String
     public var sessionCookiePath: String
+    public var serverSession: OIDCServerSessionConfiguration
     public var browserOnly: Bool
 
     public init(
@@ -174,6 +175,7 @@ public struct OIDCLoginConfiguration: Sendable {
         sessionCookieHTTPOnly: Bool = true,
         sessionCookieSameSite: String = "Lax",
         sessionCookiePath: String = "/",
+        serverSession: OIDCServerSessionConfiguration = OIDCServerSessionConfiguration(),
         browserOnly: Bool = true
     ) {
         self.enabled = enabled
@@ -197,7 +199,39 @@ public struct OIDCLoginConfiguration: Sendable {
         self.sessionCookieHTTPOnly = sessionCookieHTTPOnly
         self.sessionCookieSameSite = sessionCookieSameSite
         self.sessionCookiePath = sessionCookiePath
+        self.serverSession = serverSession
         self.browserOnly = browserOnly
+    }
+}
+
+public struct OIDCServerSessionConfiguration: Sendable {
+    public var enabled: Bool
+    public var refreshLeewaySeconds: Int
+    public var cookieMaxAgeSeconds: Int?
+    public var allowLegacyTokenCookieFallback: Bool
+    public var liveUserInfoEnabled: Bool
+    public var userInfoEndpoint: String?
+    public var userInfoCacheTTLSeconds: Int
+    public var failOpenOnUserInfoError: Bool
+
+    public init(
+        enabled: Bool = true,
+        refreshLeewaySeconds: Int = 60,
+        cookieMaxAgeSeconds: Int? = 604800,
+        allowLegacyTokenCookieFallback: Bool = true,
+        liveUserInfoEnabled: Bool = true,
+        userInfoEndpoint: String? = nil,
+        userInfoCacheTTLSeconds: Int = 300,
+        failOpenOnUserInfoError: Bool = true
+    ) {
+        self.enabled = enabled
+        self.refreshLeewaySeconds = refreshLeewaySeconds
+        self.cookieMaxAgeSeconds = cookieMaxAgeSeconds
+        self.allowLegacyTokenCookieFallback = allowLegacyTokenCookieFallback
+        self.liveUserInfoEnabled = liveUserInfoEnabled
+        self.userInfoEndpoint = userInfoEndpoint
+        self.userInfoCacheTTLSeconds = userInfoCacheTTLSeconds
+        self.failOpenOnUserInfoError = failOpenOnUserInfoError
     }
 }
 

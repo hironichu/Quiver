@@ -20,11 +20,13 @@ func oidcDiscoveryURLFromIssuer(_ issuer: String) -> String? {
 private struct OIDCDiscoveryDocument: Decodable {
     let authorization_endpoint: String
     let token_endpoint: String?
+    let userinfo_endpoint: String?
 }
 
 struct OIDCDiscoveryMetadata: Sendable {
     let authorizationEndpoint: String
     let tokenEndpoint: String?
+    let userInfoEndpoint: String?
 }
 
 actor OIDCDiscoveryCache {
@@ -47,7 +49,8 @@ actor OIDCDiscoveryCache {
         let document = try JSONDecoder().decode(OIDCDiscoveryDocument.self, from: data)
         let metadata = OIDCDiscoveryMetadata(
             authorizationEndpoint: document.authorization_endpoint,
-            tokenEndpoint: document.token_endpoint
+            tokenEndpoint: document.token_endpoint,
+            userInfoEndpoint: document.userinfo_endpoint
         )
         let expiresAt = Date().addingTimeInterval(TimeInterval(max(1, ttlSeconds)))
         entries[key] = CacheEntry(expiresAt: expiresAt, metadata: metadata)
@@ -183,7 +186,8 @@ struct OIDCLoginRedirectBuilder: Sendable {
         if let explicitAuthorization = configuration.authorizationEndpoint, !explicitAuthorization.isEmpty {
             return OIDCDiscoveryMetadata(
                 authorizationEndpoint: explicitAuthorization,
-                tokenEndpoint: configuration.tokenEndpoint
+                tokenEndpoint: configuration.tokenEndpoint,
+                userInfoEndpoint: nil
             )
         }
 
@@ -327,17 +331,42 @@ struct OIDCLoginCallbackHandler: Sendable {
                 return callbackFailureResponse(reason: "nonce_mismatch", request: request)
             }
 
-            guard let sessionToken = tokenResponse.idToken ?? tokenResponse.accessToken, !sessionToken.isEmpty else {
-                oidcLogger.debug("oidc callback missing session token from token response")
-                return callbackFailureResponse(reason: "missing_session_token", request: request)
+            let cookieValue: String
+            if configuration.serverSession.enabled {
+                let tokenSet = OIDCTokenSet(
+                    accessToken: tokenResponse.accessToken,
+                    idToken: tokenResponse.idToken,
+                    refreshToken: tokenResponse.refreshToken,
+                    tokenType: tokenResponse.tokenType,
+                    scope: tokenResponse.scope,
+                    expiresAt: tokenResponse.expiresIn.map { Date().addingTimeInterval(TimeInterval(max(1, $0))) }
+                )
+
+                guard tokenSet.validationToken() != nil else {
+                    oidcLogger.debug("oidc callback missing session token from token response")
+                    return callbackFailureResponse(reason: "missing_session_token", request: request)
+                }
+
+                let serverSession = await OIDCServerSessionStore.shared.create(tokenSet: tokenSet)
+                cookieValue = serverSession.sessionID
+            } else {
+                guard let sessionToken = tokenResponse.idToken ?? tokenResponse.accessToken, !sessionToken.isEmpty else {
+                    oidcLogger.debug("oidc callback missing session token from token response")
+                    return callbackFailureResponse(reason: "missing_session_token", request: request)
+                }
+                cookieValue = sessionToken
             }
 
-            let cookie = sessionCookieHeader(token: sessionToken)
+            let cookie = sessionCookieHeader(
+                token: cookieValue,
+                maxAgeSeconds: configuration.serverSession.cookieMaxAgeSeconds
+            )
             oidcLogger.debug(
                 "oidc callback success, issuing session cookie",
                 metadata: [
                     "cookieName": "\(configuration.sessionCookieName)",
                     "successPath": "\(normalizedPath(configuration.callbackSuccessPath))",
+                    "serverSession": "\(configuration.serverSession.enabled)",
                 ]
             )
             return OIDCLoginCallbackHTTPResponse(
@@ -362,7 +391,8 @@ struct OIDCLoginCallbackHandler: Sendable {
         if let explicitAuthorization = configuration.authorizationEndpoint, !explicitAuthorization.isEmpty {
             return OIDCDiscoveryMetadata(
                 authorizationEndpoint: explicitAuthorization,
-                tokenEndpoint: configuration.tokenEndpoint
+                tokenEndpoint: configuration.tokenEndpoint,
+                userInfoEndpoint: nil
             )
         }
 
@@ -605,9 +635,12 @@ struct OIDCLoginCallbackHandler: Sendable {
         }
     }
 
-    private func sessionCookieHeader(token: String) -> String {
+    private func sessionCookieHeader(token: String, maxAgeSeconds: Int?) -> String {
         var parts = ["\(configuration.sessionCookieName)=\(token)"]
         parts.append("Path=\(configuration.sessionCookiePath)")
+        if let maxAgeSeconds, maxAgeSeconds > 0 {
+            parts.append("Max-Age=\(maxAgeSeconds)")
+        }
         if configuration.sessionCookieSecure { parts.append("Secure") }
         if configuration.sessionCookieHTTPOnly { parts.append("HttpOnly") }
         parts.append("SameSite=\(configuration.sessionCookieSameSite)")
@@ -652,13 +685,21 @@ struct OIDCLoginCallbackHandler: Sendable {
     }
 }
 
-private struct OIDCTokenResponse: Decodable {
+struct OIDCTokenResponse: Decodable {
     let accessToken: String?
     let idToken: String?
+    let refreshToken: String?
+    let tokenType: String?
+    let scope: String?
+    let expiresIn: Int?
 
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
         case idToken = "id_token"
+        case refreshToken = "refresh_token"
+        case tokenType = "token_type"
+        case scope
+        case expiresIn = "expires_in"
     }
 }
 

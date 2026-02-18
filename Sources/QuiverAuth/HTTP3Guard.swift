@@ -179,6 +179,11 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
                         "reason": "\(reason)",
                     ]
                 )
+                let policyHeaders = policy.denyResponseHeaders(
+                    for: context.request,
+                    status: status,
+                    reason: reason
+                )
                 if status == 401,
                     let loginURL = await policy.loginRedirectURL(for: context.request)
                 {
@@ -189,12 +194,13 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
                             "redirectHost": "\(loginURL.host ?? "unknown")",
                         ]
                     )
+                    let headers = policyHeaders + [
+                        ("location", loginURL.absoluteString),
+                        ("cache-control", "no-store"),
+                    ]
                     try await context.respond(
                         status: 302,
-                        headers: [
-                            ("location", loginURL.absoluteString),
-                            ("cache-control", "no-store"),
-                        ],
+                        headers: headers,
                         Data()
                     )
                     return
@@ -205,12 +211,13 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
                         "sending html deny response",
                         metadata: ["path": "\(context.request.path)"]
                     )
+                    let headers = policyHeaders + [
+                        ("content-type", "text/html; charset=utf-8"),
+                        ("cache-control", "no-store"),
+                    ]
                     try await context.respond(
                         status: status,
-                        headers: [
-                            ("content-type", "text/html; charset=utf-8"),
-                            ("cache-control", "no-store"),
-                        ],
+                        headers: headers,
                         Data(htmlErrorPage(status: status, reason: reason, retryURL: policy.uiRetryURL()).utf8)
                     )
                     return
@@ -220,12 +227,13 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
                     "sending json deny response",
                     metadata: ["path": "\(context.request.path)"]
                 )
+                let headers = policyHeaders + [
+                    ("content-type", "application/json"),
+                    ("cache-control", "no-store"),
+                ]
                 try await context.respond(
                     status: status,
-                    headers: [
-                        ("content-type", "application/json"),
-                        ("cache-control", "no-store"),
-                    ],
+                    headers: headers,
                     Data("{\"error\":\"unauthorized\",\"reason\":\"\(reason)\"}".utf8)
                 )
             }

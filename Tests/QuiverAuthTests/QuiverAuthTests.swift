@@ -5,6 +5,16 @@ import Crypto
 @testable import QuiverAuth
 
 struct QuiverAuthTests {
+    actor ResponseCapture {
+        private(set) var status: Int?
+        private(set) var headers: [(String, String)] = []
+
+        func set(status: Int, headers: [(String, String)]) {
+            self.status = status
+            self.headers = headers
+        }
+    }
+
     private func requestContext(_ request: HTTP3Request) -> HTTP3RequestContext {
         HTTP3RequestContext(
             request: request,
@@ -514,5 +524,198 @@ struct QuiverAuthTests {
         #expect(queryValue("nonce", in: redirect) != nil)
         #expect(queryValue("code_challenge", in: redirect) != nil)
         #expect(queryValue("code_challenge_method", in: redirect) == "S256")
+    }
+
+    @Test
+    func oidcServerSessionCookieAuthenticatesUsingStoredTokenSet() async {
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            sessionCookieNames: ["z-token"],
+            oidc: OIDCConfiguration(
+                issuer: "https://id.wuse.io",
+                audience: "dbg.wuse.io",
+                allowUnverifiedSignature: true,
+                login: OIDCLoginConfiguration(
+                    serverSession: OIDCServerSessionConfiguration(enabled: true)
+                )
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let exp = Int(Date().timeIntervalSince1970) + 300
+        let payload = #"{"sub":"sid-user","iss":"https://id.wuse.io","aud":"dbg.wuse.io","exp":"# + String(exp) + #"}"#
+        let jwt = testJWT(payload: payload)
+        let record = await OIDCServerSessionStore.shared.create(
+            tokenSet: OIDCTokenSet(
+                accessToken: nil,
+                idToken: jwt,
+                refreshToken: nil,
+                tokenType: "Bearer",
+                scope: "openid",
+                expiresAt: Date().addingTimeInterval(300)
+            )
+        )
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("cookie", "z-token=\(record.sessionID)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: true)
+        switch decision {
+        case .allow(let principal):
+            #expect(principal.source == "oidc")
+            #expect(principal.subject == "sid-user")
+        case .deny(let status, let reason):
+            Issue.record("Expected server session cookie to authorize in oidc mode. status=\(status) reason=\(reason)")
+        }
+
+        await OIDCServerSessionStore.shared.delete(sessionID: record.sessionID)
+    }
+
+    @Test
+    func oidcServerSessionRejectsUnknownSessionID() async {
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            sessionCookieNames: ["z-token"],
+            oidc: OIDCConfiguration(
+                allowUnverifiedSignature: true,
+                login: OIDCLoginConfiguration(
+                    serverSession: OIDCServerSessionConfiguration(enabled: true)
+                )
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("cookie", "z-token=missing-session-id")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: true)
+        switch decision {
+        case .allow:
+            Issue.record("Expected unknown session id to be denied")
+        case .deny(let status, let reason):
+            #expect(status == 401)
+            #expect(reason.contains("invalid session"))
+        }
+    }
+
+    @Test
+    func guardClearsServerSessionCookieOnInvalidSessionDeny() async throws {
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            sessionCookieNames: ["z-token"],
+            oidc: OIDCConfiguration(
+                login: OIDCLoginConfiguration(
+                    enabled: false,
+                    serverSession: OIDCServerSessionConfiguration(enabled: true)
+                )
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+        let guardMiddleware: HTTP3AuthGuard<QuiverAuthSession> = HTTP3AuthGuard(policy: policy)
+
+        let protected = guardMiddleware.protect({ _ in
+            Issue.record("Expected request to be denied before protected handler")
+        })
+
+        let capture = ResponseCapture()
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [
+                ("accept", "application/json"),
+                ("cookie", "z-token=missing-session-id"),
+            ]
+        )
+        let context = HTTP3RequestContext(
+            request: request,
+            streamID: 1,
+            respond: { status, headers, _, _ in
+                await capture.set(status: status, headers: headers)
+            }
+        )
+
+        try await protected(context)
+
+        let status = await capture.status
+        let headers = await capture.headers
+
+        #expect(status == 401)
+        let setCookieHeader = headers.first { $0.0.caseInsensitiveCompare("set-cookie") == .orderedSame }?.1
+        #expect(setCookieHeader != nil)
+        #expect(setCookieHeader?.contains("z-token=") == true)
+        #expect(setCookieHeader?.contains("Max-Age=0") == true)
+    }
+
+    @Test
+    func oidcServerSessionMergesCachedUserInfoClaimsWithPrecedence() async {
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            sessionCookieNames: ["z-token"],
+            oidc: OIDCConfiguration(
+                issuer: "https://id.wuse.io",
+                audience: "dbg.wuse.io",
+                allowUnverifiedSignature: true,
+                login: OIDCLoginConfiguration(
+                    serverSession: OIDCServerSessionConfiguration(
+                        enabled: true,
+                        liveUserInfoEnabled: true,
+                        userInfoCacheTTLSeconds: 600
+                    )
+                )
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let exp = Int(Date().timeIntervalSince1970) + 300
+        let payload = #"{"sub":"token-sub","email":"token@example.com","iss":"https://id.wuse.io","aud":"dbg.wuse.io","exp":"# + String(exp) + #"}"#
+        let jwt = testJWT(payload: payload)
+
+        let record = await OIDCServerSessionStore.shared.create(
+            tokenSet: OIDCTokenSet(
+                accessToken: "opaque-access-token",
+                idToken: jwt,
+                refreshToken: nil,
+                tokenType: "Bearer",
+                scope: "openid profile email",
+                expiresAt: Date().addingTimeInterval(300)
+            )
+        )
+
+        _ = await OIDCServerSessionStore.shared.mutate(sessionID: record.sessionID) { existing in
+            existing.userInfoClaims = [
+                "sub": .string("userinfo-sub"),
+                "email": .string("userinfo@example.com"),
+                "preferred_username": .string("hiro"),
+            ]
+            existing.userInfoFetchedAt = Date()
+        }
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("cookie", "z-token=\(record.sessionID)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: true)
+        switch decision {
+        case .allow(let principal):
+            #expect(principal.subject == "userinfo-sub")
+            #expect(principal.email == "userinfo@example.com")
+            #expect(principal.claims["preferred_username"] == .string("hiro"))
+        case .deny(let status, let reason):
+            Issue.record("Expected merged cached userinfo claims to authorize. status=\(status) reason=\(reason)")
+        }
+
+        await OIDCServerSessionStore.shared.delete(sessionID: record.sessionID)
     }
 }
