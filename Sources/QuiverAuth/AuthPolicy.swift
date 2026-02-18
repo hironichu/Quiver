@@ -1,6 +1,9 @@
 import Foundation
 import HTTP3
 import QUICCore
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct AuthPolicy: Sendable {
     private static let logger = QuiverLogging.logger(label: "quiver.auth.policy")

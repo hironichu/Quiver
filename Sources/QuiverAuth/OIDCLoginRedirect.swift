@@ -2,7 +2,9 @@ import Foundation
 import Crypto
 import HTTP3
 import QUICCore
-
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 private let oidcLogger = QuiverLogging.logger(label: "quiver.auth.oidc")
 
 func oidcDiscoveryURLFromIssuer(_ issuer: String) -> String? {
