@@ -261,6 +261,14 @@ public struct HTTP3ServerOptions: Sendable {
     /// - Default: `86400` (24 hours)
     public var altSvcMaxAge: UInt32
 
+    /// Whether the gateway HTTPS listener should emit `Alt-Svc: h3`.
+    ///
+    /// When `false`, the HTTPS gateway remains enabled but does not
+    /// advertise HTTP/3 alternatives to clients.
+    ///
+    /// - Default: `true`
+    public var advertiseAltSvc: Bool
+
     /// HTTPS behavior for the Alt-Svc gateway.
     ///
     /// Controls whether the HTTPS listener serves application resources
@@ -310,6 +318,7 @@ public struct HTTP3ServerOptions: Sendable {
         gatewayHTTPPort: UInt16? = nil,
         gatewayHTTPSPort: UInt16? = nil,
         altSvcMaxAge: UInt32 = 86400,
+        advertiseAltSvc: Bool = true,
         gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior = .serveApplication
     ) {
         self.host = host
@@ -339,6 +348,7 @@ public struct HTTP3ServerOptions: Sendable {
         self.gatewayHTTPPort = gatewayHTTPPort
         self.gatewayHTTPSPort = gatewayHTTPSPort
         self.altSvcMaxAge = altSvcMaxAge
+        self.advertiseAltSvc = advertiseAltSvc
         self.gatewayHTTPSBehavior = gatewayHTTPSBehavior
     }
 
@@ -382,6 +392,7 @@ public struct HTTP3ServerOptions: Sendable {
         gatewayHTTPPort: UInt16? = nil,
         gatewayHTTPSPort: UInt16? = nil,
         altSvcMaxAge: UInt32 = 86400,
+        advertiseAltSvc: Bool = true,
         gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior = .serveApplication
     ) {
         self.host = host
@@ -411,6 +422,7 @@ public struct HTTP3ServerOptions: Sendable {
         self.gatewayHTTPPort = gatewayHTTPPort
         self.gatewayHTTPSPort = gatewayHTTPSPort
         self.altSvcMaxAge = altSvcMaxAge
+        self.advertiseAltSvc = advertiseAltSvc
         self.gatewayHTTPSBehavior = gatewayHTTPSBehavior
     }
 
@@ -449,6 +461,7 @@ public struct HTTP3ServerOptions: Sendable {
         gatewayHTTPPort: UInt16? = nil,
         gatewayHTTPSPort: UInt16? = nil,
         altSvcMaxAge: UInt32 = 86400,
+        advertiseAltSvc: Bool = true,
         gatewayHTTPSBehavior: AltSvcGatewayConfiguration.HTTPSBehavior = .serveApplication
     ) {
         self.host = host
@@ -478,6 +491,7 @@ public struct HTTP3ServerOptions: Sendable {
         self.gatewayHTTPPort = gatewayHTTPPort
         self.gatewayHTTPSPort = gatewayHTTPSPort
         self.altSvcMaxAge = altSvcMaxAge
+        self.advertiseAltSvc = advertiseAltSvc
         self.gatewayHTTPSBehavior = gatewayHTTPSBehavior
     }
 
@@ -601,6 +615,7 @@ public struct HTTP3ServerOptions: Sendable {
             httpsPort: gatewayHTTPSPort,
             h3Port: port,
             altSvcMaxAge: altSvcMaxAge,
+            advertiseAltSvc: advertiseAltSvc,
             httpsBehavior: gatewayHTTPSBehavior,
             certificatePath: certificatePath,
             privateKeyPath: privateKeyPath

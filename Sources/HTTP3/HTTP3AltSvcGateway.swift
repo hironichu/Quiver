@@ -60,6 +60,15 @@ public struct AltSvcGatewayConfiguration: Sendable {
     /// `ma=` value in the Alt-Svc header (seconds). Default: 86400 (24h).
     public var altSvcMaxAge: UInt32
 
+    /// Whether HTTPS responses should advertise `Alt-Svc: h3=...`.
+    ///
+    /// When `false`, the gateway still serves HTTP/1.1 over TLS but does
+    /// not emit Alt-Svc headers, preventing new browser-side HTTP/3 discovery
+    /// through Alt-Svc caching.
+    ///
+    /// - Default: `true`
+    public var advertiseAltSvc: Bool
+
     /// Behavior for HTTPS gateway responses.
     public var httpsBehavior: HTTPSBehavior
 
@@ -75,6 +84,7 @@ public struct AltSvcGatewayConfiguration: Sendable {
         httpsPort: UInt16? = 443,
         h3Port: UInt16 = 4433,
         altSvcMaxAge: UInt32 = 86400,
+        advertiseAltSvc: Bool = true,
         httpsBehavior: HTTPSBehavior = .serveApplication,
         certificatePath: String? = nil,
         privateKeyPath: String? = nil
@@ -84,6 +94,7 @@ public struct AltSvcGatewayConfiguration: Sendable {
         self.httpsPort = httpsPort
         self.h3Port = h3Port
         self.altSvcMaxAge = altSvcMaxAge
+        self.advertiseAltSvc = advertiseAltSvc
         self.httpsBehavior = httpsBehavior
         self.certificatePath = certificatePath
         self.privateKeyPath = privateKeyPath
@@ -297,6 +308,7 @@ public actor AltSvcGateway {
 
         let h3Port = configuration.h3Port
         let altSvcMaxAge = configuration.altSvcMaxAge
+        let advertiseAltSvc = configuration.advertiseAltSvc
         let httpsBehavior = configuration.httpsBehavior
         let requestHandler = self.requestHandler
         let host = configuration.host
@@ -323,6 +335,7 @@ public actor AltSvcGateway {
                             AltSvcApplicationProxyHandler(
                                 h3Port: h3Port,
                                 altSvcMaxAge: altSvcMaxAge,
+                                advertiseAltSvc: advertiseAltSvc,
                                 fallbackAuthority: host,
                                 requestHandler: requestHandler
                             )
@@ -331,7 +344,8 @@ public actor AltSvcGateway {
                         try channel.pipeline.syncOperations.addHandler(
                             AltSvcRequiredResponseHandler(
                                 h3Port: h3Port,
-                                altSvcMaxAge: altSvcMaxAge
+                                altSvcMaxAge: altSvcMaxAge,
+                                advertiseAltSvc: advertiseAltSvc
                             )
                         )
                     }
@@ -416,13 +430,13 @@ private final class AltSvcRequiredResponseHandler: ChannelInboundHandler, Remova
 
     private let h3Port: UInt16
     private let altSvcMaxAge: UInt32
-    private let altSvcHeaderValue: String
+    private let altSvcHeaderValue: String?
     private let responseBody: Data
 
-    init(h3Port: UInt16, altSvcMaxAge: UInt32) {
+    init(h3Port: UInt16, altSvcMaxAge: UInt32, advertiseAltSvc: Bool) {
         self.h3Port = h3Port
         self.altSvcMaxAge = altSvcMaxAge
-        self.altSvcHeaderValue = "h3=\":\(h3Port)\"; ma=\(altSvcMaxAge)"
+        self.altSvcHeaderValue = advertiseAltSvc ? "h3=\":\(h3Port)\"; ma=\(altSvcMaxAge)" : nil
         self.responseBody = Data("""
         <!DOCTYPE html>
         <html>
@@ -447,7 +461,9 @@ private final class AltSvcRequiredResponseHandler: ChannelInboundHandler, Remova
         }
 
         var headers = HTTPHeaders()
-        headers.add(name: "alt-svc", value: altSvcHeaderValue)
+        if let altSvcHeaderValue {
+            headers.add(name: "alt-svc", value: altSvcHeaderValue)
+        }
         headers.add(name: "content-type", value: "text/html; charset=utf-8")
         headers.add(name: "content-length", value: "\(responseBody.count)")
         headers.add(name: "cache-control", value: "no-cache")
@@ -480,7 +496,7 @@ private final class AltSvcApplicationProxyHandler: ChannelInboundHandler, Remova
 
     private let requestHandler: HTTP3Server.RequestHandler
     private let fallbackAuthority: String
-    private let altSvcHeaderValue: String
+    private let altSvcHeaderValue: String?
 
     private var requestHead: HTTPRequestHead?
     private var bodyContinuation: AsyncStream<Data>.Continuation?
@@ -489,12 +505,13 @@ private final class AltSvcApplicationProxyHandler: ChannelInboundHandler, Remova
     init(
         h3Port: UInt16,
         altSvcMaxAge: UInt32,
+        advertiseAltSvc: Bool,
         fallbackAuthority: String,
         requestHandler: @escaping HTTP3Server.RequestHandler
     ) {
         self.requestHandler = requestHandler
         self.fallbackAuthority = fallbackAuthority
-        self.altSvcHeaderValue = "h3=\":\(h3Port)\"; ma=\(altSvcMaxAge)"
+        self.altSvcHeaderValue = advertiseAltSvc ? "h3=\":\(h3Port)\"; ma=\(altSvcMaxAge)" : nil
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -511,7 +528,9 @@ private final class AltSvcApplicationProxyHandler: ChannelInboundHandler, Remova
 
             guard let method = HTTPMethod(rawValue: request.method.rawValue) else {
                 var headers = HTTPHeaders()
-                headers.add(name: "alt-svc", value: altSvcHeaderValue)
+                if let altSvcHeaderValue {
+                    headers.add(name: "alt-svc", value: altSvcHeaderValue)
+                }
                 headers.add(name: "content-type", value: "text/plain; charset=utf-8")
                 headers.add(name: "content-length", value: "22")
                 headers.add(name: "connection", value: "close")
@@ -662,7 +681,7 @@ private final class AltSvcApplicationProxyHandler: ChannelInboundHandler, Remova
 private final class HTTP1GatewayResponder: @unchecked Sendable {
     private let context: ChannelHandlerContext
     private let requestVersion: HTTPVersion
-    private let altSvcHeaderValue: String
+    private let altSvcHeaderValue: String?
     private let lock = NSLock()
 
     private var hasSentHead = false
@@ -671,7 +690,7 @@ private final class HTTP1GatewayResponder: @unchecked Sendable {
     init(
         context: ChannelHandlerContext,
         requestVersion: HTTPVersion,
-        altSvcHeaderValue: String
+        altSvcHeaderValue: String?
     ) {
         self.context = context
         self.requestVersion = requestVersion
@@ -774,7 +793,7 @@ private final class HTTP1GatewayResponder: @unchecked Sendable {
             httpHeaders.add(name: name, value: value)
         }
 
-        if httpHeaders.first(name: "alt-svc") == nil {
+        if let altSvcHeaderValue, httpHeaders.first(name: "alt-svc") == nil {
             httpHeaders.add(name: "alt-svc", value: altSvcHeaderValue)
         }
 
