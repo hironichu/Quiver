@@ -141,6 +141,12 @@ public actor HTTP3Server {
     /// to send back a response.
     public typealias RequestHandler = @Sendable (HTTP3RequestContext) async throws -> Void
 
+    /// Optional request-session resolver closure type.
+    ///
+    /// Called before each request handler invocation to produce
+    /// an immutable `HTTP3Session` snapshot attached to the context.
+    public typealias RequestSessionResolver = @Sendable (HTTP3RequestContext) async -> HTTP3Session
+
     /// Extended CONNECT handler closure type (RFC 9220)
     ///
     /// Called for each incoming Extended CONNECT request. The handler
@@ -149,6 +155,13 @@ public actor HTTP3Server {
     /// open for session use (e.g., WebTransport).
     public typealias ExtendedConnectHandler =
         @Sendable (ExtendedConnectContext) async throws -> Void
+
+    /// Optional Extended CONNECT session resolver closure type.
+    ///
+    /// Called before each Extended CONNECT handler invocation to produce
+    /// an immutable `HTTP3Session` snapshot attached to the context.
+    public typealias ExtendedConnectSessionResolver =
+        @Sendable (ExtendedConnectContext) async -> HTTP3Session
 
     /// Server state
     public enum State: Sendable, Hashable, CustomStringConvertible {
@@ -190,6 +203,12 @@ public actor HTTP3Server {
 
     /// The registered Extended CONNECT handler (RFC 9220)
     private var extendedConnectHandler: ExtendedConnectHandler?
+
+    /// Optional resolver for filling request session snapshots.
+    private var requestSessionResolver: RequestSessionResolver?
+
+    /// Optional resolver for filling Extended CONNECT session snapshots.
+    private var extendedConnectSessionResolver: ExtendedConnectSessionResolver?
 
     /// Active HTTP/3 connections managed by this server
     private var connections: [ObjectIdentifier: HTTP3Connection] = [:]
@@ -314,6 +333,17 @@ public actor HTTP3Server {
         self.handler = handler
     }
 
+    /// Registers a request-session resolver.
+    ///
+    /// If registered, the resolver is called before each request handler.
+    /// The returned session snapshot is attached to `context.session`.
+    /// Calling this again replaces the previous resolver.
+    ///
+    /// - Parameter resolver: Closure that returns a session snapshot for each request
+    public func onRequestSession(_ resolver: @escaping RequestSessionResolver) {
+        self.requestSessionResolver = resolver
+    }
+
     /// Registers an Extended CONNECT handler (RFC 9220).
     ///
     /// The handler is called for each incoming Extended CONNECT request
@@ -339,6 +369,17 @@ public actor HTTP3Server {
     /// ```
     public func onExtendedConnect(_ handler: @escaping ExtendedConnectHandler) {
         self.extendedConnectHandler = handler
+    }
+
+    /// Registers an Extended CONNECT session resolver.
+    ///
+    /// If registered, the resolver is called before each Extended CONNECT
+    /// handler. The returned session snapshot is attached to `context.session`.
+    /// Calling this again replaces the previous resolver.
+    ///
+    /// - Parameter resolver: Closure that returns a session snapshot for each CONNECT request
+    public func onExtendedConnectSession(_ resolver: @escaping ExtendedConnectSessionResolver) {
+        self.extendedConnectSessionResolver = resolver
     }
 
     // MARK: - Server Lifecycle
@@ -522,13 +563,20 @@ public actor HTTP3Server {
 
                 // Dispatch to handler in a separate task for concurrency
                 if let handler = self.handler {
+                    let resolvedContext: HTTP3RequestContext
+                    if let requestSessionResolver = self.requestSessionResolver {
+                        resolvedContext = context.withSession(await requestSessionResolver(context))
+                    } else {
+                        resolvedContext = context
+                    }
+
                     let capturedHandler = handler
                     Task {
                         do {
-                            try await capturedHandler(context)
+                            try await capturedHandler(resolvedContext)
                         } catch {
                             // Handler threw an error — send 500 if possible
-                            try? await context.respond(
+                            try? await resolvedContext.respond(
                                 status: 500,
                                 headers: [("content-type", "text/plain")],
                                 Data("Internal Server Error".utf8)
@@ -563,13 +611,20 @@ public actor HTTP3Server {
             totalRequestsHandled += 1
 
             if let extHandler = self.extendedConnectHandler {
+                let resolvedContext: ExtendedConnectContext
+                if let extendedConnectSessionResolver = self.extendedConnectSessionResolver {
+                    resolvedContext = context.withSession(await extendedConnectSessionResolver(context))
+                } else {
+                    resolvedContext = context
+                }
+
                 let capturedHandler = extHandler
                 Task {
                     do {
-                        try await capturedHandler(context)
+                        try await capturedHandler(resolvedContext)
                     } catch {
                         // Handler threw an error — reject with 500 if possible
-                        try? await context.reject(
+                        try? await resolvedContext.reject(
                             status: 500,
                             headers: [("content-type", "text/plain")],
                             // body: Data("Internal Server Error".utf8)
@@ -743,6 +798,7 @@ public actor HTTP3Server {
         // Start the Alt-Svc gateway if configured
         if let gatewayConfig = options.buildGatewayConfiguration() {
             let currentHandler = self.handler
+            let currentRequestSessionResolver = self.requestSessionResolver
             if gatewayConfig.httpsBehavior == .serveApplication, currentHandler == nil {
                 throw HTTP3Error(
                     code: .internalError,
@@ -751,9 +807,23 @@ public actor HTTP3Server {
                 )
             }
 
+            let gatewayRequestHandler: RequestHandler?
+            if let currentHandler {
+                gatewayRequestHandler = { context in
+                    if let currentRequestSessionResolver {
+                        let resolvedContext = context.withSession(await currentRequestSessionResolver(context))
+                        try await currentHandler(resolvedContext)
+                    } else {
+                        try await currentHandler(context)
+                    }
+                }
+            } else {
+                gatewayRequestHandler = nil
+            }
+
             let gw = AltSvcGateway(
                 configuration: gatewayConfig,
-                requestHandler: currentHandler
+                requestHandler: gatewayRequestHandler
             )
             try await gw.start()
             self.gateway = gw

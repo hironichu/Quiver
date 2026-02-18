@@ -2497,10 +2497,74 @@ final class HTTP3ExtendedConnectTests: XCTestCase {
         XCTAssertEqual(context.request.connectProtocol, "webtransport")
         XCTAssertEqual(context.streamID, 4)
         XCTAssertTrue(context.request.isWebTransportConnect)
+        XCTAssertTrue(context.session.getAll().isEmpty)
 
         try await context.accept()
         let wasCalled = await tracker.accepted
         XCTAssertTrue(wasCalled)
+    }
+
+    func testHTTP3SessionGetAllAndDecode() throws {
+        struct OIDCUser: Codable, Equatable {
+            let sub: String
+            let email: String
+            let roles: [String]
+        }
+
+        let session = HTTP3Session.empty
+            .setting(
+                namespace: "auth",
+                values: [
+                    "sub": .string("user-1"),
+                    "email": .string("user@example.com"),
+                    "roles": .array([.string("admin"), .string("dev")]),
+                ]
+            )
+
+        XCTAssertEqual(session.get("sub", namespace: "auth"), .string("user-1"))
+        XCTAssertEqual(session.getAll(namespace: "auth").count, 3)
+
+        let decoded = try session.decode(OIDCUser.self, namespace: "auth")
+        XCTAssertEqual(decoded, OIDCUser(sub: "user-1", email: "user@example.com", roles: ["admin", "dev"]))
+
+    }
+
+    func testHTTP3SessionClearIsIdempotent() async {
+        actor Counter {
+            private(set) var value = 0
+            func increment() { value += 1 }
+        }
+
+        let counter = Counter()
+        let session = HTTP3Session.empty.withClearHandler {
+            await counter.increment()
+        }
+
+        await session.clear()
+        await session.clear()
+
+        let finalValue = await counter.value
+        XCTAssertEqual(finalValue, 1)
+    }
+
+    func testRequestContextWithSessionCreatesUpdatedSnapshot() {
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.com",
+            path: "/session"
+        )
+
+        let context = HTTP3RequestContext(
+            request: request,
+            streamID: 1,
+            respond: { _, _, _, _ in }
+        )
+        let updated = context.withSession(
+            context.session.setting(namespace: "auth", values: ["sub": .string("hiro")])
+        )
+
+        XCTAssertNil(context.session.get("sub", namespace: "auth"))
+        XCTAssertEqual(updated.session.get("sub", namespace: "auth"), .string("hiro"))
     }
 }
 

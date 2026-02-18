@@ -1,6 +1,9 @@
 import Foundation
 import Crypto
 import HTTP3
+import QUICCore
+
+private let oidcLogger = QuiverLogging.logger(label: "quiver.auth.oidc")
 
 func oidcDiscoveryURLFromIssuer(_ issuer: String) -> String? {
     let trimmed = issuer.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -112,6 +115,10 @@ struct OIDCLoginRedirectBuilder: Sendable {
     func buildRedirectURL(for request: HTTP3Request) async -> URL? {
         guard configuration.enabled else { return nil }
         if configuration.browserOnly, !isBrowserNavigation(request: request) {
+            oidcLogger.trace(
+                "skip oidc redirect for non-browser request",
+                metadata: ["path": "\(request.path)"]
+            )
             return nil
         }
 
@@ -120,8 +127,25 @@ struct OIDCLoginRedirectBuilder: Sendable {
             let redirectURI = resolveRedirectURI(for: request),
             let metadata = await resolveDiscoveryMetadata()
         else {
+            oidcLogger.debug(
+                "oidc redirect prerequisites missing",
+                metadata: [
+                    "path": "\(request.path)",
+                    "hasClientID": "\(configuration.clientID != nil)",
+                    "hasRedirectURI": "\(resolveRedirectURI(for: request) != nil)",
+                ]
+            )
             return nil
         }
+
+        oidcLogger.debug(
+            "building oidc redirect",
+            metadata: [
+                "path": "\(request.path)",
+                "redirectURI": "\(redirectURI)",
+                "authorizationEndpoint": "\(metadata.authorizationEndpoint)",
+            ]
+        )
 
         let pending = await OIDCLoginStateStore.shared.create(ttlSeconds: configuration.stateTTLSeconds)
 
@@ -234,9 +258,21 @@ struct OIDCLoginCallbackHandler: Sendable {
         let callbackPath = callbackPathForRequest(request)
         guard requestURL.path == callbackPath else { return nil }
 
+        oidcLogger.debug(
+            "oidc callback received",
+            metadata: [
+                "path": "\(requestURL.path)",
+                "authority": "\(request.authority)",
+            ]
+        )
+
         let query = URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
         let errorValue = query.first(where: { $0.name == "error" })?.value
         if let errorValue, !errorValue.isEmpty {
+            oidcLogger.debug(
+                "oidc callback contains provider error",
+                metadata: ["error": "\(errorValue)"]
+            )
             return callbackFailureResponse(reason: "oidc_error:\(errorValue)", request: request)
         }
 
@@ -248,6 +284,7 @@ struct OIDCLoginCallbackHandler: Sendable {
         }
 
         guard let pending = await OIDCLoginStateStore.shared.consume(state: state) else {
+            oidcLogger.debug("oidc callback state invalid or expired")
             return callbackFailureResponse(reason: "invalid_or_expired_state", request: request)
         }
 
@@ -261,8 +298,17 @@ struct OIDCLoginCallbackHandler: Sendable {
             return callbackFailureResponse(reason: "missing_oidc_discovery", request: request)
         }
         guard let tokenEndpoint = metadata.tokenEndpoint, !tokenEndpoint.isEmpty else {
+            oidcLogger.debug("oidc callback missing token endpoint")
             return callbackFailureResponse(reason: "missing_token_endpoint", request: request)
         }
+
+        oidcLogger.debug(
+            "exchanging oidc code",
+            metadata: [
+                "tokenEndpoint": "\(tokenEndpoint)",
+                "hasClientSecret": "\(configuration.clientSecret != nil)",
+            ]
+        )
 
         do {
             let tokenResponse = try await exchangeCode(
@@ -282,10 +328,18 @@ struct OIDCLoginCallbackHandler: Sendable {
             }
 
             guard let sessionToken = tokenResponse.idToken ?? tokenResponse.accessToken, !sessionToken.isEmpty else {
+                oidcLogger.debug("oidc callback missing session token from token response")
                 return callbackFailureResponse(reason: "missing_session_token", request: request)
             }
 
             let cookie = sessionCookieHeader(token: sessionToken)
+            oidcLogger.debug(
+                "oidc callback success, issuing session cookie",
+                metadata: [
+                    "cookieName": "\(configuration.sessionCookieName)",
+                    "successPath": "\(normalizedPath(configuration.callbackSuccessPath))",
+                ]
+            )
             return OIDCLoginCallbackHTTPResponse(
                 status: 302,
                 headers: [
@@ -296,6 +350,10 @@ struct OIDCLoginCallbackHandler: Sendable {
                 body: Data()
             )
         } catch {
+            oidcLogger.warning(
+                "oidc callback token exchange failed",
+                metadata: ["error": "\(error.localizedDescription)"]
+            )
             return callbackFailureResponse(reason: "token_exchange_failed:\(error.localizedDescription)", request: request)
         }
     }

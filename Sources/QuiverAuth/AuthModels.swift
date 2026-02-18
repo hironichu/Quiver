@@ -5,11 +5,37 @@ public struct AuthPrincipal: Sendable, Equatable {
     public let subject: String
     public let email: String?
     public let source: String
+    public let claims: [String: HTTP3SessionValue]
 
-    public init(subject: String, email: String? = nil, source: String) {
+    public init(
+        subject: String,
+        email: String? = nil,
+        source: String,
+        claims: [String: HTTP3SessionValue] = [:]
+    ) {
         self.subject = subject
         self.email = email
         self.source = source
+        self.claims = claims
+    }
+}
+
+public struct QuiverAuthSession: Codable, Sendable, Equatable {
+    public let subject: String
+    public let source: String
+    public let email: String?
+    public let claims: [String: HTTP3SessionValue]
+
+    public init(
+        subject: String,
+        source: String,
+        email: String?,
+        claims: [String: HTTP3SessionValue]
+    ) {
+        self.subject = subject
+        self.source = source
+        self.email = email
+        self.claims = claims
     }
 }
 

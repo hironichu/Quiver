@@ -1,9 +1,11 @@
 import Foundation
 import JWTKit
+import HTTP3
 
 struct OIDCPrincipal: Sendable {
     let subject: String
     let email: String?
+    let claims: [String: HTTP3SessionValue]
 }
 
 enum OIDCValidationResult: Sendable {
@@ -56,7 +58,14 @@ struct OIDCValidator: Sendable {
         }
 
         let email = claimsJSON["email"] as? String
-        return .valid(OIDCPrincipal(subject: subject, email: email))
+        var typedClaims: [String: HTTP3SessionValue] = [:]
+        for (key, value) in claimsJSON {
+            if let mapped = mapToSessionValue(value) {
+                typedClaims[key] = mapped
+            }
+        }
+
+        return .valid(OIDCPrincipal(subject: subject, email: email, claims: typedClaims))
     }
 
     private func verifySignature(token: String) async throws {
@@ -167,5 +176,41 @@ struct OIDCValidator: Sendable {
             return audArray.contains(expectedAudience)
         }
         return false
+    }
+
+    private func mapToSessionValue(_ value: Any) -> HTTP3SessionValue? {
+        switch value {
+        case let string as String:
+            return .string(string)
+        case let bool as Bool:
+            return .bool(bool)
+        case let int as Int:
+            return .number(Double(int))
+        case let int64 as Int64:
+            return .number(Double(int64))
+        case let double as Double:
+            return .number(double)
+        case let float as Float:
+            return .number(Double(float))
+        case let array as [Any]:
+            var mappedValues: [HTTP3SessionValue] = []
+            mappedValues.reserveCapacity(array.count)
+            for entry in array {
+                guard let mappedEntry = mapToSessionValue(entry) else { return nil }
+                mappedValues.append(mappedEntry)
+            }
+            return .array(mappedValues)
+        case let object as [String: Any]:
+            var mappedObject: [String: HTTP3SessionValue] = [:]
+            for (key, entry) in object {
+                guard let mappedEntry = mapToSessionValue(entry) else { return nil }
+                mappedObject[key] = mappedEntry
+            }
+            return .object(mappedObject)
+        case _ as NSNull:
+            return .null
+        default:
+            return nil
+        }
     }
 }

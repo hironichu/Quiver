@@ -43,6 +43,9 @@ public struct ExtendedConnectContext: Sendable {
     /// The QUIC stream ID this request arrived on (the CONNECT stream)
     public let streamID: UInt64
 
+    /// Immutable, extension-filled session snapshot for this CONNECT request.
+    public let session: HTTP3Session
+
     /// The underlying QUIC stream. After acceptance, this stream remains
     /// open and serves as the session's control channel.
     public let stream: any QUICStreamProtocol
@@ -69,15 +72,28 @@ public struct ExtendedConnectContext: Sendable {
     public init(
         request: HTTP3Request,
         streamID: UInt64,
+        session: HTTP3Session = .empty,
         stream: any QUICStreamProtocol,
         connection: HTTP3Connection,
         sendResponse: @escaping @Sendable (HTTP3ResponseHead) async throws -> Void
     ) {
         self.request = request
         self.streamID = streamID
+        self.session = session
         self.stream = stream
         self.connection = connection
         self._sendResponse = sendResponse
+    }
+
+    public func withSession(_ session: HTTP3Session) -> ExtendedConnectContext {
+        ExtendedConnectContext(
+            request: request,
+            streamID: streamID,
+            session: session,
+            stream: stream,
+            connection: connection,
+            sendResponse: _sendResponse
+        )
     }
 
     /// Accepts the Extended CONNECT request by sending a 200 response.

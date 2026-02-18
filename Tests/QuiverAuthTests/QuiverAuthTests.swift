@@ -5,6 +5,14 @@ import Crypto
 @testable import QuiverAuth
 
 struct QuiverAuthTests {
+    private func requestContext(_ request: HTTP3Request) -> HTTP3RequestContext {
+        HTTP3RequestContext(
+            request: request,
+            streamID: 1,
+            respond: { _, _, _, _ in }
+        )
+    }
+
     private func base64URL(_ string: String) -> String {
         let data = Data(string.utf8)
         return data.base64EncodedString()
@@ -108,7 +116,7 @@ struct QuiverAuthTests {
         let policy = AuthPolicy(configuration: config)
 
         let exp = Int(Date().timeIntervalSince1970) + 300
-        let payload = #"{"sub":"user-1","email":"u@example.com","iss":"https://id.example","aud":"quiver-app","exp":"# + String(exp) + #"}"#
+        let payload = #"{"sub":"user-1","email":"u@example.com","tenant":"acme","iss":"https://id.example","aud":"quiver-app","exp":"# + String(exp) + #"}"#
         let jwt = testJWT(payload: payload)
 
         let request = HTTP3Request(
@@ -123,9 +131,97 @@ struct QuiverAuthTests {
         case .allow(let principal):
             #expect(principal.source == "oidc")
             #expect(principal.subject == "user-1")
+            #expect(principal.claims["tenant"] == .string("acme"))
+            #expect(principal.claims["email"] == .string("u@example.com"))
         case .deny(let status, let reason):
             Issue.record("Expected OIDC token to pass. status=\(status) reason=\(reason)")
         }
+    }
+
+    @Test
+    func buildsSessionNamespaceFromPrincipal() {
+        let policy = AuthPolicy(configuration: AuthConfiguration(mode: .composite))
+        let principal = AuthPrincipal(
+            subject: "user-99",
+            email: "user99@example.com",
+            source: "oidc",
+            claims: ["tenant": .string("wuse")]
+        )
+
+        let session = policy.session(for: principal)
+
+        #expect(session.get("subject", namespace: "auth") == .string("user-99"))
+        #expect(session.get("source", namespace: "auth") == .string("oidc"))
+        #expect(session.get("email", namespace: "auth") == .string("user99@example.com"))
+        #expect(session.get("tenant", namespace: "auth") == .string("wuse"))
+    }
+
+    @Test
+    func resolverBuildsDefaultTypedSessionPayload() async {
+        let config = AuthConfiguration(
+            mode: .forwardOnly,
+            requireGatewayMarkerForForwardedIdentity: true
+        )
+        let policy = AuthPolicy(configuration: config)
+        let guardMiddleware: HTTP3AuthGuard<QuiverAuthSession> = HTTP3AuthGuard(policy: policy)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [
+                ("x-authenticated-user", "hiro"),
+                ("x-auth-request-email", "hiro@example.test"),
+                ("x-quiver-gateway", "altsvc"),
+            ]
+        )
+
+        let resolved = await guardMiddleware.resolver(requestContext(request))
+        let typed = resolved.get("auth", as: QuiverAuthSession.self)
+
+        #expect(typed != nil)
+        #expect(typed?.subject == "hiro")
+        #expect(typed?.email == "hiro@example.test")
+        #expect(typed?.source == "x-authenticated-user")
+        #expect(resolved.get("subject", namespace: "auth") == .string("hiro"))
+    }
+
+    @Test
+    func resolverSupportsCustomNamespaceAndPayloadType() async {
+        struct CustomSession: Codable, Sendable, Equatable {
+            let userID: String
+            let provider: String
+        }
+
+        let config = AuthConfiguration(
+            mode: .forwardOnly,
+            requireGatewayMarkerForForwardedIdentity: true
+        )
+        let policy = AuthPolicy(configuration: config)
+        let guardMiddleware = HTTP3AuthGuard(
+            policy: policy,
+            namespace: "custom-auth",
+            into: CustomSession.self,
+            payloadBuilder: { principal, _ in
+                CustomSession(userID: principal.subject, provider: principal.source)
+            }
+        )
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [
+                ("x-authenticated-user", "kira"),
+                ("x-quiver-gateway", "altsvc"),
+            ]
+        )
+
+        let resolved = await guardMiddleware.resolver(requestContext(request))
+        let typed = resolved.get("custom-auth", as: CustomSession.self)
+
+        #expect(typed == CustomSession(userID: "kira", provider: "x-authenticated-user"))
+        #expect(resolved.get("subject", namespace: "custom-auth") == .string("kira"))
     }
 
     @Test
