@@ -120,7 +120,7 @@ struct QuiverAuthTests {
             oidc: OIDCConfiguration(
                 issuer: "https://id.example",
                 audience: "quiver-app",
-                allowUnverifiedSignature: true
+                dangerouslyAllowUnverifiedSignature: true
             )
         )
         let policy = AuthPolicy(configuration: config)
@@ -241,7 +241,7 @@ struct QuiverAuthTests {
             oidc: OIDCConfiguration(
                 issuer: "https://expected.example",
                 audience: "quiver-app",
-                allowUnverifiedSignature: true
+                dangerouslyAllowUnverifiedSignature: true
             )
         )
         let policy = AuthPolicy(configuration: config)
@@ -290,7 +290,7 @@ struct QuiverAuthTests {
             oidc: OIDCConfiguration(
                 issuer: "https://id.example",
                 audience: "quiver-app",
-                allowUnverifiedSignature: false,
+                dangerouslyAllowUnverifiedSignature: false,
                 staticJWKs: [jwk]
             )
         )
@@ -332,7 +332,7 @@ struct QuiverAuthTests {
             oidc: OIDCConfiguration(
                 issuer: "https://id.wuse.io",
                 audience: "dbg.wuse.io",
-                allowUnverifiedSignature: true
+                dangerouslyAllowUnverifiedSignature: true
             )
         )
         let policy = AuthPolicy(configuration: config)
@@ -534,7 +534,7 @@ struct QuiverAuthTests {
             oidc: OIDCConfiguration(
                 issuer: "https://id.wuse.io",
                 audience: "dbg.wuse.io",
-                allowUnverifiedSignature: true,
+                dangerouslyAllowUnverifiedSignature: true,
                 login: OIDCLoginConfiguration(
                     serverSession: OIDCServerSessionConfiguration(enabled: true)
                 )
@@ -581,7 +581,7 @@ struct QuiverAuthTests {
             mode: .oidcOnly,
             sessionCookieNames: ["z-token"],
             oidc: OIDCConfiguration(
-                allowUnverifiedSignature: true,
+                dangerouslyAllowUnverifiedSignature: true,
                 login: OIDCLoginConfiguration(
                     serverSession: OIDCServerSessionConfiguration(enabled: true)
                 )
@@ -663,7 +663,7 @@ struct QuiverAuthTests {
             oidc: OIDCConfiguration(
                 issuer: "https://id.wuse.io",
                 audience: "dbg.wuse.io",
-                allowUnverifiedSignature: true,
+                dangerouslyAllowUnverifiedSignature: true,
                 login: OIDCLoginConfiguration(
                     serverSession: OIDCServerSessionConfiguration(
                         enabled: true,

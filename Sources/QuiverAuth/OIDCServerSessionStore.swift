@@ -55,7 +55,14 @@ actor OIDCServerSessionStore {
     }
 
     func get(sessionID: String) -> OIDCServerSessionRecord? {
-        records[sessionID]
+        // Use timing-safe lookup to prevent side-channel attacks on
+        // session IDs.  We iterate all keys and compare in constant time
+        // so that the response latency does not reveal whether a prefix
+        // of the session ID matched a stored key.
+        guard let matchedKey = timingSafeFind(sessionID, in: Array(records.keys)) else {
+            return nil
+        }
+        return records[matchedKey]
     }
 
     func update(sessionID: String, tokenSet: OIDCTokenSet) -> OIDCServerSessionRecord? {
@@ -92,5 +99,36 @@ actor OIDCServerSessionStore {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// Performs a constant-time comparison of two strings.
+    ///
+    /// Always compares all bytes of the shorter string regardless of
+    /// mismatches, preventing timing side-channels from revealing
+    /// which prefix of the candidate matched.
+    private func timingSafeEqual(_ a: String, _ b: String) -> Bool {
+        let aBytes = Array(a.utf8)
+        let bBytes = Array(b.utf8)
+        guard aBytes.count == bBytes.count else { return false }
+
+        var result: UInt8 = 0
+        for i in aBytes.indices {
+            result |= aBytes[i] ^ bBytes[i]
+        }
+        return result == 0
+    }
+
+    /// Finds a key in the array using timing-safe comparison.
+    ///
+    /// Iterates **all** keys so that the lookup time does not reveal
+    /// whether the candidate was found early or late in the collection.
+    private func timingSafeFind(_ candidate: String, in keys: [String]) -> String? {
+        var match: String? = nil
+        for key in keys {
+            if timingSafeEqual(candidate, key) {
+                match = key
+            }
+        }
+        return match
     }
 }

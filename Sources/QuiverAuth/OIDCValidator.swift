@@ -24,7 +24,7 @@ struct OIDCValidator: Sendable {
         do {
             try await verifySignature(token: token)
         } catch {
-            if !configuration.allowUnverifiedSignature {
+            if !configuration.dangerouslyAllowUnverifiedSignature {
                 return .invalid(reason: "invalid signature: \(error)")
             }
         }

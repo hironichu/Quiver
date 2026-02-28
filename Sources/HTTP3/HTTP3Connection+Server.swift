@@ -509,8 +509,13 @@ extension HTTP3Connection {
             )
         }
 
+        // Security: Strip the internal gateway marker header from direct QUIC
+        // connections to prevent external clients from spoofing gateway origin.
+        // Only the Alt-Svc gateway (TCP path) may legitimately set this header.
+        let sanitizedRequest = Self.stripInternalGatewayHeaders(from: request)
+
         let context = HTTP3RequestContext(
-            request: request,
+            request: sanitizedRequest,
             streamID: stream.id,
             bodyStream: bodyStream,
             respond: respondClosure,
@@ -540,8 +545,11 @@ extension HTTP3Connection {
             await self.sendResponseHeadersOnly(resp, on: stream)
         }
 
+        // Security: Strip internal gateway marker (same as regular requests)
+        let sanitizedRequest = Self.stripInternalGatewayHeaders(from: request)
+
         let context = ExtendedConnectContext(
-            request: request,
+            request: sanitizedRequest,
             streamID: stream.id,
             stream: stream,
             connection: self,
@@ -549,6 +557,22 @@ extension HTTP3Connection {
         )
 
         incomingExtendedConnectContinuation?.yield(context)
+    }
+
+    // MARK: - Internal Header Sanitization
+
+    /// Strips internal gateway marker headers from an incoming request.
+    ///
+    /// The `x-quiver-gateway` header is an internal signal added only by
+    /// the Alt-Svc gateway (TCP→QUIC bridge). External clients connecting
+    /// directly over QUIC must not be able to forge this header to bypass
+    /// `requireGatewayMarkerForForwardedIdentity` auth checks.
+    private static func stripInternalGatewayHeaders(from request: HTTP3Request) -> HTTP3Request {
+        var sanitized = request
+        sanitized.headers = request.headers.filter {
+            $0.0.caseInsensitiveCompare("x-quiver-gateway") != .orderedSame
+        }
+        return sanitized
     }
 
     // MARK: - Response Sending (Server)

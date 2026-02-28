@@ -204,14 +204,18 @@ package final class ServerStateMachine: Sendable {
 
                 // Check if client offered early_data and session allows it
                 if clientHello.earlyData && session.maxEarlyDataSize > 0 {
-                    // Check replay protection if configured (RFC 8446 Section 8)
-                    // 0-RTT data can be replayed, so servers should track ticket usage
-                    var acceptEarlyData = true
+                    // Check replay protection (RFC 8446 Section 8).
+                    // 0-RTT data can be replayed, so servers MUST track ticket
+                    // usage.  If no ReplayProtection is configured, reject 0-RTT
+                    // to prevent replay attacks by default.
+                    var acceptEarlyData = false
                     if let replayProtection = configuration.replayProtection {
                         // Create ticket identifier from ticket nonce (unique per ticket)
                         let ticketIdentifier = ReplayProtection.createIdentifier(from: session.ticketNonce)
                         acceptEarlyData = replayProtection.shouldAcceptEarlyData(ticketIdentifier: ticketIdentifier)
                     }
+                    // If replayProtection is nil, acceptEarlyData stays false —
+                    // 0-RTT is rejected and the handshake continues with 1-RTT.
 
                     if acceptEarlyData {
                         // Accept early data

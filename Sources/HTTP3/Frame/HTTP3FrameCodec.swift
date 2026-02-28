@@ -460,8 +460,13 @@ public enum HTTP3FrameCodec {
                 }
             } else {
                 // Unknown setting — MUST be ignored per RFC 9114 Section 7.2.4
-                // We store them for potential re-encoding / debugging
-                settings.additionalSettings.append((identifier, value))
+                // We store them for potential re-encoding / debugging.
+                // Cap at 256 entries to prevent memory amplification from
+                // malicious peers sending thousands of tiny varint pairs that
+                // expand to 16-byte tuples in memory.
+                if settings.additionalSettings.count < 256 {
+                    settings.additionalSettings.append((identifier, value))
+                }
             }
         }
 

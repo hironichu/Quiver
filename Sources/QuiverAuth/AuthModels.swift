@@ -1,5 +1,6 @@
 import Foundation
 import HTTP3
+import QUICCore
 
 public struct AuthPrincipal: Sendable, Equatable {
     public let subject: String
@@ -95,11 +96,38 @@ public enum AuthMode: Sendable {
 }
 
 public struct OIDCConfiguration: Sendable {
+    private static let logger = QuiverLogging.logger(label: "quiver.auth.oidc-config")
+
     public var issuer: String?
     public var audience: String?
     public var clockSkewSeconds: Int
     public var hs256SharedSecret: String?
-    public var allowUnverifiedSignature: Bool
+
+    /// When `true`, JWT signature verification failures are silently ignored,
+    /// allowing **any** crafted JWT to pass validation.
+    ///
+    /// - Warning: Enabling this in production is a **critical security vulnerability**.
+    ///   An attacker can forge arbitrary JWT claims (subject, email, roles, etc.)
+    ///   without possessing the signing key. Only use for local development/testing.
+    ///
+    /// A runtime warning is logged when this is set to `true`.
+    public var dangerouslyAllowUnverifiedSignature: Bool {
+        didSet {
+            if dangerouslyAllowUnverifiedSignature {
+                Self.logger.critical(
+                    "SECURITY WARNING: dangerouslyAllowUnverifiedSignature is enabled. JWT signatures will NOT be verified. Do NOT use in production."
+                )
+            }
+        }
+    }
+
+    @available(*, deprecated, renamed: "dangerouslyAllowUnverifiedSignature",
+               message: "Renamed to dangerouslyAllowUnverifiedSignature to signal its security impact.")
+    public var allowUnverifiedSignature: Bool {
+        get { dangerouslyAllowUnverifiedSignature }
+        set { dangerouslyAllowUnverifiedSignature = newValue }
+    }
+
     public var jwksURL: String?
     public var jwksCacheTTLSeconds: Int
     public var staticJWKs: [OIDCJWK]
@@ -110,7 +138,7 @@ public struct OIDCConfiguration: Sendable {
         audience: String? = nil,
         clockSkewSeconds: Int = 60,
         hs256SharedSecret: String? = nil,
-        allowUnverifiedSignature: Bool = false,
+        dangerouslyAllowUnverifiedSignature: Bool = false,
         jwksURL: String? = nil,
         jwksCacheTTLSeconds: Int = 300,
         staticJWKs: [OIDCJWK] = [],
@@ -120,11 +148,17 @@ public struct OIDCConfiguration: Sendable {
         self.audience = audience
         self.clockSkewSeconds = clockSkewSeconds
         self.hs256SharedSecret = hs256SharedSecret
-        self.allowUnverifiedSignature = allowUnverifiedSignature
+        self.dangerouslyAllowUnverifiedSignature = dangerouslyAllowUnverifiedSignature
         self.jwksURL = jwksURL
         self.jwksCacheTTLSeconds = jwksCacheTTLSeconds
         self.staticJWKs = staticJWKs
         self.login = login
+
+        if dangerouslyAllowUnverifiedSignature {
+            Self.logger.critical(
+                "SECURITY WARNING: dangerouslyAllowUnverifiedSignature is enabled. JWT signatures will NOT be verified. Do NOT use in production."
+            )
+        }
     }
 }
 

@@ -99,24 +99,21 @@ public struct AuthPolicy: Sendable {
                             "reason": "\(reason)",
                         ]
                     )
-                    if configuration.mode == .oidcOnly {
-                        return .deny(status: 401, reason: "invalid bearer token: \(reason)")
-                    }
+                    // Always deny invalid bearer tokens — do not fall through
+                    // to forwarded-identity checks, as that would let an
+                    // attacker pair a garbage JWT with a spoofed identity header.
+                    return .deny(status: 401, reason: "invalid bearer token: \(reason)")
                 }
             } else {
-                if configuration.mode == .oidcOnly {
-                    return .deny(status: 500, reason: "oidc mode enabled but oidc configuration is missing")
-                }
+                // No OIDC configuration — bearer tokens cannot be validated.
+                // Deny unconditionally to prevent unverified tokens from being
+                // silently trusted. Callers must configure an OIDCConfiguration
+                // (with issuer, JWKS, etc.) for bearer token authentication.
                 Self.logger.debug(
-                    "allowing bearer token in non-oidc mode",
+                    "deny bearer token without oidc configuration",
                     metadata: ["path": "\(request.path)"]
                 )
-                return .allow(
-                    AuthPrincipal(
-                        subject: "bearer:\(token.prefix(12))",
-                        source: "bearer"
-                    )
-                )
+                return .deny(status: 401, reason: "bearer token presented but no OIDC configuration available to validate it")
             }
         }
 
