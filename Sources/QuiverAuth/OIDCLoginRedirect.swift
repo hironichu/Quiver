@@ -324,11 +324,15 @@ struct OIDCLoginCallbackHandler: Sendable {
                 codeVerifier: pending.codeVerifier
             )
 
-            if let idToken = tokenResponse.idToken,
-                let nonce = decodeStringClaim("nonce", fromJWT: idToken),
-                nonce != pending.nonce
-            {
-                return callbackFailureResponse(reason: "nonce_mismatch", request: request)
+            // OIDC Core §3.1.3.7: because a nonce was sent in the authorization request,
+            // the ID token MUST contain that nonce and it MUST match exactly.
+            if let idToken = tokenResponse.idToken {
+                guard let nonce = decodeStringClaim("nonce", fromJWT: idToken) else {
+                    return callbackFailureResponse(reason: "missing_nonce_in_id_token", request: request)
+                }
+                guard nonce == pending.nonce else {
+                    return callbackFailureResponse(reason: "nonce_mismatch", request: request)
+                }
             }
 
             let cookieValue: String
@@ -451,13 +455,16 @@ struct OIDCLoginCallbackHandler: Sendable {
             )
         }
 
+        let errorObj: [String: String] = ["error": "oidc_callback_failed", "reason": reason]
+        let errorData = (try? JSONSerialization.data(withJSONObject: errorObj))
+            ?? Data(#"{"error":"oidc_callback_failed"}"#.utf8)
         return OIDCLoginCallbackHTTPResponse(
             status: 401,
             headers: [
                 ("content-type", "application/json"),
                 ("cache-control", "no-store"),
             ],
-            body: Data("{\"error\":\"oidc_callback_failed\",\"reason\":\"\(reason)\"}".utf8)
+            body: errorData
         )
     }
 
@@ -575,16 +582,16 @@ struct OIDCLoginCallbackHandler: Sendable {
             )
         }
 
-        var form: [(String, String)] = [
+        // RFC 6749 §2.3.1: a client MUST NOT use more than one authentication method per
+        // request. Use HTTP Basic auth (preferred method) exclusively; do not also include
+        // client_secret in the request body.
+        let form: [(String, String)] = [
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", redirectURI),
             ("client_id", clientID),
             ("code_verifier", codeVerifier),
         ]
-        if let clientSecret, !clientSecret.isEmpty {
-            form.append(("client_secret", clientSecret))
-        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

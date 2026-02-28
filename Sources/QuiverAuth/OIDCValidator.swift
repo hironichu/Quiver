@@ -29,11 +29,15 @@ struct OIDCValidator: Sendable {
             }
         }
 
-        if let issuer = configuration.issuer,
-            let tokenIssuer = claimsJSON["iss"] as? String,
-            tokenIssuer != issuer
-        {
-            return .invalid(reason: "issuer mismatch")
+        // OIDC Core §2 / RFC 7519 §4.1.1: when an expected issuer is configured the token
+        // MUST contain an iss claim that exactly matches it. A missing iss is also invalid.
+        if let issuer = configuration.issuer {
+            guard let tokenIssuer = claimsJSON["iss"] as? String else {
+                return .invalid(reason: "missing iss claim")
+            }
+            guard tokenIssuer == issuer else {
+                return .invalid(reason: "issuer mismatch")
+            }
         }
 
         if let expectedAudience = configuration.audience,

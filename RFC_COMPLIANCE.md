@@ -11,6 +11,11 @@ This document maps the Quiver implementation to the QUIC specifications (RFC 900
 | RFC 9002 | QUIC Loss Detection and Congestion Control | Compliant |
 | RFC 9221 | DATAGRAM Extension | Compliant |
 | RFC 9369 | QUIC Version 2 | Compliant |
+| RFC 6749 | OAuth 2.0 Authorization Framework | Compliant |
+| RFC 6750 | OAuth 2.0 Bearer Token Usage | Compliant |
+| RFC 7519 | JSON Web Token (JWT) | Compliant |
+| RFC 7636 | PKCE for OAuth Public Clients | Compliant |
+| OIDC Core 1.0 | OpenID Connect Core | Compliant |
 
 ---
 
@@ -942,3 +947,173 @@ public init(bytes: Data) throws {
 - [RFC 9221 - An Unreliable Datagram Extension to QUIC](https://www.rfc-editor.org/rfc/rfc9221)
 - [RFC 9369 - QUIC Version 2](https://www.rfc-editor.org/rfc/rfc9369)
 - [RFC 8446 - The Transport Layer Security (TLS) Protocol Version 1.3](https://www.rfc-editor.org/rfc/rfc8446)
+- [RFC 6749 - The OAuth 2.0 Authorization Framework](https://www.rfc-editor.org/rfc/rfc6749)
+- [RFC 6750 - The OAuth 2.0 Authorization Framework: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750)
+- [RFC 7519 - JSON Web Token (JWT)](https://www.rfc-editor.org/rfc/rfc7519)
+- [RFC 7636 - Proof Key for Code Exchange by OAuth Public Clients](https://www.rfc-editor.org/rfc/rfc7636)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+
+---
+
+## QuiverAuth: OAuth 2.0 / OIDC Compliance
+
+### 2026-02-28 Audit Notes
+
+Security analysis performed on the `QuiverAuth` module (`Sources/QuiverAuth/`). Four issues were identified and corrected:
+
+1. **RFC 6749 §2.3.1 — Dual client credentials (fixed):** `exchangeCode` was sending `client_secret` in both the HTTP Basic `Authorization` header and the `application/x-www-form-urlencoded` body simultaneously. RFC 6749 §2.3.1 requires that a client use only one authentication method per request. Fixed by removing `client_secret` from the form body; HTTP Basic auth is used exclusively.
+
+2. **OIDC Core §2 / RFC 7519 §4.1.1 — Missing `iss` accepted (fixed):** When `OIDCConfiguration.issuer` was set, a JWT without an `iss` claim silently passed issuer validation due to a multi-binding `if let` short-circuit. Fixed so that a missing `iss` claim now returns `.invalid(reason: "missing iss claim")` when issuer validation is configured.
+
+3. **OIDC Core §3.1.3.7 — Missing `nonce` in ID token accepted (fixed):** The callback handler sent a `nonce` in every authorization request but only verified it when the ID token happened to contain one. OIDC Core §3.1.3.7 requires the nonce to be present and validated when it was included in the request. Fixed with a `guard` that returns `missing_nonce_in_id_token` when the nonce claim is absent from the ID token.
+
+4. **JSON injection in error response (fixed):** The `callbackFailureResponse` JSON body was constructed via string interpolation, allowing `reason` strings containing `"` or `\` to produce malformed or injected JSON. Fixed by encoding the response dictionary with `JSONSerialization`.
+
+---
+
+### RFC 6749 §2.3.1: Client Authentication
+
+**Requirement:** A client MUST NOT use more than one authentication method per request. HTTP Basic authentication is the preferred method for confidential clients.
+
+**Implementation:** `Sources/QuiverAuth/OIDCLoginRedirect.swift` — `exchangeCode`
+
+```swift
+// client_secret sent via HTTP Basic auth header only
+if let clientSecret, !clientSecret.isEmpty {
+    let credentials = "\(clientID):\(clientSecret)"
+    let encoded = Data(credentials.utf8).base64EncodedString()
+    request.setValue("Basic \(encoded)", forHTTPHeaderField: "authorization")
+}
+```
+
+**Compliance:** COMPLIANT
+
+---
+
+### RFC 7636: Proof Key for Code Exchange (PKCE)
+
+**Requirement:** Authorization servers that support public clients MUST support PKCE. The `S256` method (SHA-256 of the code verifier, base64url-encoded) is required.
+
+**Implementation:** `Sources/QuiverAuth/OIDCLoginRedirect.swift` — `OIDCLoginStateStore.create` and `pkceS256`
+
+```swift
+let verifier = generateURLSafeToken(length: 48)   // 48 bytes = 64 base64url chars, within 43–128 limit
+let challenge = pkceS256(verifier)                 // BASE64URL(SHA256(verifier))
+// Sent as: code_challenge=<challenge>&code_challenge_method=S256
+```
+
+```swift
+private func pkceS256(_ verifier: String) -> String {
+    let digest = SHA256.hash(data: Data(verifier.utf8))
+    return Data(digest).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+```
+
+**Compliance:** COMPLIANT
+
+---
+
+### RFC 7519 §4.1 / OIDC Core §2: JWT Claims Validation
+
+**Requirements:**
+- §4.1.1 (`iss`): When an issuer is configured, the `iss` claim MUST be present and MUST match.
+- §4.1.3 (`aud`): When an audience is configured, the `aud` claim MUST be present and MUST include the expected audience.
+- §4.1.4 (`exp`): Tokens MUST be rejected after their expiry time (with configurable clock skew).
+- §4.1.5 (`nbf`): Tokens MUST NOT be accepted before `nbf` (with clock skew).
+- §4.1.2 (`sub`): Subject MUST be present and non-empty.
+
+**Implementation:** `Sources/QuiverAuth/OIDCValidator.swift` — `validate`
+
+```swift
+// iss — missing iss is rejected when issuer is configured
+if let issuer = configuration.issuer {
+    guard let tokenIssuer = claimsJSON["iss"] as? String else {
+        return .invalid(reason: "missing iss claim")
+    }
+    guard tokenIssuer == issuer else {
+        return .invalid(reason: "issuer mismatch")
+    }
+}
+
+// aud — audienceContains returns false when aud is absent, triggering rejection
+if let expectedAudience = configuration.audience,
+    !audienceContains(expectedAudience: expectedAudience, claims: claimsJSON) { ... }
+
+// exp / nbf — with configurable clock skew (default 60 s)
+if let exp = numericClaim("exp", in: claimsJSON), now > exp + skew { ... }
+if let nbf = numericClaim("nbf", in: claimsJSON), now + skew < nbf { ... }
+```
+
+**Compliance:** COMPLIANT
+
+---
+
+### OIDC Core §3.1.3.7: Nonce Validation
+
+**Requirement:** If a `nonce` was sent in the Authentication Request, the `nonce` claim MUST be present in the ID Token and its value MUST be verified.
+
+**Implementation:** `Sources/QuiverAuth/OIDCLoginRedirect.swift` — `OIDCLoginCallbackHandler.handleIfCallback`
+
+```swift
+if let idToken = tokenResponse.idToken {
+    guard let nonce = decodeStringClaim("nonce", fromJWT: idToken) else {
+        return callbackFailureResponse(reason: "missing_nonce_in_id_token", request: request)
+    }
+    guard nonce == pending.nonce else {
+        return callbackFailureResponse(reason: "nonce_mismatch", request: request)
+    }
+}
+```
+
+**Compliance:** COMPLIANT
+
+---
+
+### RFC 6749 §10.12 / OIDC Core §3.1.2.1: CSRF via State Parameter
+
+**Requirement:** The `state` parameter MUST be used to bind the authorization request to the callback and prevent CSRF.
+
+**Implementation:** `Sources/QuiverAuth/OIDCLoginRedirect.swift` — `OIDCLoginStateStore`
+
+- State is a 256-bit cryptographically random token (32 bytes via `UInt8.random`).
+- Stored in an in-memory actor; consumed exactly once (`entries.removeValue`).
+- Enforces a TTL (default 300 s; minimum 30 s) to reject replayed or stale callbacks.
+
+**Compliance:** COMPLIANT
+
+---
+
+### RFC 6750 §2.1: Bearer Token Extraction
+
+**Requirement:** The `Authorization` request header field using the `Bearer` scheme is the standard method.
+
+**Implementation:** `Sources/QuiverAuth/AuthExtraction.swift` — `extractBearerToken`
+
+```swift
+let prefix = "Bearer "
+guard raw.hasPrefix(prefix) else { continue }
+let token = String(raw.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+```
+
+**Compliance:** COMPLIANT
+
+---
+
+### Cookie Security (RFC 6265 / best practices)
+
+**Requirement:** Session cookies carrying authentication tokens must be protected against theft and CSRF.
+
+**Implementation:** `Sources/QuiverAuth/OIDCLoginRedirect.swift` — `sessionCookieHeader`
+
+| Attribute | Default | Purpose |
+|-----------|---------|---------|
+| `Secure` | `true` | Prevents transmission over plain HTTP |
+| `HttpOnly` | `true` | Prevents JavaScript access (mitigates XSS token theft) |
+| `SameSite=Lax` | `Lax` | Mitigates CSRF on cross-site top-level navigation |
+| `Max-Age` | 604800 (7 d) | Bounded session lifetime |
+| `Path=/` | `/` | Scoped to the entire application |
+
+**Compliance:** COMPLIANT

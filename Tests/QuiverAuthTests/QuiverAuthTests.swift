@@ -655,6 +655,137 @@ struct QuiverAuthTests {
         #expect(setCookieHeader?.contains("Max-Age=0") == true)
     }
 
+    // MARK: - RFC compliance regression tests
+
+    @Test
+    func oidcModeRejectsMissingIssClaimWhenIssuerConfigured() async {
+        // OIDC Core §2 / RFC 7519 §4.1.1: when issuer is configured, tokens without iss are invalid.
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            oidc: OIDCConfiguration(
+                issuer: "https://id.example",
+                allowUnverifiedSignature: true
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let exp = Int(Date().timeIntervalSince1970) + 300
+        // Token deliberately has no iss claim
+        let payload = #"{"sub":"user-1","exp":"# + String(exp) + #"}"#
+        let jwt = testJWT(payload: payload)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("authorization", "Bearer \(jwt)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow:
+            Issue.record("Expected token without iss claim to be denied when issuer is configured")
+        case .deny(let status, _):
+            #expect(status == 401)
+        }
+    }
+
+    @Test
+    func oidcModeAcceptsTokenWithMissingIssWhenNoIssuerConfigured() async {
+        // No issuer configured → iss claim is not required.
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            oidc: OIDCConfiguration(
+                allowUnverifiedSignature: true
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let exp = Int(Date().timeIntervalSince1970) + 300
+        let payload = #"{"sub":"user-no-iss","exp":"# + String(exp) + #"}"#
+        let jwt = testJWT(payload: payload)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("authorization", "Bearer \(jwt)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow(let principal):
+            #expect(principal.subject == "user-no-iss")
+        case .deny(let status, let reason):
+            Issue.record("Expected token without iss to be allowed when no issuer configured. status=\(status) reason=\(reason)")
+        }
+    }
+
+    @Test
+    func oidcModeRejectsAudienceMismatchWhenAudienceConfigured() async {
+        // RFC 7519 §4.1.3: when audience is configured, tokens with a different aud are invalid.
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            oidc: OIDCConfiguration(
+                audience: "expected-app",
+                allowUnverifiedSignature: true
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let exp = Int(Date().timeIntervalSince1970) + 300
+        let payload = #"{"sub":"user-1","aud":"wrong-app","exp":"# + String(exp) + #"}"#
+        let jwt = testJWT(payload: payload)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("authorization", "Bearer \(jwt)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow:
+            Issue.record("Expected audience mismatch to be denied")
+        case .deny(let status, _):
+            #expect(status == 401)
+        }
+    }
+
+    @Test
+    func oidcModeRejectsMissingAudienceWhenAudienceConfigured() async {
+        // RFC 7519 §4.1.3: when audience is configured, tokens without aud are invalid.
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            oidc: OIDCConfiguration(
+                audience: "expected-app",
+                allowUnverifiedSignature: true
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let exp = Int(Date().timeIntervalSince1970) + 300
+        // Token deliberately has no aud claim
+        let payload = #"{"sub":"user-1","exp":"# + String(exp) + #"}"#
+        let jwt = testJWT(payload: payload)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("authorization", "Bearer \(jwt)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow:
+            Issue.record("Expected token without aud claim to be denied when audience is configured")
+        case .deny(let status, _):
+            #expect(status == 401)
+        }
+    }
+
     @Test
     func oidcServerSessionMergesCachedUserInfoClaimsWithPrecedence() async {
         let config = AuthConfiguration(
