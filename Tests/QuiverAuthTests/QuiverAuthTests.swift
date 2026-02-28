@@ -44,7 +44,9 @@ struct QuiverAuthTests {
     }
 
     @Test
-    func allowsBearerTokenInCompositeMode() async {
+    func deniesBearerTokenWithoutOIDCConfigInCompositeMode() async {
+        // Security fix: bearer tokens MUST NOT be blindly accepted when
+        // no OIDC configuration is available to validate them.
         let config = AuthConfiguration(mode: .composite)
         let policy = AuthPolicy(configuration: config)
 
@@ -57,10 +59,10 @@ struct QuiverAuthTests {
 
         let decision = await policy.evaluate(request: request, isFromGateway: false)
         switch decision {
-        case .allow(let principal):
-            #expect(principal.source == "bearer")
-        case .deny:
-            Issue.record("Expected bearer token to authorize")
+        case .allow:
+            Issue.record("Expected bearer token without OIDC config to be denied")
+        case .deny(let status, _):
+            #expect(status == 401)
         }
     }
 
