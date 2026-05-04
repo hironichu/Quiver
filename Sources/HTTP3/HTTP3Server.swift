@@ -1110,9 +1110,13 @@ public final class HTTP3Router: Sendable {
     /// Handler for unmatched routes (default: 404)
     private let notFoundHandler: LockedBox<RouteHandler>
 
+    /// Static file configuration (directory path and URL base path)
+    private let staticFileConfig: LockedBox<(directory: String, basePath: String)?>
+
     /// Creates a new HTTP/3 router.
     public init() {
         self.routes = LockedBox([])
+        self.staticFileConfig = LockedBox(nil)
         self.notFoundHandler = LockedBox({ context, _ in
             try await context.respond(
                 status: 404,
@@ -1199,11 +1203,35 @@ public final class HTTP3Router: Sendable {
         notFoundHandler.withLock { $0 = handler }
     }
 
+    /// Configures static file serving.
+    ///
+    /// When a request doesn't match any registered routes, the router will attempt
+    /// to serve static files from the specified directory. The `basePath` parameter
+    /// determines which URL paths trigger static file serving (default: "/static").
+    ///
+    /// - Parameters:
+    ///   - directory: The file system directory to serve files from
+    ///   - basePath: The URL base path that triggers static file serving (e.g., "/static", "/", "")
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// let router = HTTP3Router()
+    /// router.serveStaticFiles(from: "/var/www/public", basePath: "/static")
+    /// router.serveStaticFiles(from: "/var/www/html", basePath: "/")  // Serve from root
+    ///
+    /// server.onRequest(router.handler)
+    /// ```
+    public func serveStaticFiles(from directory: String, basePath: String = "/static") {
+        staticFileConfig.withLock { $0 = (directory, basePath) }
+    }
+
     /// The combined request handler suitable for `HTTP3Server.onRequest()`.
     ///
     /// This handler matches incoming requests against registered routes
-    /// and dispatches to the appropriate handler. Unmatched requests are
-    /// forwarded to the not-found handler.
+    /// and dispatches to the appropriate handler. If static file serving is
+    /// configured and the request path matches the base path, it attempts
+    /// to serve the file. Unmatched requests are forwarded to the not-found handler.
     public var handler: HTTP3Server.RequestHandler {
         return { [self] context in
             let pathSegments = Self.parsePathSegments(context.request.path)
@@ -1230,6 +1258,22 @@ public final class HTTP3Router: Sendable {
             if let matchingRoute {
                 try await matchingRoute.route.handler(context, matchingRoute.parameters)
             } else {
+                // Try to serve static files if configured
+                if let (directory, basePath) = self.staticFileConfig.withLock({ $0 }) {
+                    if context.request.path.hasPrefix(basePath) {
+                        do {
+                            let served = try await self.tryServeStaticFile(
+                                context: context,
+                                directory: directory,
+                                basePath: basePath
+                            )
+                            if served { return }
+                        } catch {
+                            // Fall through to not-found handler
+                        }
+                    }
+                }
+
                 let fallback = self.notFoundHandler.withLock { $0 }
                 try await fallback(context, [:])
             }
@@ -1356,6 +1400,113 @@ public final class HTTP3Router: Sendable {
                 return false
             }
         }
+    }
+
+    /// Attempts to serve a static file from the configured directory.
+    ///
+    /// - Parameters:
+    ///   - context: The HTTP request context
+    ///   - directory: The base directory to serve files from
+    ///   - basePath: The URL base path (e.g., \"/static\")
+    /// - Returns: `true` if a file was served, `false` if the file was not found
+    /// - Throws: Errors if file operations fail
+    private func tryServeStaticFile(
+        context: HTTP3RequestContext,
+        directory: String,
+        basePath: String
+    ) async throws -> Bool {
+        // Only handle GET requests for static files
+        guard context.request.method == .get else {
+            return false
+        }
+
+        // Extract the relative path after the base path
+        var requestPath = context.request.path
+
+        // Strip query parameters
+        if let queryIndex = requestPath.firstIndex(of: "?") {
+            requestPath = String(requestPath[..<queryIndex])
+        }
+
+        // Remove the base path prefix
+        if !basePath.isEmpty && basePath != "/" {
+            guard requestPath.hasPrefix(basePath) else {
+                return false
+            }
+            requestPath = String(requestPath.dropFirst(basePath.count))
+        }
+
+        // Normalize path to prevent directory traversal attacks
+        let normalizedPath = requestPath
+            .replacingOccurrences(of: "//", with: "/")
+            .replacingOccurrences(of: "/./", with: "/")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        // Reject attempts to traverse directories
+        guard !normalizedPath.contains("..") else {
+            return false
+        }
+
+        // Construct full file path
+        let filePath = directory + "/" + normalizedPath
+
+        // Try to load and serve the file
+        let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: filePath) else {
+            return false
+        }
+
+        do {
+            let fileData = try Data(contentsOf: URL(fileURLWithPath: filePath))
+            let contentType = Self.mimeTypeForPath(filePath)
+
+            try await context.respond(
+                status: 200,
+                headers: [("content-type", contentType)],
+                fileData
+            )
+            return true
+        } catch {
+            try await context.respond(
+                status: 500,
+                headers: [("content-type", "text/plain")],
+                Data("Internal Server Error".utf8)
+            )
+            return true
+        }
+    }
+
+    /// Determines the MIME type based on file extension.
+    ///
+    /// - Parameter path: The file path
+    /// - Returns: The MIME type string (defaults to \"application/octet-stream\")
+    private static func mimeTypeForPath(_ path: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+
+        let mimeTypes: [String: String] = [
+            "html": "text/html; charset=utf-8",
+            "htm": "text/html; charset=utf-8",
+            "css": "text/css",
+            "js": "application/javascript",
+            "mjs": "application/javascript",
+            "json": "application/json",
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "webp": "image/webp",
+            "svg": "image/svg+xml",
+            "ico": "image/x-icon",
+            "txt": "text/plain",
+            "pdf": "application/pdf",
+            "woff": "font/woff",
+            "woff2": "font/woff2",
+            "ttf": "font/ttf",
+            "eot": "application/vnd.ms-fontobject",
+        ]
+
+        return mimeTypes[ext] ?? "application/octet-stream"
     }
 }
 
