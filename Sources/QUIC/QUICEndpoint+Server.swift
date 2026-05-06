@@ -46,17 +46,15 @@ extension QUICEndpoint {
     ) async throws -> (endpoint: QUICEndpoint, runTask: Task<Void, Error>) {
         let endpoint = QUICEndpoint(configuration: configuration, isServer: true)
 
-        // Start the I/O loop in a separate task
-        let runTask = Task {
-            try await endpoint.run(socket: socket)
-        }
+        // Bind the UDP socket synchronously before returning so any bind
+        // failure (e.g. address in use, permission denied, Windows WSA error)
+        // is surfaced to the caller instead of being swallowed by the runTask.
+        try await endpoint.startServing(socket: socket)
 
-        // Wait briefly for the socket to start and get the address
-        try await Task.sleep(for: .milliseconds(10))
-        if let nioAddr = await socket.localAddress,
-            let addr = SocketAddress(nioAddr)
-        {
-            await endpoint.setLocalAddress(addr)
+        // Drive the receive/timer loops in the background. The socket is
+        // already started; runPacketLoop only owns the loop lifecycle.
+        let runTask = Task {
+            try await endpoint.runPacketLoop(socket: socket)
         }
 
         return (endpoint, runTask)

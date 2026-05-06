@@ -32,6 +32,7 @@ import Foundation
     #endif
 #elseif os(Windows)
     import ucrt
+    import WinSDK
 #endif
 #if os(Android)
     import Android
@@ -41,6 +42,19 @@ import Foundation
 // internal let IPPROTO_IPV6: Int32 = 41
 // internal let IPPROTO_UDP: Int32 = 17
 #endif
+
+private enum PlatformSocketProtocolConstants {
+    #if os(Windows)
+        static let ip: CInt = 0
+        static let ipv6: CInt = 41
+        static let udp: CInt = 17
+    #else
+        static let ip: CInt = CInt(IPPROTO_IP)
+        static let ipv6: CInt = CInt(IPPROTO_IPV6)
+        static let udp: CInt = CInt(IPPROTO_UDP)
+    #endif
+}
+
 // MARK: - Platform Socket Option Constants
 
 /// Platform-resolved socket option constants for QUIC network integration.
@@ -55,7 +69,7 @@ public enum PlatformSocketConstants {
     // ---------------------------------------------------------------
 
     /// Socket option level for IPv4 DF control.
-    public static let ipv4DFLevel: CInt = CInt(IPPROTO_IP)
+    public static let ipv4DFLevel: CInt = PlatformSocketProtocolConstants.ip
 
     /// Socket option name for IPv4 DF control.
     ///
@@ -74,7 +88,7 @@ public enum PlatformSocketConstants {
     #endif
 
     /// Socket option level for IPv6 DF control.
-    public static let ipv6DFLevel: CInt = CInt(IPPROTO_IPV6)
+    public static let ipv6DFLevel: CInt = PlatformSocketProtocolConstants.ipv6
 
     /// Socket option name for IPv6 DF control.
     ///
@@ -103,10 +117,10 @@ public enum PlatformSocketConstants {
     // ---------------------------------------------------------------
 
     /// IPv4 level for ECN options.
-    public static let ipv4ECNLevel: CInt = CInt(IPPROTO_IP)
+    public static let ipv4ECNLevel: CInt = PlatformSocketProtocolConstants.ip
 
     /// IPv6 level for ECN options.
-    public static let ipv6ECNLevel: CInt = CInt(IPPROTO_IPV6)
+    public static let ipv6ECNLevel: CInt = PlatformSocketProtocolConstants.ipv6
 
     /// Socket option to request TOS/ECN delivery on received IPv4 packets.
     ///
@@ -186,7 +200,7 @@ public enum PlatformSocketConstants {
     // ---------------------------------------------------------------
 
     /// `SOL_UDP` — needed for GRO/GSO options. `IPPROTO_UDP` on most platforms.
-    public static let solUDP: CInt = CInt(IPPROTO_UDP)
+    public static let solUDP: CInt = PlatformSocketProtocolConstants.udp
 
     // ---------------------------------------------------------------
     // MARK: Interface MTU (ioctl)

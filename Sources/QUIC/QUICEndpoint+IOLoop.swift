@@ -79,13 +79,44 @@ extension QUICEndpoint {
         self.isRunning = false
     }
 
+    /// Synchronously prepares the endpoint to serve and starts the underlying
+    /// socket so that bind failures are surfaced before the I/O loop spawns.
+    ///
+    /// Used by `serve(socket:configuration:)` so the caller observes a real
+    /// `bind()` error (e.g. EADDRINUSE, Windows WSA error) instead of having
+    /// it swallowed by a detached `Task`.
+    func startServing(socket: any QUICSocket) async throws {
+        guard !isRunning else {
+            throw QUICEndpointError.alreadyRunning
+        }
+
+        self.socket = socket
+        self.isRunning = true
+        self.shouldStop = false
+
+        do {
+            try await socket.start()
+        } catch {
+            // Roll back state so the endpoint can be retried/replaced.
+            self.socket = nil
+            self.isRunning = false
+            throw error
+        }
+
+        if let nioAddr = await socket.localAddress,
+           let addr = SocketAddress(nioAddr) {
+            self._localAddress = addr
+        }
+    }
+
     /// Internal method to run packet loop without setup (for use by dial())
     ///
     /// - Parameter socket: The already-started socket
     func runPacketLoop(socket: any QUICSocket) async throws {
         self.shouldStop = false
 
-        // Update local address
+        // Update local address (covers the dial() path where startServing
+        // wasn't used).
         if let nioAddr = await socket.localAddress,
            let addr = SocketAddress(nioAddr) {
             _localAddress = addr

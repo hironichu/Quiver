@@ -11,6 +11,15 @@ import Foundation
 
 #if canImport(CoreFoundation)
 import CoreFoundation
+#elseif os(Windows)
+import WinSDK
+private func CFAbsoluteTimeGetCurrent() -> Double {
+    var freq = LARGE_INTEGER()
+    var count = LARGE_INTEGER()
+    QueryPerformanceFrequency(&freq)
+    QueryPerformanceCounter(&count)
+    return Double(count.QuadPart) / Double(freq.QuadPart)
+}
 #else
 private func CFAbsoluteTimeGetCurrent() -> Double {
     var ts = timespec()
@@ -18,6 +27,7 @@ private func CFAbsoluteTimeGetCurrent() -> Double {
     return Double(ts.tv_sec) + Double(ts.tv_nsec) / 1_000_000_000
 }
 #endif
+
 @testable import QUICCore
 
 @Suite("QUICCore Performance Benchmarks")

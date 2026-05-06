@@ -23,6 +23,7 @@ import SystemPackage
     #endif
 #elseif os(Windows)
     import ucrt
+    import WinSDK
 #elseif os(Android)
     import Bionic  // The native Android C library module
     import Android
@@ -496,12 +497,15 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
         // Enable ECN metadata on the NIO datagram channel.
         // NIO will set IP_RECVTOS / IPV6_RECVTCLASS and populate
         // AddressedEnvelope.Metadata.ecnState on received datagrams.
+        // Windows/Winsock does not support IP_RECVTOS via this channel option.
+        #if !os(Windows)
         if configuration.enableECN {
             bootstrap = bootstrap.channelOption(
                 ChannelOptions.explicitCongestionNotification,
                 value: true
             )
         }
+        #endif
 
         // Apply SO_REUSEPORT if needed (for multicast)
         #if canImport(Darwin)
@@ -603,6 +607,7 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
         // Set IP_MULTICAST_IF after binding (required for multicast send to work on macOS)
         // Only set for multicast mode (reusePort == true) to avoid interfering with unicast
         // Use NIO's SocketOptionProvider.unsafeSetSocketOption to set in_addr structure
+        #if !os(Windows)
         if !isIPv6, configuration.reusePort, let socketChannel = channel as? SocketOptionProvider {
             do {
                 let interfaceAddr = try getDefaultInterfaceAddress()
@@ -618,11 +623,13 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
                 #endif
             }
         }
+        #endif
 
         return channel
     }
 
     /// Gets the first non-loopback IPv4 address for multicast interface
+    #if !os(Windows)
     private func getDefaultInterfaceAddress() throws -> in_addr {
         #if canImport(Darwin)
             var ifaddr: UnsafeMutablePointer<ifaddrs>?
@@ -663,6 +670,7 @@ public final class NIOUDPTransport: UDPTransport, MulticastCapable, @unchecked S
             #endif
         #endif
     }
+    #endif
 
     /// Gets a network device by name, using cache.
     private func getDevice(named name: String) async throws -> NIONetworkDevice {
@@ -720,9 +728,14 @@ private final class DatagramHandler: ChannelInboundHandler, @unchecked Sendable 
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        // Log error but keep channel open for UDP
-        // UDP is connectionless, so individual errors shouldn't close the channel
+        // UDP is connectionless — individual errors must not close the channel.
         #if DEBUG
+            // WSAECONNRESET (10054) on Windows: the remote host sent an ICMP
+            // "port unreachable" after the client disconnected. This is normal
+            // and expected after a QUIC CONNECTION_CLOSE exchange — suppress it.
+            let description = "\(error)"
+            guard !description.contains("10054") &&
+                  !description.lowercased().contains("forcibly closed") else { return }
             print("NIOUDPTransport channel error: \(error)")
         #endif
     }
