@@ -36,7 +36,10 @@ Quiver provides a complete, type-safe QUIC stack designed for modern Swift appli
 ## Requirements
 
 - Swift 6.0+
-- macOS 15.0+ / Linux (Ubuntu 22.04+)
+- macOS 15.0+ / Linux (Ubuntu 22.04+) / **Windows 11** (Visual Studio 2022 + vcpkg)
+
+> **Windows:** See [Docs/Windows.md](Docs/Windows.md) for full setup instructions,
+> required environment variables, and known platform-specific fixes.
 
 ## Installation
 

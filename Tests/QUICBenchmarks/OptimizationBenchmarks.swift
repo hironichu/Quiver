@@ -13,6 +13,15 @@ import Crypto
 
 #if canImport(CoreFoundation)
 import CoreFoundation
+#elseif os(Windows)
+import WinSDK
+private func CFAbsoluteTimeGetCurrent() -> Double {
+    var freq = LARGE_INTEGER()
+    var count = LARGE_INTEGER()
+    QueryPerformanceFrequency(&freq)
+    QueryPerformanceCounter(&count)
+    return Double(count.QuadPart) / Double(freq.QuadPart)
+}
 #else
 private func CFAbsoluteTimeGetCurrent() -> Double {
     var ts = timespec()

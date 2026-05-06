@@ -85,20 +85,22 @@ let package = Package(
     ],
     dependencies: [
         // NIO (used by NIOUDPTransport and other targets)
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
+        // Local checkout pinned to PR #3433 (Windows fixes) — restore upstream when merged.
+        .package(name: "swift-nio", path: "../swift-nio"),
 
         // NIO SSL (TLS over TCP for Alt-Svc gateway)
-        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.29.0"),
+        // Local checkout pinned to PR #567 (Windows support) — restore upstream when merged.
+        .package(name: "swift-nio-ssl", path: "../swift-nio-ssl"),
 
         // Cryptography
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.2.0"),
-
+        // .package(url: "https://github.com/apple/swift-crypto.git", from: "4.2.0"),
+        .package(path:"../swift-crypto"),
         // X.509 Certificates and ASN.1
-        .package(url: "https://github.com/apple/swift-certificates.git", from: "1.17.0"),
-        .package(url: "https://github.com/apple/swift-asn1.git", from: "1.5.1"),
+        .package(path: "../swift-certificates"),
+        .package(path: "../swift-asn1"),
 
         // Logging
-        .package(url: "https://github.com/apple/swift-log.git", from: "1.9.1"),
+        .package(path: "../swift-log"),
 
         // JWT / JWK verification (cross-platform, maintained)
         .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.3.0"),
@@ -106,7 +108,8 @@ let package = Package(
         // Documentation
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
 
-        .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
+        // .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
+        .package(path: "../swift-system"),
     ],
     targets: [
         // MARK: - Core Types (No I/O)

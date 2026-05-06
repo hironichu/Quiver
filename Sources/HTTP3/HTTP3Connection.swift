@@ -408,6 +408,11 @@ public actor HTTP3Connection {
     ///
     /// - Parameter error: Optional HTTP/3 error code (default: no error)
     public func close(error: HTTP3ErrorCode = .noError) async {
+        // Guard against double-close: if we're already closed or in the process
+        // of shutting down (e.g. we received a CONNECTION_CLOSE from the peer
+        // and QUIC already called shutdown()), there is nothing left to do here.
+        guard state != .closed else { return }
+
         // Send GOAWAY if we haven't already
         if case .ready = state {
             let lastID: UInt64 = (role == .server) ? nextStreamID : 0
