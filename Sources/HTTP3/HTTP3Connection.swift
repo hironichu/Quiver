@@ -421,16 +421,22 @@ public actor HTTP3Connection {
 
         state = .closed
         incomingRequestsContinuation?.finish()
+        incomingRequestsContinuation = nil
         incomingExtendedConnectContinuation?.finish()
+        incomingExtendedConnectContinuation = nil
         incomingWebTransportSessionContinuation?.finish()
+        incomingWebTransportSessionContinuation = nil
         datagramRoutingTask?.cancel()
         datagramRoutingTask = nil
 
-        // Close all active WebTransport sessions
-        for (_, session) in webTransportSessions {
+        // Close all active WebTransport sessions. Snapshot and clear first so
+        // session close callbacks can unregister themselves without mutating a
+        // dictionary while this actor is suspended on `await`.
+        let sessions = Array(webTransportSessions.values)
+        webTransportSessions.removeAll()
+        for session in sessions {
             await session.abort(applicationErrorCode: 0)
         }
-        webTransportSessions.removeAll()
 
         // Close the QUIC connection
         await quicConnection.close(applicationError: error.rawValue, reason: error.reason)

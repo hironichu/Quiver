@@ -7,15 +7,15 @@
 ///
 /// ## Platform Matrix
 ///
-/// | Option             | Linux constant          | macOS/iOS constant     |
-/// |--------------------|-------------------------|------------------------|
-/// | DF (IPv4)          | `IP_PMTUDISC_DO`        | `IP_DONTFRAG`          |
-/// | DF (IPv6)          | `IPV6_DONTFRAG`         | `IPV6_DONTFRAG`        |
-/// | ECN recv (IPv4)    | `IP_RECVTOS`            | `IP_RECVTOS`           |
-/// | ECN recv (IPv6)    | `IPV6_RECVTCLASS`       | `IPV6_RECVTCLASS`      |
-/// | ECN send (IPv4)    | `IP_TOS`                | `IP_TOS`               |
-/// | ECN send (IPv6)    | `IPV6_TCLASS`           | `IPV6_TCLASS`          |
-/// | Interface MTU      | `ioctl(SIOCGIFMTU)`     | `ioctl(SIOCGIFMTU)`    |
+/// | Option             | Linux constant          | macOS/iOS constant     | Windows constant        |
+/// |--------------------|-------------------------|------------------------|-------------------------|
+/// | DF (IPv4)          | `IP_PMTUDISC_DO`        | `IP_DONTFRAG`          | `IP_DONTFRAGMENT` (14)  |
+/// | DF (IPv6)          | `IPV6_DONTFRAG`         | `IPV6_DONTFRAG` (62)   | `IPV6_DONTFRAG` (14)    |
+/// | ECN recv (IPv4)    | `IP_RECVTOS`            | `IP_RECVTOS`           | *(unsupported)*         |
+/// | ECN recv (IPv6)    | `IPV6_RECVTCLASS`       | `IPV6_RECVTCLASS`      | *(unsupported)*         |
+/// | ECN send (IPv4)    | `IP_TOS`                | `IP_TOS`               | *(unsupported)*         |
+/// | ECN send (IPv6)    | `IPV6_TCLASS`           | `IPV6_TCLASS`          | *(unsupported)*         |
+/// | Interface MTU      | `ioctl(SIOCGIFMTU)`     | `ioctl(SIOCGIFMTU)`    | *(not yet implemented)* |
 ///
 /// All values are exposed as `CInt` so they can be passed directly to
 /// NIO `ChannelOptions.Types.SocketOption` or raw `setsockopt()` calls.
@@ -75,11 +75,18 @@ public enum PlatformSocketConstants {
     ///
     /// - Linux: `IP_MTU_DISCOVER` with value `IP_PMTUDISC_DO`
     /// - macOS/iOS: `IP_DONTFRAG` with value `1`
+    /// - Windows: `IP_DONTFRAGMENT` (14, ws2tcpip.h) with value `1` (Vista+)
     #if os(Linux)
         public static let ipv4DFOption: CInt = CInt(IP_MTU_DISCOVER)
         public static let ipv4DFValue: CInt = CInt(IP_PMTUDISC_DO)
     #elseif canImport(Darwin)
         public static let ipv4DFOption: CInt = CInt(IP_DONTFRAG)
+        public static let ipv4DFValue: CInt = 1
+    #elseif os(Windows)
+        // IP_DONTFRAGMENT = 14 (ws2tcpip.h, Windows Vista+).
+        // Sets the DF bit on outgoing IPv4 UDP datagrams, enabling ICMP "too big"
+        // signals that QUIC's DPLPMTUD probing relies on.
+        public static let ipv4DFOption: CInt = 14
         public static let ipv4DFValue: CInt = 1
     #else
         // Unsupported platform — callers should check `isDFSupported`.
@@ -92,12 +99,15 @@ public enum PlatformSocketConstants {
 
     /// Socket option name for IPv6 DF control.
     ///
-    /// `IPV6_DONTFRAG` is the same on Linux and Darwin.
+    /// `IPV6_DONTFRAG` is the same on Linux, Darwin, and Windows.
     #if os(Linux)
         public static let ipv6DFOption: CInt = CInt(IPV6_DONTFRAG)
     #elseif canImport(Darwin)
         // IPV6_DONTFRAG is defined as 62 in <netinet6/in6.h> but not exported by Swift's Darwin module.
         public static let ipv6DFOption: CInt = CInt(62)
+    #elseif os(Windows)
+        // IPV6_DONTFRAG = 14 (ws2tcpip.h, Windows Vista+).
+        public static let ipv6DFOption: CInt = 14
     #else
         public static let ipv6DFOption: CInt = 0
     #endif
@@ -106,7 +116,7 @@ public enum PlatformSocketConstants {
     public static let ipv6DFValue: CInt = 1
 
     /// Whether the current platform supports setting the DF bit.
-    #if os(Linux) || canImport(Darwin)
+    #if os(Linux) || canImport(Darwin) || os(Windows)
         public static let isDFSupported: Bool = true
     #else
         public static let isDFSupported: Bool = false

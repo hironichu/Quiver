@@ -76,6 +76,18 @@ extension HTTP3Connection {
             }
         }
         Self.logger.debug("processIncomingStreams ended (role=\(role))")
+        if state != .closed {
+            state = .closed
+            incomingRequestsContinuation?.finish()
+            incomingRequestsContinuation = nil
+            incomingExtendedConnectContinuation?.finish()
+            incomingExtendedConnectContinuation = nil
+            incomingWebTransportSessionContinuation?.finish()
+            incomingWebTransportSessionContinuation = nil
+            datagramRoutingTask?.cancel()
+            datagramRoutingTask = nil
+            webTransportSessions.removeAll()
+        }
     }
 
     // MARK: - Unidirectional Stream Handling

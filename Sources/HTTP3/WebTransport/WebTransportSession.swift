@@ -1071,6 +1071,10 @@ public actor WebTransportSession {
         capsuleEventContinuation?.finish()
         capsuleEventContinuation = nil
 
+        // Snapshot connection reference before the closures that capture it.
+        let connection = self.connection
+        let sessionID = self.sessionID
+
         // Unregister all active streams from the HTTP/3 scheduler
         let allStreamIDs = Array(activeBidiStreams.keys) + Array(activeUniStreams.keys)
         if !allStreamIDs.isEmpty {
@@ -1084,6 +1088,10 @@ public actor WebTransportSession {
         // Clear active streams
         activeBidiStreams.removeAll()
         activeUniStreams.removeAll()
+
+        Task {
+            await connection.unregisterWebTransportSession(sessionID)
+        }
 
         Self.logger.info(
             "WebTransport session closed",

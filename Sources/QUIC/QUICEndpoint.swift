@@ -463,6 +463,7 @@ public actor QUICEndpoint {
                 // Close connection due to idle timeout
                 await connection.close(error: nil)
                 logger.info("Idle timeout: UNREGISTER for SCID=\(connection.sourceConnectionID)")
+                pendingConnections.remove(ObjectIdentifier(connection))
                 router.unregister(connection)
                 timerManager.markClosed(connection)
             }

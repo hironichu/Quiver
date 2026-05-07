@@ -8,6 +8,10 @@
 
 import Testing
 import Foundation
+import Crypto
+@testable import QUIC
+@testable import QUICCore
+@testable import QUICCrypto
 
 #if canImport(CoreFoundation)
 import CoreFoundation
@@ -27,8 +31,6 @@ private func CFAbsoluteTimeGetCurrent() -> Double {
     return Double(ts.tv_sec) + Double(ts.tv_nsec) / 1_000_000_000
 }
 #endif
-@testable import QUICCore
-@testable import QUICCrypto
 
 @Suite("QUIC Performance Benchmarks")
 struct QUICBenchmarks {
