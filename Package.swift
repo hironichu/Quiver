@@ -2,6 +2,30 @@
 
 import PackageDescription
 
+// When SWIFTCI_USE_LOCAL_DEPS is set (mirrors Apple's CI convention), resolve
+// swift-nio and swift-nio-ssl from local sibling checkouts that contain the
+// Windows-specific patches pending upstream PRs. In all other environments the
+// published forks on hironichu/swift-nio and hironichu/swift-nio-ssl are used.
+let useLocalDeps = Context.environment["SWIFTCI_USE_LOCAL_DEPS"] != nil
+
+func nioDependencies() -> [Package.Dependency] {
+    if useLocalDeps {
+        return [
+            .package(path: "../swift-nio"),
+            .package(path: "../swift-nio-ssl"),
+            .package(path: "../swift-system"),
+        ]
+    } else {
+        return [
+            // Fork of apple/swift-nio with Windows fixes (PR #3433).
+            .package(url: "https://github.com/hironichu/swift-nio.git", branch: "pr-3433"),
+            // Fork of apple/swift-nio-ssl with Windows support (PR #567).
+            .package(url: "https://github.com/hironichu/swift-nio-ssl.git", branch: "pr-567-windows-support"),
+            .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
+        ]
+    }
+}
+
 let package = Package(
     name: "Quiver",
 
@@ -52,64 +76,23 @@ let package = Package(
             name: "MOQClient",
             targets: ["MOQClient"]
         ),
-        // Example: QUIC Echo Server/Client
-        .executable(
-            name: "QUICEchoServer",
-            targets: ["QUICEchoServer"]
-        ),
-        // Example: HTTP/3 Demo Server/Client
-        .executable(
-            name: "HTTP3Demo",
-            targets: ["HTTP3Demo"]
-        ),
-        // Example: WebTransport Echo Server/Client
-        .executable(
-            name: "WebTransportDemo",
-            targets: ["WebTransportDemo"]
-        ),
-        // Example: QUIC Network Configuration Demo (ECN / PMTUD)
-        .executable(
-            name: "QUICNetworkDemo",
-            targets: ["QUICNetworkDemo"]
-        ),
-        // Example: Alt-Svc Gateway Demo (HTTP/1.1 + HTTP/2 -> HTTP/3)
-        .executable(
-            name: "AltSvcDemo",
-            targets: ["AltSvcDemo"]
-        ),
-        // Example: Minimal HTTP/3 Auth Demo (request + Extended CONNECT)
-        .executable(
-            name: "HTTP3AuthDemo",
-            targets: ["HTTP3AuthDemo"]
-        ),
     ],
-    dependencies: [
-        // NIO (used by NIOUDPTransport and other targets)
-        // Local checkout pinned to PR #3433 (Windows fixes) — restore upstream when merged.
-        .package(name: "swift-nio", path: "../swift-nio"),
+    dependencies: nioDependencies() + [
+        // Cryptography — 4.5.0+ depends on an unstable swift-asn1; cap below it.
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.5.0"),
 
-        // NIO SSL (TLS over TCP for Alt-Svc gateway)
-        // Local checkout pinned to PR #567 (Windows support) — restore upstream when merged.
-        .package(name: "swift-nio-ssl", path: "../swift-nio-ssl"),
-
-        // Cryptography
-        // .package(url: "https://github.com/apple/swift-crypto.git", from: "4.2.0"),
-        .package(path:"../swift-crypto"),
         // X.509 Certificates and ASN.1
-        .package(path: "../swift-certificates"),
-        .package(path: "../swift-asn1"),
+        .package(url: "https://github.com/apple/swift-certificates.git", from: "1.17.0"),
+        .package(url: "https://github.com/apple/swift-asn1.git", from: "1.0.0"),
 
         // Logging
-        .package(path: "../swift-log"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.12.0"),
 
         // JWT / JWK verification (cross-platform, maintained)
-        .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.3.0"),
+        .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.5.0"),
 
         // Documentation
-        .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.4.5"),
-
-        // .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
-        .package(path: "../swift-system"),
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.5.0"),
     ],
     targets: [
         // MARK: - Core Types (No I/O)
@@ -398,6 +381,7 @@ let package = Package(
                 "QUICCore",
                 "QUICCrypto",
                 "QUICStream",
+                .product(name: "Crypto", package: "swift-crypto"),
             ],
             path: "Tests/QUICBenchmarks"
         ),

@@ -33,6 +33,9 @@ struct PlatformSocketTests {
 
     @Test("queryInterfaceMTU on loopback returns valid MTU")
     func loopbackMTUQuery() throws {
+        #if os(Windows)
+        // Windows has no "lo" / "lo0" loopback interface name; skip.
+        #else
         // "lo" on Linux, "lo0" on macOS — one of them must exist
         let linuxMTU = queryInterfaceMTU("lo")
         let darwinMTU = queryInterfaceMTU("lo0")
@@ -43,6 +46,7 @@ struct PlatformSocketTests {
         let resolved = try #require(mtu, "Expected loopback MTU on Linux (lo) or macOS (lo0)")
         #expect(resolved >= 1500, "Loopback MTU should be >= 1500, got \(resolved)")
         #expect(resolved <= 1_000_000, "Loopback MTU suspiciously large: \(resolved)")
+        #endif
     }
 
     @Test("queryInterfaceMTU rejects oversized interface name without memory corruption")
@@ -118,6 +122,11 @@ struct PlatformSocketTests {
 
     @Test("Platform constants have non-zero values on supported OS")
     func platformConstantsSanity() {
+        #if os(Windows)
+        // ECN and MTU-query via ioctl are not supported on Windows (Winsock);
+        // only verify the DF constant which is defined via WinSDK.
+        #expect(PlatformSocketConstants.isDFSupported == true)
+        #else
         #expect(PlatformSocketConstants.isDFSupported == true)
         #expect(PlatformSocketConstants.isECNSupported == true)
         #expect(PlatformSocketConstants.isMTUQuerySupported == true)
@@ -140,6 +149,7 @@ struct PlatformSocketTests {
         #expect(
             PlatformSocketConstants.ipv6ECNLevel > 0,
             "IPv6 ECN level (IPPROTO_IPV6) must be > 0")
+        #endif
     }
 
     @Test("PlatformSocketOptions builder produces correct option count")
@@ -147,17 +157,30 @@ struct PlatformSocketTests {
         let ipv4 = PlatformSocketOptions.forQUIC(
             addressFamily: .ipv4, enableECN: true, enableDF: true
         )
+        #if os(Windows)
+        // ECN (IP_RECVTOS/IP_TOS) is unsupported on Winsock; only DF(1) is emitted.
+        #expect(
+            ipv4.options.count == 1,
+            "IPv4 with ECN+DF on Windows should produce 1 option (DF only), got \(ipv4.options.count)")
+        #expect(ipv4.dfEnabled == true)
+        #expect(ipv4.ecnEnabled == false)
+        #else
         // DF(1) + RECVTOS(1) + TOS(1) = 3 options
         #expect(
             ipv4.options.count == 3,
             "IPv4 with ECN+DF should produce 3 options, got \(ipv4.options.count)")
         #expect(ipv4.dfEnabled == true)
         #expect(ipv4.ecnEnabled == true)
+        #endif
 
         let ipv6 = PlatformSocketOptions.forQUIC(
             addressFamily: .ipv6, enableECN: true, enableDF: true
         )
+        #if os(Windows)
+        #expect(ipv6.options.count == 1)
+        #else
         #expect(ipv6.options.count == 3)
+        #endif
 
         let noECN = PlatformSocketOptions.forQUIC(
             addressFamily: .ipv4, enableECN: false, enableDF: true

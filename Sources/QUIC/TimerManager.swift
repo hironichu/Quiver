@@ -100,15 +100,14 @@ public final class TimerManager: Sendable {
         }
     }
 
-    /// Marks a connection as closed
+    /// Removes a closed connection from timer management.
+    ///
+    /// Closed connections have no future timer work. Keeping them here would
+    /// retain the full `ManagedConnection` graph after the router has already
+    /// unregistered it.
     /// - Parameter connection: The connection that closed
     public func markClosed(_ connection: ManagedConnection) {
-        connections.withLock { conns in
-            if var info = conns[connection.sourceConnectionID] {
-                info.isClosed = true
-                conns[connection.sourceConnectionID] = info
-            }
-        }
+        unregister(connection)
     }
 
     // MARK: - Timer Processing

@@ -286,6 +286,7 @@ extension QUICEndpoint {
             logger.debug(
                 "UNREGISTER from handleVersionNegotiationPacket for SCID=\(connection.sourceConnectionID)"
             )
+            pendingConnections.remove(ObjectIdentifier(connection))
             router.unregister(connection)
             timerManager.markClosed(connection)
         }

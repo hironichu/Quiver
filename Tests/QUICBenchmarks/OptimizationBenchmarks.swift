@@ -59,7 +59,11 @@ struct AEADBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("AES-128-GCM seal: \(Int(opsPerSecond)) ops/sec (\(String(format: "%.3f", elapsed * 1_000_000 / Double(iterations))) us/op)")
+        #if os(Windows) && DEBUG
+        #expect(opsPerSecond > 1_000, "Expected > 1k seals/sec (Windows debug)")
+        #else
         #expect(opsPerSecond > 10_000, "Expected > 10k seals/sec")
+        #endif
     }
 
     /// Baseline: AES-128-GCM open hot path
@@ -90,7 +94,11 @@ struct AEADBenchmarks {
 
         let opsPerSecond = Double(count) / elapsed
         print("AES-128-GCM open: \(Int(opsPerSecond)) ops/sec (\(String(format: "%.3f", elapsed * 1_000_000 / Double(count))) us/op)")
+        #if os(Windows) && DEBUG
+        #expect(opsPerSecond > 1_000, "Expected > 1k opens/sec (Windows debug)")
+        #else
         #expect(opsPerSecond > 10_000, "Expected > 10k opens/sec")
+        #endif
     }
 
     /// ChaCha20-Poly1305 seal hot path
@@ -140,7 +148,11 @@ struct AEADBenchmarks {
 
         let opsPerSecond = Double(iterations) / elapsed
         print("AES-128-GCM seal (40B): \(Int(opsPerSecond)) ops/sec (\(String(format: "%.3f", elapsed * 1_000_000 / Double(iterations))) us/op)")
+        #if os(Windows) && DEBUG
+        #expect(opsPerSecond > 1_000, "Expected > 1k seals/sec for small packets (Windows debug)")
+        #else
         #expect(opsPerSecond > 25_000, "Expected > 25k seals/sec for small packets")
+        #endif
     }
 }
 

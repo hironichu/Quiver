@@ -300,6 +300,7 @@ extension QUICEndpoint {
         }
 
         logger.debug("outboundSendLoop EXITED for connection SCID=\(connection.sourceConnectionID) after \(iterationCount) iterations, shouldStop=\(shouldStop)")
+        pendingConnections.remove(ObjectIdentifier(connection))
         router.unregister(connection)
         timerManager.markClosed(connection)
     }
