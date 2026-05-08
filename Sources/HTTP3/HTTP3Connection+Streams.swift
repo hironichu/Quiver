@@ -414,23 +414,38 @@ extension HTTP3Connection {
             return
         }
 
-        // Try to decode the first varint — this is either a WT session ID
-        // or an HTTP/3 frame type
+        // Try to decode the first varint — this is either:
+        //   (a) a bare session ID (legacy/Quiver-self framing), or
+        //   (b) the WEBTRANSPORT_STREAM frame type 0x41 followed by session ID
+        //       (per draft-ietf-webtrans-http3 §4.2 — what browsers send), or
+        //   (c) an HTTP/3 frame type.
         do {
-            let (varint, consumed) = try Varint.decode(from: firstData)
-            let candidateSessionID = varint.value
+            let (firstVarint, firstConsumed) = try Varint.decode(from: firstData)
 
-            // Check if this matches a known WebTransport session
-            if let session = webTransportSessions[candidateSessionID] {
-                Self.logger.debug("handleIncomingBidiStream: stream \(stream.id) matched WebTransport session \(candidateSessionID)")
-                let remaining: Data
-                if consumed < firstData.count {
-                    remaining = Data(firstData.dropFirst(consumed))
-                } else {
-                    remaining = Data()
-                }
+            // Case (a): first varint is the session ID directly.
+            if let session = webTransportSessions[firstVarint.value] {
+                Self.logger.debug("handleIncomingBidiStream: stream \(stream.id) matched WebTransport session \(firstVarint.value) (no frame-type prefix)")
+                let remaining: Data = firstConsumed < firstData.count
+                    ? Data(firstData.dropFirst(firstConsumed))
+                    : Data()
                 await session.deliverIncomingBidirectionalStream(stream, initialData: remaining)
                 return
+            }
+
+            // Case (b): WEBTRANSPORT_STREAM frame type (0x41) prefix.
+            if firstVarint.value == 0x41 {
+                let afterType = Data(firstData.dropFirst(firstConsumed))
+                if !afterType.isEmpty {
+                    let (sidVarint, sidConsumed) = try Varint.decode(from: afterType)
+                    if let session = webTransportSessions[sidVarint.value] {
+                        Self.logger.debug("handleIncomingBidiStream: stream \(stream.id) matched WebTransport session \(sidVarint.value) (with 0x41 prefix)")
+                        let remaining: Data = sidConsumed < afterType.count
+                            ? Data(afterType.dropFirst(sidConsumed))
+                            : Data()
+                        await session.deliverIncomingBidirectionalStream(stream, initialData: remaining)
+                        return
+                    }
+                }
             }
         } catch {
             // Varint decode failed — treat as HTTP/3 request stream

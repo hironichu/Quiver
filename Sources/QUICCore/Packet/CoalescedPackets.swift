@@ -125,11 +125,20 @@ public struct CoalescedPacketParser: Sendable {
             let packetStart = offset
 
             if isLongHeader {
-                // Long header packet - need to parse to find the length
-                packetLength = try parseLongHeaderPacketLength(
-                    datagram: datagram,
-                    startOffset: offset
-                )
+                // Long header packet - need to parse to find the length.
+                // If parsing fails AND we already collected at least one packet,
+                // treat the trailing bytes as UDP padding and stop. Some clients
+                // (e.g. Firefox) pad the UDP datagram beyond the QUIC packet's
+                // Length field; per RFC 9000 §12.2 we MUST tolerate this.
+                do {
+                    packetLength = try parseLongHeaderPacketLength(
+                        datagram: datagram,
+                        startOffset: offset
+                    )
+                } catch {
+                    if !packets.isEmpty { return packets }
+                    throw error
+                }
             } else {
                 // Short header packet - consumes rest of datagram
                 // Per RFC 9000: "A short header packet always includes
@@ -140,6 +149,7 @@ public struct CoalescedPacketParser: Sendable {
             }
 
             guard packetStart + packetLength <= datagram.endIndex else {
+                if !packets.isEmpty { return packets }
                 throw ParseError.packetLengthExceedsDatagram
             }
 

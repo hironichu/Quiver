@@ -180,6 +180,46 @@ public struct HTTP3ServerOptions: Sendable {
     /// - Default: `100`
     public var initialMaxStreamsUni: UInt64
 
+    /// Initial connection-level flow-control limit (bytes the peer may send).
+    ///
+    /// - Default: `10_000_000` (10 MB)
+    public var initialMaxData: UInt64 = 10_000_000
+
+    /// Initial per-stream flow-control limit for locally-initiated bidi streams.
+    ///
+    /// - Default: `1_000_000` (1 MB)
+    public var initialMaxStreamDataBidiLocal: UInt64 = 1_000_000
+
+    /// Initial per-stream flow-control limit for remotely-initiated bidi streams.
+    ///
+    /// - Default: `1_000_000` (1 MB)
+    public var initialMaxStreamDataBidiRemote: UInt64 = 1_000_000
+
+    /// Initial per-stream flow-control limit for unidirectional streams.
+    ///
+    /// - Default: `1_000_000` (1 MB)
+    public var initialMaxStreamDataUni: UInt64 = 1_000_000
+
+    /// UDP socket-level tuning (buffer sizes, ECN, DF bit, ...).
+    ///
+    /// Forwarded into the underlying `QUICConfiguration.socketConfiguration`.
+    /// Disable ECN here when running on platforms (e.g. Windows loopback)
+    /// that mishandle ECN markings and cause spurious congestion-control
+    /// collapse.
+    ///
+    /// - Default: `SocketConfiguration()` (ECN + DF enabled)
+    public var socketConfiguration: SocketConfiguration = SocketConfiguration()
+
+    /// Override for the UDP socket's ECN flag.
+    ///
+    /// When non-nil, overrides `socketConfiguration.enableECN` at build time.
+    /// Use to disable ECN without having to `import QUIC` in caller code
+    /// (helpful on Windows loopback where ECN marking causes spurious
+    /// congestion-control collapse).
+    ///
+    /// - Default: `nil` (use `socketConfiguration.enableECN`)
+    public var enableECN: Bool? = nil
+
     /// Whether to enable QUIC datagrams (RFC 9221).
     ///
     /// Required for HTTP/3 datagrams (RFC 9297) and WebTransport.
@@ -570,6 +610,13 @@ public struct HTTP3ServerOptions: Sendable {
         config.maxIdleTimeout = maxIdleTimeout
         config.initialMaxStreamsBidi = initialMaxStreamsBidi
         config.initialMaxStreamsUni = initialMaxStreamsUni
+        config.initialMaxData = initialMaxData
+        config.initialMaxStreamDataBidiLocal = initialMaxStreamDataBidiLocal
+        config.initialMaxStreamDataBidiRemote = initialMaxStreamDataBidiRemote
+        config.initialMaxStreamDataUni = initialMaxStreamDataUni
+        var sc = socketConfiguration
+        if let ecn = enableECN { sc.enableECN = ecn }
+        config.socketConfiguration = sc
         config.enableDatagrams = enableDatagrams
         config.alpn = alpn
 
