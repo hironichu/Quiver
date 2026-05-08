@@ -303,12 +303,15 @@ package final class PacketProcessor: Sendable {
                 let opener = ctx.opener
             {
                 do {
-                    return try decoder.decodePacket(
+                    let packet = try decoder.decodePacket(
                         data: data,
                         dcidLength: dcidLengthValue,
                         opener: opener,
                         largestPN: largestReceivedPN.withLock { $0[.application] ?? 0 }
                     )
+
+                    updateLargestReceivedPN(packet.packetNumber, level: .application)
+                    return packet
                 } catch {
                     // Decryption failed with current keys. This might be a Key Update.
                     // Fall through to try next phase.
@@ -360,13 +363,7 @@ package final class PacketProcessor: Sendable {
                             "Passive Key Update detected: Phase \(oldPhase) -> \(nextPhase)")
                     }
 
-                    // Update largest PN (decodePacket doesn't do this, it just uses it for decoding)
-                    let pn = packet.packetNumber
-                    largestReceivedPN.withLock { pns in
-                        if pn > (pns[.application] ?? 0) {
-                            pns[.application] = pn
-                        }
-                    }
+                    updateLargestReceivedPN(packet.packetNumber, level: .application)
 
                     return packet
 
@@ -393,14 +390,23 @@ package final class PacketProcessor: Sendable {
                 largestPN: largestPN
             )
 
-            // Update largest PN
-            if packet.packetNumber > largestPN {
-                largestReceivedPN.withLock { $0[level] = packet.packetNumber }
-            }
+            updateLargestReceivedPN(packet.packetNumber, level: level)
 
             return packet
         }
 
+    }
+
+    private func updateLargestReceivedPN(_ packetNumber: UInt64, level: EncryptionLevel) {
+        largestReceivedPN.withLock { packetNumbers in
+            if let current = packetNumbers[level] {
+                if packetNumber > current {
+                    packetNumbers[level] = packetNumber
+                }
+            } else {
+                packetNumbers[level] = packetNumber
+            }
+        }
     }
 
     /// Decrypts all packets from a coalesced UDP datagram
