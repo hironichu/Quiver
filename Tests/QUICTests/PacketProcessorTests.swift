@@ -116,4 +116,43 @@ struct PacketProcessorTests {
             break
         }
     }
+
+    @Test("PacketProcessor tracks largest 1-RTT packet number")
+    func tracksLargestApplicationPacketNumber() throws {
+        let client = PacketProcessor(dcidLength: 8)
+        let server = PacketProcessor(dcidLength: 8)
+
+        let clientSecret = SymmetricKey(size: .bits256)
+        let serverSecret = SymmetricKey(size: .bits256)
+        let keysInfo = KeysAvailableInfo(
+            level: .application,
+            clientSecret: clientSecret,
+            serverSecret: serverSecret,
+            cipherSuite: .aes128GcmSha256
+        )
+
+        try client.installKeys(keysInfo, isClient: true)
+        try server.installKeys(keysInfo, isClient: false)
+
+        let dcid = try #require(ConnectionID.random(length: 8))
+        let frames: [Frame] = [.ping, .padding(count: 20)]
+
+        for packetNumber in UInt64(0)...300 {
+            let packet = try server.encryptShortHeaderPacket(
+                frames: frames,
+                header: ShortHeader(
+                    destinationConnectionID: dcid,
+                    packetNumber: packetNumber,
+                    packetNumberLength: 1,
+                    spinBit: false,
+                    keyPhase: false
+                ),
+                packetNumber: packetNumber
+            )
+
+            let parsed = try client.decryptPacket(packet)
+            #expect(parsed.packetNumber == packetNumber)
+            #expect(parsed.frames.contains(.ping))
+        }
+    }
 }
