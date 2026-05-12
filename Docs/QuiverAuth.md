@@ -1,11 +1,13 @@
 # QuiverAuth
 
-`QuiverAuth` adds authentication middleware for HTTP/3 requests and Extended CONNECT/WebTransport handlers. It is intended to let an application built on Quiver protect routes without embedding provider-specific authentication logic in every handler.
+`QuiverAuth` adds authentication middleware for HTTP/3 requests and Extended CONNECT/WebTransport handlers. Its core model is provider-neutral: applications decide how credentials are validated and QuiverAuth turns successful validation into an `AuthPrincipal` and typed `HTTP3Session` data.
 
 The package currently supports:
 
 - forwarded identity from a trusted gateway or reverse proxy
-- bearer JWT extraction from request headers
+- user-provided validators for database/API/custom authentication
+- generic session creation and hydration through a pluggable `AuthSessionStore`
+- bearer token extraction from request headers for custom validators or OIDC
 - OIDC-style JWT validation with issuer, audience, expiry, not-before, subject, and signature checks
 - browser OIDC authorization-code login with state, nonce, PKCE, callback handling, and a local session cookie
 - in-memory server-side OIDC sessions with token refresh and optional UserInfo hydration
@@ -13,11 +15,13 @@ The package currently supports:
 
 ## Authentication model
 
-`QuiverAuth` is centered around three types:
+`QuiverAuth` is centered around these types:
 
 | Type | Role |
 | --- | --- |
-| `AuthConfiguration` | Defines auth mode, trusted headers/cookies, and optional OIDC configuration. |
+| `AuthConfiguration` | Defines auth mode, user validators, generic session storage, trusted forwarded headers/cookies, and optional OIDC configuration. |
+| `AuthValidator` | User-provided async validation hook. It can validate against a database, API, opaque token store, signed cookie, OIDC, or any other application-specific system. |
+| `AuthSessionStore` | User-provided session persistence API used to create, hydrate, update, and delete generic application sessions. |
 | `AuthPolicy` | Evaluates an HTTP/3 request and returns allow/deny decisions. |
 | `HTTP3AuthGuard` | Wraps request handlers, handles OIDC callbacks, redirects browser requests to login, and attaches authenticated session data. |
 
@@ -27,11 +31,81 @@ The package currently supports:
 
 | Mode | Behavior |
 | --- | --- |
+| `.customOnly` | Only user-provided validators and generic sessions are evaluated. |
 | `.forwardOnly` | Only trusts forwarded identity headers/cookies from the Alt-Svc gateway marker. |
 | `.oidcOnly` | Requires OIDC/JWT authentication. Forwarded identity is ignored. |
-| `.composite` | Tries OIDC/JWT first, then forwarded identity/cookie auth. |
+| `.composite` | Tries generic sessions, user validators, OIDC/JWT, then forwarded identity/cookie auth. |
 
-Use `.oidcOnly` when Quiver itself owns authentication. Use `.forwardOnly` when another gateway already authenticated the request. Use `.composite` only when both patterns are intentionally supported.
+Use `.customOnly` when your application owns authentication, such as validating a username/password, API key, opaque token, or session ID against your own database. Use `.oidcOnly` when QuiverAuth owns OIDC authentication. Use `.forwardOnly` when another gateway already authenticated the request. Use `.composite` only when multiple patterns are intentionally supported.
+
+## Generic application authentication
+
+For application-owned authentication, provide one or more `AuthValidator` values. A validator receives an `AuthValidationContext`, including the request, extracted bearer token, cookies, forwarded identity headers, and gateway marker. Return `.allow(AuthPrincipal)` when your application has validated the user, `.deny` for a hard failure, or `nil` to let the next validator/auth mechanism try.
+
+```swift
+let databaseValidator = AuthValidator(name: "database") { context in
+    guard let token = context.snapshot.bearerToken else {
+        return nil
+    }
+
+    guard let user = try? await users.findSessionToken(token) else {
+        return .deny(status: 401, reason: "invalid token")
+    }
+
+    return .allow(
+        AuthPrincipal(
+            subject: user.id,
+            email: user.email,
+            source: "database",
+            claims: ["role": .string(user.role)]
+        )
+    )
+}
+
+let policy = AuthPolicy(
+    configuration: AuthConfiguration(
+        mode: .customOnly,
+        validators: [databaseValidator]
+    )
+)
+```
+
+Bearer-token presence is not authentication by itself. A bearer token is only accepted when OIDC validates it or when your validator explicitly accepts it.
+
+## Generic session creation and hydration
+
+Applications can create sessions after any successful login flow and hydrate them on later requests through `AuthSessionStore`.
+
+```swift
+let sessionStore = InMemoryAuthSessionStore()
+let policy = AuthPolicy(
+    configuration: AuthConfiguration(
+        mode: .customOnly,
+        session: AuthSessionConfiguration(
+            cookieName: "app-session",
+            store: sessionStore
+        )
+    )
+)
+
+router.post("/login") { context, _ in
+    let user = try await users.verifyPassword(context.request)
+    let principal = AuthPrincipal(subject: user.id, email: user.email, source: "database")
+    let record = try await policy.createSession(for: principal)
+    guard let cookie = policy.sessionCookieHeader(for: record) else {
+        try await context.respond(status: 500, Data("session unavailable".utf8))
+        return
+    }
+
+    try await context.respond(
+        status: 302,
+        headers: [("set-cookie", cookie), ("location", "/")],
+        Data()
+    )
+}
+```
+
+`InMemoryAuthSessionStore` is provided for development and single-process use. Production applications should provide their own `AuthSessionStore` backed by their database/cache so sessions can survive restarts, be shared across instances, and be revoked.
 
 ## Browser OIDC flow
 
@@ -202,55 +276,6 @@ Important values:
 | `extraAuthorizationParameters` | Provider-specific authorization parameters such as OIDC `claims`, `prompt`, or custom consent flags. |
 | `tokenEndpointAuthMethod` | Optional override for token endpoint authentication: `.clientSecretBasic`, `.clientSecretPost`, or `.none`. If omitted, QuiverAuth uses discovery metadata when available. |
 | `sessionCookieName` | Cookie used to link the browser to the QuiverAuth session. Defaults to `z-token`. |
-
-## Twitch example
-
-Twitch publishes OIDC discovery at:
-
-```text
-https://id.twitch.tv/oauth2/.well-known/openid-configuration
-```
-
-Important Twitch values:
-
-| Field | Value |
-| --- | --- |
-| issuer | `https://id.twitch.tv/oauth2` |
-| authorization endpoint | `https://id.twitch.tv/oauth2/authorize` |
-| token endpoint | `https://id.twitch.tv/oauth2/token` |
-| JWKS URI | `https://id.twitch.tv/oauth2/keys` |
-| UserInfo endpoint | `https://id.twitch.tv/oauth2/userinfo` |
-| token endpoint auth method | `client_secret_post` |
-
-Expected configuration shape:
-
-```swift
-let twitchOIDC = OIDCConfiguration(
-    issuer: "https://id.twitch.tv/oauth2",
-    audience: "<twitch-client-id>",
-    jwksURL: "https://id.twitch.tv/oauth2/keys",
-    login: OIDCLoginConfiguration(
-        enabled: true,
-        discoveryURL: "https://id.twitch.tv/oauth2/.well-known/openid-configuration",
-        authorizationEndpoint: "https://id.twitch.tv/oauth2/authorize",
-        tokenEndpoint: "https://id.twitch.tv/oauth2/token",
-        clientID: "<twitch-client-id>",
-        clientSecret: "<twitch-client-secret>",
-        redirectURI: "https://your-app.example.com/auth/callback",
-        scope: "openid user:read:email",
-        tokenEndpointAuthMethod: .clientSecretPost,
-        extraAuthorizationParameters: [
-            "claims": #"{"id_token":{"email":null,"email_verified":null,"preferred_username":null},"userinfo":{"picture":null,"updated_at":null}}"#
-        ],
-        serverSession: OIDCServerSessionConfiguration(
-            enabled: true,
-            userInfoEndpoint: "https://id.twitch.tv/oauth2/userinfo"
-        )
-    )
-)
-```
-
-Register the exact `redirectURI` in the Twitch Developer Console. Twitch requires exact redirect URI matching.
 
 ## Current generic OIDC behavior
 

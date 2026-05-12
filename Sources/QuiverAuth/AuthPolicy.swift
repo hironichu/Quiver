@@ -51,6 +51,36 @@ public struct AuthPolicy: Sendable {
             ]
         )
 
+        if let decision = await evaluateGenericSessionIfConfigured(snapshot: snapshot) {
+            return decision
+        }
+
+        let validationContext = AuthValidationContext(
+            request: request,
+            snapshot: snapshot,
+            isFromGateway: isFromGateway
+        )
+        for validator in configuration.validators {
+            if let decision = await validator.validate(validationContext) {
+                Self.logger.debug(
+                    "custom auth validator returned decision",
+                    metadata: [
+                        "path": "\(request.path)",
+                        "validator": "\(validator.name)",
+                    ]
+                )
+                return decision
+            }
+        }
+
+        if configuration.mode == .customOnly {
+            Self.logger.debug(
+                "deny due to missing custom auth signal",
+                metadata: ["path": "\(request.path)"]
+            )
+            return .deny(status: 401, reason: "missing auth signal")
+        }
+
         if configuration.mode != .forwardOnly,
             let oidcConfiguration = configuration.oidc,
             let decision = await evaluateOIDCServerSessionIfConfigured(
@@ -108,14 +138,8 @@ public struct AuthPolicy: Sendable {
                     return .deny(status: 500, reason: "oidc mode enabled but oidc configuration is missing")
                 }
                 Self.logger.debug(
-                    "allowing bearer token in non-oidc mode",
+                    "ignoring bearer token because no validator is configured",
                     metadata: ["path": "\(request.path)"]
-                )
-                return .allow(
-                    AuthPrincipal(
-                        subject: "bearer:\(token.prefix(12))",
-                        source: "bearer"
-                    )
                 )
             }
         }
@@ -184,6 +208,30 @@ public struct AuthPolicy: Sendable {
             metadata: ["path": "\(request.path)"]
         )
         return .deny(status: 401, reason: "missing auth signal")
+    }
+
+    private func evaluateGenericSessionIfConfigured(snapshot: AuthCredentialSnapshot) async -> AuthDecision? {
+        guard let sessionConfiguration = configuration.session,
+            let store = sessionConfiguration.store
+        else {
+            return nil
+        }
+
+        guard let sessionID = snapshot.cookieValue(named: sessionConfiguration.cookieName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !sessionID.isEmpty
+        else {
+            return nil
+        }
+
+        do {
+            guard let record = try await store.get(sessionID: sessionID) else {
+                return .deny(status: 401, reason: "invalid session")
+            }
+            return .allow(record.principal)
+        } catch {
+            return .deny(status: 401, reason: "session lookup failed: \(error.localizedDescription)")
+        }
     }
 
     private func evaluateOIDCServerSessionIfConfigured(
@@ -368,7 +416,7 @@ public struct AuthPolicy: Sendable {
     }
 
     private func oidcTokenFromCookies(_ snapshot: AuthCredentialSnapshot) -> String? {
-        for cookieName in configuration.sessionCookieNames {
+        for cookieName in oidcCookieCandidateNames() {
             guard let value = snapshot.cookieValue(named: cookieName), !value.isEmpty else { continue }
             if looksLikeJWT(value) {
                 return value
@@ -383,7 +431,7 @@ public struct AuthPolicy: Sendable {
     }
 
     private func oidcSessionCookieValue(from snapshot: AuthCredentialSnapshot) -> String? {
-        for cookieName in configuration.sessionCookieNames {
+        for cookieName in oidcCookieCandidateNames() {
             guard let value = snapshot.cookieValue(named: cookieName) else { continue }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -391,6 +439,17 @@ public struct AuthPolicy: Sendable {
             }
         }
         return nil
+    }
+
+    private func oidcCookieCandidateNames() -> [String] {
+        var names = configuration.sessionCookieNames
+        if let oidcCookieName = configuration.oidc?.login.sessionCookieName,
+            !oidcCookieName.isEmpty,
+            !names.contains(oidcCookieName)
+        {
+            names.append(oidcCookieName)
+        }
+        return names
     }
 
     private func refreshOIDCSessionRecordIfPossible(
@@ -755,6 +814,56 @@ public struct AuthPolicy: Sendable {
         base.setting(namespace: namespace, values: sessionValues(for: principal))
     }
 
+    public func createSession(
+        for principal: AuthPrincipal,
+        expiresAt: Date? = nil
+    ) async throws -> AuthSessionRecord {
+        guard let store = configuration.session?.store else {
+            throw NSError(
+                domain: "QuiverAuth.AuthPolicy",
+                code: 4001,
+                userInfo: [NSLocalizedDescriptionKey: "generic auth session store is not configured"]
+            )
+        }
+
+        let effectiveExpiresAt: Date?
+        if let expiresAt {
+            effectiveExpiresAt = expiresAt
+        } else if let maxAge = configuration.session?.cookieMaxAgeSeconds, maxAge > 0 {
+            effectiveExpiresAt = Date().addingTimeInterval(TimeInterval(maxAge))
+        } else {
+            effectiveExpiresAt = nil
+        }
+
+        return try await store.create(principal: principal, expiresAt: effectiveExpiresAt)
+    }
+
+    public func sessionCookieHeader(for record: AuthSessionRecord) -> String? {
+        guard let sessionConfiguration = configuration.session else { return nil }
+        return sessionCookieHeader(
+            name: sessionConfiguration.cookieName,
+            value: record.sessionID,
+            path: sessionConfiguration.cookiePath,
+            maxAgeSeconds: sessionConfiguration.cookieMaxAgeSeconds,
+            secure: sessionConfiguration.cookieSecure,
+            httpOnly: sessionConfiguration.cookieHTTPOnly,
+            sameSite: sessionConfiguration.cookieSameSite
+        )
+    }
+
+    public func clearingSessionCookieHeader() -> String? {
+        guard let sessionConfiguration = configuration.session else { return nil }
+        return sessionCookieHeader(
+            name: sessionConfiguration.cookieName,
+            value: "",
+            path: sessionConfiguration.cookiePath,
+            maxAgeSeconds: 0,
+            secure: sessionConfiguration.cookieSecure,
+            httpOnly: sessionConfiguration.cookieHTTPOnly,
+            sameSite: sessionConfiguration.cookieSameSite
+        )
+    }
+
     public func loginRedirectURL(for request: HTTP3Request) async -> URL? {
         guard let oidc = configuration.oidc else { return nil }
         var loginConfiguration = oidc.login
@@ -895,12 +1004,34 @@ public struct AuthPolicy: Sendable {
     }
 
     private func clearingSessionCookieHeader(loginConfiguration: OIDCLoginConfiguration) -> String {
-        var parts = ["\(loginConfiguration.sessionCookieName)="]
-        parts.append("Path=\(loginConfiguration.sessionCookiePath)")
-        parts.append("Max-Age=0")
-        if loginConfiguration.sessionCookieSecure { parts.append("Secure") }
-        if loginConfiguration.sessionCookieHTTPOnly { parts.append("HttpOnly") }
-        parts.append("SameSite=\(loginConfiguration.sessionCookieSameSite)")
+        sessionCookieHeader(
+            name: loginConfiguration.sessionCookieName,
+            value: "",
+            path: loginConfiguration.sessionCookiePath,
+            maxAgeSeconds: 0,
+            secure: loginConfiguration.sessionCookieSecure,
+            httpOnly: loginConfiguration.sessionCookieHTTPOnly,
+            sameSite: loginConfiguration.sessionCookieSameSite
+        )
+    }
+
+    private func sessionCookieHeader(
+        name: String,
+        value: String,
+        path: String,
+        maxAgeSeconds: Int?,
+        secure: Bool,
+        httpOnly: Bool,
+        sameSite: String
+    ) -> String {
+        var parts = ["\(name)=\(value)"]
+        parts.append("Path=\(path)")
+        if let maxAgeSeconds {
+            parts.append("Max-Age=\(max(0, maxAgeSeconds))")
+        }
+        if secure { parts.append("Secure") }
+        if httpOnly { parts.append("HttpOnly") }
+        parts.append("SameSite=\(sameSite)")
         return parts.joined(separator: "; ")
     }
 }
