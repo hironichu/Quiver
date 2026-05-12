@@ -615,7 +615,7 @@ struct OIDCLoginCallbackHandler: Sendable {
         // RFC 6749 section 2.3.1: a client MUST NOT use more than one authentication method per request.
         // The method is selected via OIDCTokenEndpointAuthMethod:
         //   clientSecretBasic -> Authorization: Basic header (RFC 6749 section 2.3.1 preferred method)
-        //   clientSecretPost  -> client_secret in the form body (required by some providers, e.g. Twitch)
+        //   clientSecretPost  -> client_secret in the form body
         //   none              -> no client authentication (public clients, RFC 6749 section 2.1)
         var form: [(String, String)] = [
             ("grant_type", "authorization_code"),

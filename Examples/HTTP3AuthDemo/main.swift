@@ -29,9 +29,6 @@ struct Arguments {
     var oidcCookieName: String?
     var oidcPostLogoutPath: String?
 
-    // Provider preset ("twitch" is pre-wired for convenience)
-    var oidcProvider: String?
-
     static func parse() -> Arguments {
         var parsed = Arguments()
         let args = CommandLine.arguments
@@ -104,9 +101,6 @@ struct Arguments {
             case "--oidc-post-logout":
                 index += 1
                 if index < args.count { parsed.oidcPostLogoutPath = args[index] }
-            case "--oidc-provider":
-                index += 1
-                if index < args.count { parsed.oidcProvider = args[index] }
             case "--help", "-h":
                 printUsageAndExit()
             default:
@@ -135,7 +129,7 @@ struct Arguments {
               --key <path>                     TLS private key PEM
 
             OIDC core:
-              --oidc-issuer <url>              Expected OIDC issuer (e.g. https://id.twitch.tv/oauth2)
+              --oidc-issuer <url>              Expected OIDC issuer
               --oidc-audience <aud>            Expected audience (defaults to client_id)
               --oidc-jwks-url <url>            JWKS URL for explicit signature verification
               --oidc-discovery-url <url>       Full discovery document URL (auto-derived from issuer when omitted)
@@ -147,31 +141,19 @@ struct Arguments {
               --oidc-client-secret <secret>    OAuth2 client_secret (confidential clients)
               --oidc-redirect-uri <uri>        Full redirect URI sent to the provider
               --oidc-scope <scope>             Space-delimited scopes (default: openid profile email)
-              --oidc-claims <json>             JSON claims parameter (providers such as Twitch require this)
+              --oidc-claims <json>             Optional JSON claims parameter
               --oidc-userinfo-url <url>        Override UserInfo endpoint URL
               --oidc-token-auth-method <m>     client_secret_basic (default) | client_secret_post | none
               --oidc-callback-success <path>   Where to redirect after successful login (default: /me)
               --oidc-cookie-name <name>        Session cookie name (default: z-token)
               --oidc-post-logout <path>        Where to redirect after logout (default: /)
 
-            Provider presets:
-              --oidc-provider twitch           Pre-wires issuer, scope, claims, and token auth for Twitch.
-                                               Still requires --oidc-client-id / --oidc-client-secret.
-
             Examples:
-              # Generic OIDC (e.g. Keycloak)
+              # Generic OIDC
               swift run HTTP3AuthDemo \\
                 --cert certs/server.crt --key certs/server.key \\
-                --oidc-issuer https://keycloak.example.com/realms/myrealm \\
+                --oidc-issuer https://issuer.example.com \\
                 --oidc-client-id myapp --oidc-client-secret s3cr3t
-
-              # Twitch OIDC
-              swift run HTTP3AuthDemo \\
-                --cert certs/server.crt --key certs/server.key \\
-                --oidc-provider twitch \\
-                --oidc-client-id <your_client_id> \\
-                --oidc-client-secret <your_client_secret> \\
-                --oidc-redirect-uri https://localhost:8443/auth/callback
             """
         )
         exit(0)
@@ -462,16 +444,11 @@ struct HTTP3AuthDemo {
     // MARK: - Auth configuration
 
     private static func buildAuthConfiguration(args: Arguments) -> AuthConfiguration {
-        let provider = args.oidcProvider?.lowercased()
-
-        let issuer = args.oidcIssuer ?? (provider == "twitch" ? "https://id.twitch.tv/oauth2" : nil)
-        let scope = args.oidcScope ?? (provider == "twitch" ? "openid user:read:email" : nil)
+        let issuer = args.oidcIssuer
+        let scope = args.oidcScope
         let tokenAuthMethod: OIDCTokenEndpointAuthMethod? = {
             if let raw = args.oidcTokenAuthMethod {
                 return OIDCTokenEndpointAuthMethod(rawValue: raw)
-            }
-            if provider == "twitch" {
-                return .clientSecretPost
             }
             return nil
         }()
@@ -479,9 +456,6 @@ struct HTTP3AuthDemo {
         var extraParams: [String: String] = [:]
         if let claims = args.oidcClaims {
             extraParams["claims"] = claims
-        } else if provider == "twitch" {
-            extraParams["claims"] =
-                "{\"id_token\":{\"preferred_username\":null,\"email\":null}}"
         }
 
         let hasOIDC = issuer != nil || args.oidcLoginClientID != nil
@@ -535,13 +509,10 @@ struct HTTP3AuthDemo {
         print("")
         print("  Routes (public):    GET /  GET /login  GET /logout  GET /health")
         print("  Routes (protected): GET /private  GET /me  GET /me-debug")
-        if let issuer = args.oidcIssuer ?? (args.oidcProvider == "twitch" ? "https://id.twitch.tv/oauth2" : nil) {
+        if let issuer = args.oidcIssuer {
             print("")
             print("  OIDC issuer:  \(issuer)")
             print("  OIDC login:   \(args.oidcLoginClientID != nil ? "enabled (client_id=\(args.oidcLoginClientID!))" : "disabled")")
-            if let provider = args.oidcProvider {
-                print("  Provider:     \(provider) preset active")
-            }
         } else {
             print("")
             print("  OIDC: not configured (pass --oidc-client-id to enable browser login)")

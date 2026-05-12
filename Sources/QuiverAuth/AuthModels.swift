@@ -44,6 +44,40 @@ public enum AuthDecision: Sendable, Equatable {
     case deny(status: Int, reason: String)
 }
 
+public struct AuthValidationContext: Sendable {
+    public let request: HTTP3Request
+    public let snapshot: AuthCredentialSnapshot
+    public let isFromGateway: Bool
+
+    public init(
+        request: HTTP3Request,
+        snapshot: AuthCredentialSnapshot,
+        isFromGateway: Bool
+    ) {
+        self.request = request
+        self.snapshot = snapshot
+        self.isFromGateway = isFromGateway
+    }
+}
+
+public struct AuthValidator: Sendable {
+    public let name: String
+
+    private let validateHandler: @Sendable (AuthValidationContext) async -> AuthDecision?
+
+    public init(
+        name: String,
+        validate: @escaping @Sendable (AuthValidationContext) async -> AuthDecision?
+    ) {
+        self.name = name
+        self.validateHandler = validate
+    }
+
+    public func validate(_ context: AuthValidationContext) async -> AuthDecision? {
+        await validateHandler(context)
+    }
+}
+
 public struct AuthCredentialSnapshot: Sendable {
     public let bearerToken: String?
     public let identityHeaderName: String?
@@ -76,12 +110,15 @@ public struct AuthCredentialSnapshot: Sendable {
 }
 
 public enum AuthMode: Sendable {
+    case customOnly
     case forwardOnly
     case oidcOnly
     case composite
 
     public init?(rawValue: String) {
         switch rawValue.lowercased() {
+        case "custom", "customonly", "user", "application":
+            self = .customOnly
         case "forward", "forwardonly", "proxy":
             self = .forwardOnly
         case "oidc", "jwt", "oidconly":
@@ -94,13 +131,134 @@ public enum AuthMode: Sendable {
     }
 }
 
+public struct AuthSessionRecord: Sendable, Equatable {
+    public var sessionID: String
+    public var principal: AuthPrincipal
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var expiresAt: Date?
+
+    public init(
+        sessionID: String,
+        principal: AuthPrincipal,
+        createdAt: Date,
+        updatedAt: Date,
+        expiresAt: Date? = nil
+    ) {
+        self.sessionID = sessionID
+        self.principal = principal
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.expiresAt = expiresAt
+    }
+
+    public var isExpired: Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= Date()
+    }
+}
+
+public protocol AuthSessionStore: Sendable {
+    func create(principal: AuthPrincipal, expiresAt: Date?) async throws -> AuthSessionRecord
+    func get(sessionID: String) async throws -> AuthSessionRecord?
+    func update(sessionID: String, principal: AuthPrincipal, expiresAt: Date?) async throws -> AuthSessionRecord?
+    func delete(sessionID: String) async throws
+}
+
+public actor InMemoryAuthSessionStore: AuthSessionStore {
+    public static let shared = InMemoryAuthSessionStore()
+
+    private var records: [String: AuthSessionRecord] = [:]
+
+    public init() {}
+
+    public func create(principal: AuthPrincipal, expiresAt: Date? = nil) -> AuthSessionRecord {
+        let now = Date()
+        let record = AuthSessionRecord(
+            sessionID: makeSessionID(),
+            principal: principal,
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: expiresAt
+        )
+        records[record.sessionID] = record
+        return record
+    }
+
+    public func get(sessionID: String) -> AuthSessionRecord? {
+        guard let record = records[sessionID] else { return nil }
+        if record.isExpired {
+            records.removeValue(forKey: sessionID)
+            return nil
+        }
+        return record
+    }
+
+    public func update(
+        sessionID: String,
+        principal: AuthPrincipal,
+        expiresAt: Date? = nil
+    ) -> AuthSessionRecord? {
+        guard var record = records[sessionID] else { return nil }
+        record.principal = principal
+        record.updatedAt = Date()
+        record.expiresAt = expiresAt
+        records[sessionID] = record
+        return record
+    }
+
+    public func delete(sessionID: String) {
+        records.removeValue(forKey: sessionID)
+    }
+
+    private func makeSessionID() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        for index in bytes.indices {
+            bytes[index] = UInt8.random(in: UInt8.min...UInt8.max)
+        }
+        return Data(bytes)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+public struct AuthSessionConfiguration: Sendable {
+    public var cookieName: String
+    public var cookieSecure: Bool
+    public var cookieHTTPOnly: Bool
+    public var cookieSameSite: String
+    public var cookiePath: String
+    public var cookieMaxAgeSeconds: Int?
+    public var store: (any AuthSessionStore)?
+
+    public init(
+        cookieName: String = "quiver-auth-session",
+        cookieSecure: Bool = true,
+        cookieHTTPOnly: Bool = true,
+        cookieSameSite: String = "Lax",
+        cookiePath: String = "/",
+        cookieMaxAgeSeconds: Int? = 604800,
+        store: (any AuthSessionStore)? = nil
+    ) {
+        self.cookieName = cookieName
+        self.cookieSecure = cookieSecure
+        self.cookieHTTPOnly = cookieHTTPOnly
+        self.cookieSameSite = cookieSameSite
+        self.cookiePath = cookiePath
+        self.cookieMaxAgeSeconds = cookieMaxAgeSeconds
+        self.store = store
+    }
+}
+
 /// How the client authenticates to the provider's token endpoint.
 /// Derived from OAuth 2.0 RFC 6749 client authentication and
 /// OpenID Connect Discovery `token_endpoint_auth_methods_supported`.
 public enum OIDCTokenEndpointAuthMethod: String, Sendable, Codable {
     /// Send `Authorization: Basic base64(client_id:client_secret)`.
     case clientSecretBasic = "client_secret_basic"
-    /// Send `client_secret` as a form body parameter. Required by some providers (e.g. Twitch).
+    /// Send `client_secret` as a form body parameter.
     case clientSecretPost = "client_secret_post"
     /// No client authentication (public clients).
     case none = "none"
@@ -306,6 +464,8 @@ public struct AuthConfiguration: Sendable {
     public var sessionCookieNames: [String]
     public var requireGatewayMarkerForForwardedIdentity: Bool
     public var allowCookieSessionAsAuth: Bool
+    public var validators: [AuthValidator]
+    public var session: AuthSessionConfiguration?
     public var oidc: OIDCConfiguration?
 
     public init(
@@ -321,15 +481,11 @@ public struct AuthConfiguration: Sendable {
             "x-authenticated-email",
             "x-forwarded-email",
         ],
-        sessionCookieNames: [String] = [
-            "ta_session",
-            "tinyauth-session",
-            "_oauth2_proxy",
-            "pocketid_session",
-            "z-token",
-        ],
+        sessionCookieNames: [String] = [],
         requireGatewayMarkerForForwardedIdentity: Bool = true,
-        allowCookieSessionAsAuth: Bool = true,
+        allowCookieSessionAsAuth: Bool = false,
+        validators: [AuthValidator] = [],
+        session: AuthSessionConfiguration? = nil,
         oidc: OIDCConfiguration? = nil
     ) {
         self.mode = mode
@@ -339,6 +495,8 @@ public struct AuthConfiguration: Sendable {
         self.sessionCookieNames = sessionCookieNames
         self.requireGatewayMarkerForForwardedIdentity = requireGatewayMarkerForForwardedIdentity
         self.allowCookieSessionAsAuth = allowCookieSessionAsAuth
+        self.validators = validators
+        self.session = session
         self.oidc = oidc
     }
 }

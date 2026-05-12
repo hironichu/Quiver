@@ -44,7 +44,7 @@ struct QuiverAuthTests {
     }
 
     @Test
-    func allowsBearerTokenInCompositeMode() async {
+    func deniesBearerTokenWithoutUserValidatorInCompositeMode() async {
         let config = AuthConfiguration(mode: .composite)
         let policy = AuthPolicy(configuration: config)
 
@@ -57,11 +57,92 @@ struct QuiverAuthTests {
 
         let decision = await policy.evaluate(request: request, isFromGateway: false)
         switch decision {
-        case .allow(let principal):
-            #expect(principal.source == "bearer")
-        case .deny:
-            Issue.record("Expected bearer token to authorize")
+        case .allow:
+            Issue.record("Expected bearer token to be ignored without an OIDC or custom validator")
+        case .deny(let status, _):
+            #expect(status == 401)
         }
+    }
+
+    @Test
+    func customValidatorCanAuthenticateAgainstApplicationData() async {
+        let validator = AuthValidator(name: "database") { context in
+            guard context.snapshot.bearerToken == "db-token-123" else {
+                return nil
+            }
+
+            return .allow(
+                AuthPrincipal(
+                    subject: "user-from-db",
+                    email: "db@example.test",
+                    source: "database",
+                    claims: ["role": .string("admin")]
+                )
+            )
+        }
+        let config = AuthConfiguration(mode: .customOnly, validators: [validator])
+        let policy = AuthPolicy(configuration: config)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("authorization", "Bearer db-token-123")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow(let principal):
+            #expect(principal.subject == "user-from-db")
+            #expect(principal.email == "db@example.test")
+            #expect(principal.source == "database")
+            #expect(principal.claims["role"] == .string("admin"))
+        case .deny(let status, let reason):
+            Issue.record("Expected custom database validator to authorize. status=\(status) reason=\(reason)")
+        }
+    }
+
+    @Test
+    func genericSessionStoreCanCreateAndHydrateApplicationSession() async throws {
+        let store = InMemoryAuthSessionStore()
+        let config = AuthConfiguration(
+            mode: .customOnly,
+            session: AuthSessionConfiguration(
+                cookieName: "app-session",
+                cookieSecure: false,
+                store: store
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+
+        let principal = AuthPrincipal(
+            subject: "local-user-1",
+            email: "local@example.test",
+            source: "local-db",
+            claims: ["tenant": .string("acme")]
+        )
+        let record = try await policy.createSession(for: principal)
+        let cookie = policy.sessionCookieHeader(for: record)
+
+        #expect(cookie?.contains("app-session=\(record.sessionID)") == true)
+        #expect(cookie?.contains("HttpOnly") == true)
+
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("cookie", "app-session=\(record.sessionID)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow(let hydrated):
+            #expect(hydrated == principal)
+        case .deny(let status, let reason):
+            Issue.record("Expected generic session to hydrate. status=\(status) reason=\(reason)")
+        }
+
+        await store.delete(sessionID: record.sessionID)
     }
 
     @Test
@@ -93,7 +174,8 @@ struct QuiverAuthTests {
         let config = AuthConfiguration(
             mode: .forwardOnly,
             sessionCookieNames: ["ztoken"],
-            requireGatewayMarkerForForwardedIdentity: true
+            requireGatewayMarkerForForwardedIdentity: true,
+            allowCookieSessionAsAuth: true
         )
         let policy = AuthPolicy(configuration: config)
 
