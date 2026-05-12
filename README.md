@@ -40,6 +40,9 @@ Quiver provides a complete, type-safe QUIC stack designed for modern Swift appli
 
 > **Windows:** See [Docs/Windows.md](Docs/Windows.md) for full setup instructions,
 > required environment variables, and known platform-specific fixes.
+>
+> **Authentication:** See [Docs/QuiverAuth.md](Docs/QuiverAuth.md) for HTTP/3 auth,
+> OIDC login, Twitch configuration notes, and the current generic OIDC roadmap.
 
 ## Installation
 
@@ -60,6 +63,7 @@ Then add the products you need:
         .product(name: "QUIC", package: "Quiver"),     // Full QUIC stack
         .product(name: "HTTP3", package: "Quiver"),     // HTTP/3 + WebTransport
         .product(name: "QPACK", package: "Quiver"),     // Header compression
+        .product(name: "QuiverAuth", package: "Quiver"),// HTTP/3 auth middleware
         .product(name: "QUICCore", package: "Quiver"),  // Core types only
     ]
 )

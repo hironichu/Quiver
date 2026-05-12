@@ -94,6 +94,18 @@ public enum AuthMode: Sendable {
     }
 }
 
+/// How the client authenticates to the provider's token endpoint.
+/// Derived from OAuth 2.0 RFC 6749 client authentication and
+/// OpenID Connect Discovery `token_endpoint_auth_methods_supported`.
+public enum OIDCTokenEndpointAuthMethod: String, Sendable, Codable {
+    /// Send `Authorization: Basic base64(client_id:client_secret)`.
+    case clientSecretBasic = "client_secret_basic"
+    /// Send `client_secret` as a form body parameter. Required by some providers (e.g. Twitch).
+    case clientSecretPost = "client_secret_post"
+    /// No client authentication (public clients).
+    case none = "none"
+}
+
 public struct OIDCConfiguration: Sendable {
     public var issuer: String?
     public var audience: String?
@@ -152,6 +164,11 @@ public struct OIDCLoginConfiguration: Sendable {
     public var sessionCookiePath: String
     public var serverSession: OIDCServerSessionConfiguration
     public var browserOnly: Bool
+    /// How to authenticate to the token endpoint. When `nil`, auto-detected from
+    /// OIDC discovery metadata, falling back to `clientSecretBasic` when a secret is set.
+    public var tokenEndpointAuthMethod: OIDCTokenEndpointAuthMethod?
+    /// Path to redirect to after a successful logout. Defaults to `"/"`.
+    public var postLogoutPath: String
 
     public init(
         enabled: Bool = false,
@@ -176,7 +193,9 @@ public struct OIDCLoginConfiguration: Sendable {
         sessionCookieSameSite: String = "Lax",
         sessionCookiePath: String = "/",
         serverSession: OIDCServerSessionConfiguration = OIDCServerSessionConfiguration(),
-        browserOnly: Bool = true
+        browserOnly: Bool = true,
+        tokenEndpointAuthMethod: OIDCTokenEndpointAuthMethod? = nil,
+        postLogoutPath: String = "/"
     ) {
         self.enabled = enabled
         self.discoveryURL = discoveryURL
@@ -201,6 +220,8 @@ public struct OIDCLoginConfiguration: Sendable {
         self.sessionCookiePath = sessionCookiePath
         self.serverSession = serverSession
         self.browserOnly = browserOnly
+        self.tokenEndpointAuthMethod = tokenEndpointAuthMethod
+        self.postLogoutPath = postLogoutPath
     }
 }
 
