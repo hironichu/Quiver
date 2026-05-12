@@ -24,12 +24,20 @@ private struct OIDCDiscoveryDocument: Decodable {
     let authorization_endpoint: String
     let token_endpoint: String?
     let userinfo_endpoint: String?
+    let jwks_uri: String?
+    let issuer: String?
+    let token_endpoint_auth_methods_supported: [String]?
+    let id_token_signing_alg_values_supported: [String]?
 }
 
 struct OIDCDiscoveryMetadata: Sendable {
     let authorizationEndpoint: String
     let tokenEndpoint: String?
     let userInfoEndpoint: String?
+    let jwksURI: String?
+    let issuer: String?
+    let tokenEndpointAuthMethodsSupported: [String]?
+    let idTokenSigningAlgValuesSupported: [String]?
 }
 
 actor OIDCDiscoveryCache {
@@ -53,7 +61,11 @@ actor OIDCDiscoveryCache {
         let metadata = OIDCDiscoveryMetadata(
             authorizationEndpoint: document.authorization_endpoint,
             tokenEndpoint: document.token_endpoint,
-            userInfoEndpoint: document.userinfo_endpoint
+            userInfoEndpoint: document.userinfo_endpoint,
+            jwksURI: document.jwks_uri,
+            issuer: document.issuer,
+            tokenEndpointAuthMethodsSupported: document.token_endpoint_auth_methods_supported,
+            idTokenSigningAlgValuesSupported: document.id_token_signing_alg_values_supported
         )
         let expiresAt = Date().addingTimeInterval(TimeInterval(max(1, ttlSeconds)))
         entries[key] = CacheEntry(expiresAt: expiresAt, metadata: metadata)
@@ -103,10 +115,10 @@ actor OIDCLoginStateStore {
     }
 }
 
-struct OIDCLoginCallbackHTTPResponse: Sendable {
-    let status: Int
-    let headers: [(String, String)]
-    let body: Data
+public struct OIDCLoginCallbackHTTPResponse: Sendable {
+    public let status: Int
+    public let headers: [(String, String)]
+    public let body: Data
 }
 
 struct OIDCLoginRedirectBuilder: Sendable {
@@ -190,7 +202,11 @@ struct OIDCLoginRedirectBuilder: Sendable {
             return OIDCDiscoveryMetadata(
                 authorizationEndpoint: explicitAuthorization,
                 tokenEndpoint: configuration.tokenEndpoint,
-                userInfoEndpoint: nil
+                userInfoEndpoint: nil,
+                jwksURI: nil,
+                issuer: nil,
+                tokenEndpointAuthMethodsSupported: nil,
+                idTokenSigningAlgValuesSupported: nil
             )
         }
 
@@ -317,6 +333,11 @@ struct OIDCLoginCallbackHandler: Sendable {
             ]
         )
 
+        let tokenAuthMethod = oidcTokenEndpointAuthMethod(
+            from: configuration,
+            discoveryMetadata: metadata
+        )
+
         do {
             let tokenResponse = try await exchangeCode(
                 tokenEndpoint: tokenEndpoint,
@@ -324,10 +345,11 @@ struct OIDCLoginCallbackHandler: Sendable {
                 redirectURI: redirectURI,
                 clientID: clientID,
                 clientSecret: configuration.clientSecret,
-                codeVerifier: pending.codeVerifier
+                codeVerifier: pending.codeVerifier,
+                tokenEndpointAuthMethod: tokenAuthMethod
             )
 
-            // OIDC Core §3.1.3.7: because a nonce was sent in the authorization request,
+            // OIDC Core section 3.1.3.7: because a nonce was sent in the authorization request,
             // the ID token MUST contain that nonce and it MUST match exactly.
             if let idToken = tokenResponse.idToken {
                 guard let nonce = decodeStringClaim("nonce", fromJWT: idToken) else {
@@ -399,7 +421,11 @@ struct OIDCLoginCallbackHandler: Sendable {
             return OIDCDiscoveryMetadata(
                 authorizationEndpoint: explicitAuthorization,
                 tokenEndpoint: configuration.tokenEndpoint,
-                userInfoEndpoint: nil
+                userInfoEndpoint: nil,
+                jwksURI: nil,
+                issuer: nil,
+                tokenEndpointAuthMethodsSupported: nil,
+                idTokenSigningAlgValuesSupported: nil
             )
         }
 
@@ -575,7 +601,8 @@ struct OIDCLoginCallbackHandler: Sendable {
         redirectURI: String,
         clientID: String,
         clientSecret: String?,
-        codeVerifier: String
+        codeVerifier: String,
+        tokenEndpointAuthMethod: OIDCTokenEndpointAuthMethod
     ) async throws -> OIDCTokenResponse {
         guard let url = URL(string: tokenEndpoint) else {
             throw NSError(
@@ -585,10 +612,12 @@ struct OIDCLoginCallbackHandler: Sendable {
             )
         }
 
-        // RFC 6749 §2.3.1: a client MUST NOT use more than one authentication method per
-        // request. Use HTTP Basic auth (preferred method) exclusively; do not also include
-        // client_secret in the request body.
-        let form: [(String, String)] = [
+        // RFC 6749 section 2.3.1: a client MUST NOT use more than one authentication method per request.
+        // The method is selected via OIDCTokenEndpointAuthMethod:
+        //   clientSecretBasic -> Authorization: Basic header (RFC 6749 section 2.3.1 preferred method)
+        //   clientSecretPost  -> client_secret in the form body (required by some providers, e.g. Twitch)
+        //   none              -> no client authentication (public clients, RFC 6749 section 2.1)
+        var form: [(String, String)] = [
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", redirectURI),
@@ -601,13 +630,22 @@ struct OIDCLoginCallbackHandler: Sendable {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
         request.setValue("application/json", forHTTPHeaderField: "accept")
 
-        if let clientSecret, !clientSecret.isEmpty {
-            let credentials = "\(clientID):\(clientSecret)"
-            let encoded = Data(credentials.utf8).base64EncodedString()
-            request.setValue("Basic \(encoded)", forHTTPHeaderField: "authorization")
+        switch tokenEndpointAuthMethod {
+        case .clientSecretBasic:
+            if let clientSecret, !clientSecret.isEmpty {
+                let credentials = "\(clientID):\(clientSecret)"
+                let encoded = Data(credentials.utf8).base64EncodedString()
+                request.setValue("Basic \(encoded)", forHTTPHeaderField: "authorization")
+            }
+        case .clientSecretPost:
+            if let clientSecret, !clientSecret.isEmpty {
+                form.append(("client_secret", clientSecret))
+            }
+        case .none:
+            break
         }
 
-        request.httpBody = Data(formURLEncoded(form).utf8)
+        request.httpBody = Data(oidcFormURLEncoded(form).utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -700,6 +738,8 @@ struct OIDCTokenResponse: Decodable {
     let idToken: String?
     let refreshToken: String?
     let tokenType: String?
+    /// Normalized to a space-delimited string regardless of whether the provider
+    /// returned a string or an array (both shapes are seen in the wild).
     let scope: String?
     let expiresIn: Int?
 
@@ -711,18 +751,47 @@ struct OIDCTokenResponse: Decodable {
         case scope
         case expiresIn = "expires_in"
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try container.decodeIfPresent(String.self, forKey: .accessToken)
+        idToken = try container.decodeIfPresent(String.self, forKey: .idToken)
+        refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
+        tokenType = try container.decodeIfPresent(String.self, forKey: .tokenType)
+        expiresIn = try container.decodeIfPresent(Int.self, forKey: .expiresIn)
+
+        if let scopeString = try? container.decodeIfPresent(String.self, forKey: .scope) {
+            scope = scopeString
+        } else if let scopeArray = try? container.decodeIfPresent([String].self, forKey: .scope) {
+            scope = scopeArray.joined(separator: " ")
+        } else {
+            scope = nil
+        }
+    }
 }
 
-private func formURLEncoded(_ pairs: [(String, String)]) -> String {
-    pairs
-        .map { "\(urlEncode($0.0))=\(urlEncode($0.1))" }
-        .joined(separator: "&")
-}
-
-private func urlEncode(_ value: String) -> String {
-    var allowed = CharacterSet.urlQueryAllowed
-    allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
-    return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+/// Resolve which token endpoint authentication method to use for the given configuration,
+/// consulting discovery metadata when no explicit method is set.
+///
+/// Priority:
+/// 1. Explicit `OIDCLoginConfiguration.tokenEndpointAuthMethod`
+/// 2. First supported method advertised in `OIDCDiscoveryMetadata.tokenEndpointAuthMethodsSupported`
+/// 3. Legacy default: `clientSecretBasic` when a client secret exists, else `none`
+func oidcTokenEndpointAuthMethod(
+    from configuration: OIDCLoginConfiguration,
+    discoveryMetadata: OIDCDiscoveryMetadata?
+) -> OIDCTokenEndpointAuthMethod {
+    if let explicit = configuration.tokenEndpointAuthMethod {
+        return explicit
+    }
+    if let supportedMethods = discoveryMetadata?.tokenEndpointAuthMethodsSupported {
+        for raw in supportedMethods {
+            if let method = OIDCTokenEndpointAuthMethod(rawValue: raw) {
+                return method
+            }
+        }
+    }
+    return configuration.clientSecret != nil ? .clientSecretBasic : .none
 }
 
 private func generateURLSafeToken(length: Int = 32) -> String {

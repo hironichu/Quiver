@@ -29,7 +29,7 @@ struct OIDCValidator: Sendable {
             }
         }
 
-        // OIDC Core §2 / RFC 7519 §4.1.1: when an expected issuer is configured the token
+        // OIDC Core section 2 / RFC 7519 section 4.1.1: when an expected issuer is configured the token
         // MUST contain an iss claim that exactly matches it. A missing iss is also invalid.
         if let issuer = configuration.issuer {
             guard let tokenIssuer = claimsJSON["iss"] as? String else {
@@ -121,30 +121,39 @@ struct OIDCValidator: Sendable {
             return OIDCJWKS(keys: configuration.staticJWKs)
         }
 
-        guard let rawURL = configuration.jwksURL, !rawURL.isEmpty else {
-            return nil
-        }
-
-        guard let url = URL(string: rawURL) else {
-            throw NSError(
-                domain: "QuiverAuth.OIDCValidator",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "jwksURL is required for non-HS256 signature verification"]
-            )
-        }
-
-        do {
+        // Explicit jwksURL takes precedence over discovery.
+        if let rawURL = configuration.jwksURL, !rawURL.isEmpty {
+            guard let url = URL(string: rawURL) else {
+                throw NSError(
+                    domain: "QuiverAuth.OIDCValidator",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "jwksURL is required for non-HS256 signature verification"]
+                )
+            }
             return try await OIDCJWKSCache.shared.getJWKS(
                 url: url,
                 ttlSeconds: configuration.jwksCacheTTLSeconds
             )
-        } catch {
-            throw NSError(
-                domain: "QuiverAuth.OIDCValidator",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "failed to fetch JWKS: \(error)"]
-            )
         }
+
+        // Fall back to jwks_uri from OIDC Discovery when issuer is configured.
+        // OIDC Discovery 1.0 section 3: jwks_uri MUST be provided in the discovery document.
+        if let issuer = configuration.issuer,
+            let discoveryRaw = oidcDiscoveryURLFromIssuer(issuer),
+            let discoveryURL = URL(string: discoveryRaw)
+        {
+            if let metadata = try? await OIDCDiscoveryCache.shared.metadata(discoveryURL: discoveryURL),
+                let jwksURIString = metadata.jwksURI,
+                let jwksURL = URL(string: jwksURIString)
+            {
+                return try await OIDCJWKSCache.shared.getJWKS(
+                    url: jwksURL,
+                    ttlSeconds: configuration.jwksCacheTTLSeconds
+                )
+            }
+        }
+
+        return nil
     }
 
     private func decodeBase64URL(_ value: String) -> Data? {

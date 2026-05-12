@@ -408,12 +408,33 @@ public struct AuthPolicy: Sendable {
             return sessionRecord
         }
 
+        // Resolve token endpoint auth method, consulting discovery if available.
+        let discoveryMetadata: OIDCDiscoveryMetadata? = await {
+            let fallbackDiscoveryURL: String?
+            if oidcConfiguration.login.discoveryURL == nil,
+                oidcConfiguration.login.authorizationEndpoint == nil,
+                let issuer = oidcConfiguration.issuer
+            {
+                fallbackDiscoveryURL = oidcDiscoveryURLFromIssuer(issuer)
+            } else {
+                fallbackDiscoveryURL = nil
+            }
+            let effectiveURL = oidcConfiguration.login.discoveryURL ?? fallbackDiscoveryURL
+            guard let effectiveURL, let url = URL(string: effectiveURL) else { return nil }
+            return try? await OIDCDiscoveryCache.shared.metadata(discoveryURL: url)
+        }()
+        let tokenAuthMethod = oidcTokenEndpointAuthMethod(
+            from: oidcConfiguration.login,
+            discoveryMetadata: discoveryMetadata
+        )
+
         do {
             let refreshedResponse = try await refreshOIDCTokens(
                 tokenEndpoint: tokenEndpoint,
                 refreshToken: refreshToken,
                 clientID: clientID,
-                clientSecret: oidcConfiguration.login.clientSecret
+                clientSecret: oidcConfiguration.login.clientSecret,
+                tokenEndpointAuthMethod: tokenAuthMethod
             )
 
             let refreshedSet = OIDCTokenSet(
@@ -484,20 +505,16 @@ public struct AuthPolicy: Sendable {
     }
 
     private func userInfoEndpoint(for configuration: OIDCConfiguration) async -> String? {
+        // 1. Explicit configuration always wins.
         if let explicit = configuration.login.serverSession.userInfoEndpoint,
             !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return explicit
         }
 
-        if let issuer = configuration.issuer {
-            let trimmed = issuer.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                let normalized = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
-                return normalized + "/api/oidc/userinfo"
-            }
-        }
-
+        // 2. Derive from OIDC Discovery (OpenID Connect Core 1.0, UserInfo Endpoint).
+        //    Do NOT infer from issuer as a URL template; only the discovery document
+        //    provides an authoritative userinfo_endpoint for a given provider.
         let fallbackDiscoveryURL: String?
         if configuration.login.discoveryURL == nil,
             configuration.login.authorizationEndpoint == nil,
@@ -581,7 +598,8 @@ public struct AuthPolicy: Sendable {
         tokenEndpoint: String,
         refreshToken: String,
         clientID: String,
-        clientSecret: String?
+        clientSecret: String?,
+        tokenEndpointAuthMethod: OIDCTokenEndpointAuthMethod
     ) async throws -> OIDCTokenResponse {
         guard let url = URL(string: tokenEndpoint) else {
             throw NSError(
@@ -596,15 +614,28 @@ public struct AuthPolicy: Sendable {
             ("refresh_token", refreshToken),
             ("client_id", clientID),
         ]
-        if let clientSecret, !clientSecret.isEmpty {
-            form.append(("client_secret", clientSecret))
-        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
         request.setValue("application/json", forHTTPHeaderField: "accept")
-        request.httpBody = Data(refreshFormURLEncoded(form).utf8)
+
+        switch tokenEndpointAuthMethod {
+        case .clientSecretBasic:
+            if let clientSecret, !clientSecret.isEmpty {
+                let credentials = "\(clientID):\(clientSecret)"
+                let encoded = Data(credentials.utf8).base64EncodedString()
+                request.setValue("Basic \(encoded)", forHTTPHeaderField: "authorization")
+            }
+        case .clientSecretPost:
+            if let clientSecret, !clientSecret.isEmpty {
+                form.append(("client_secret", clientSecret))
+            }
+        case .none:
+            break
+        }
+
+        request.httpBody = Data(oidcFormURLEncoded(form).utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -628,18 +659,6 @@ public struct AuthPolicy: Sendable {
         }
 
         return try JSONDecoder().decode(OIDCTokenResponse.self, from: data)
-    }
-
-    private func refreshFormURLEncoded(_ pairs: [(String, String)]) -> String {
-        pairs
-            .map { "\(refreshURLEncode($0.0))=\(refreshURLEncode($0.1))" }
-            .joined(separator: "&")
-    }
-
-    private func refreshURLEncode(_ value: String) -> String {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private func claimsString(_ key: String, in claims: [String: HTTP3SessionValue]) -> String? {
@@ -773,7 +792,7 @@ public struct AuthPolicy: Sendable {
         return retry.isEmpty ? nil : retry
     }
 
-    func oidcCallbackResponse(for request: HTTP3Request) async -> OIDCLoginCallbackHTTPResponse? {
+    public func oidcCallbackResponse(for request: HTTP3Request) async -> OIDCLoginCallbackHTTPResponse? {
         guard let oidc = configuration.oidc else { return nil }
         var loginConfiguration = oidc.login
 
@@ -801,6 +820,41 @@ public struct AuthPolicy: Sendable {
             fallbackDiscoveryURL: fallbackDiscoveryURL
         )
         return await callbackHandler.handleIfCallback(request: request)
+    }
+
+    /// Clear the session cookie and redirect the user to `postLogoutPath`.
+    ///
+    /// Call this from your `/logout` route handler. It deletes the server-side session record
+    /// (if a server-session is configured) and returns a redirect response with a cookie-clearing
+    /// `Set-Cookie` header so the browser discards the session token.
+    ///
+    /// - Parameter request: The incoming logout request.
+    /// - Returns: A `(status, headers, body)` tuple: `302` redirect with `Set-Cookie: <clear>`,
+    ///   or `nil` when no OIDC configuration is present.
+    public func logoutResponse(for request: HTTP3Request) async -> (Int, [(String, String)], Data)? {
+        guard let oidc = configuration.oidc else { return nil }
+
+        // Attempt to delete the server-side session if one exists.
+        if oidc.login.serverSession.enabled {
+            let snapshot = extractor.snapshot(request: request, configuration: configuration)
+            if let sessionID = snapshot.cookieValue(named: oidc.login.sessionCookieName) {
+                await OIDCServerSessionStore.shared.delete(sessionID: sessionID)
+            }
+        }
+
+        let clearCookie = clearingSessionCookieHeader(loginConfiguration: oidc.login)
+        let destination = oidc.login.postLogoutPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let location = destination.isEmpty ? "/" : destination
+
+        return (
+            302,
+            [
+                ("set-cookie", clearCookie),
+                ("location", location),
+                ("cache-control", "no-store"),
+            ],
+            Data()
+        )
     }
 
     func denyResponseHeaders(for request: HTTP3Request, status: Int, reason _: String) -> [(String, String)] {
