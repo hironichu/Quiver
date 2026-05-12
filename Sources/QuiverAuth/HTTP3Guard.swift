@@ -3,16 +3,20 @@ import HTTP3
 import Logging
 import QUICCore
 
+/// HTTP/3 middleware that evaluates an `AuthPolicy` before invoking protected handlers.
 public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
     private var logger: Logger {
         QuiverLogging.logger(label: "quiver.auth.guard")
     }
 
+    /// The policy used to authenticate incoming requests.
     public let policy: AuthPolicy
+    /// The `HTTP3Session` namespace where auth values and typed payloads are stored.
     public let namespace: String
 
     private let payloadBuilder: @Sendable (AuthPrincipal, AuthPolicy) -> SessionPayload?
 
+    /// A request-session resolver that attaches auth session values without rejecting requests.
     public var resolver: HTTP3Server.RequestSessionResolver {
         { context in
             logger.trace(
@@ -62,6 +66,7 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
         }
     }
 
+    /// Creates a guard that decodes the default auth session values into `SessionPayload`.
     public init(
         policy: AuthPolicy,
         namespace: String? = nil,
@@ -92,6 +97,7 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
         }
     }
 
+    /// Creates a guard with a custom typed payload builder.
     public init(
         policy: AuthPolicy,
         namespace: String? = nil,
@@ -128,6 +134,7 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
         return session
     }
 
+    /// Wraps a request handler with authentication, OIDC callback handling, and optional login redirects.
     public func protect(
         _ handler: @escaping HTTP3Server.RequestHandler,
         scope: ProtectedScope = .all
@@ -348,6 +355,7 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
             .replacingOccurrences(of: "'", with: "&#39;")
     }
 
+    /// Wraps an extended CONNECT handler with authentication and protocol allow-list checks.
     public func protectExtendedConnect(
         _ handler: @escaping HTTP3Server.ExtendedConnectHandler,
         allowedProtocols: Set<String> = ["webtransport"]
@@ -391,7 +399,9 @@ public struct HTTP3AuthGuard<SessionPayload: Codable & Sendable>: Sendable {
     }
 }
 
+/// Convenience initializers for guards using QuiverAuth's default session payload.
 public extension HTTP3AuthGuard where SessionPayload == QuiverAuthSession {
+    /// Creates a guard that stores QuiverAuth's default typed session payload.
     init(
         policy: AuthPolicy,
         namespace: String? = nil

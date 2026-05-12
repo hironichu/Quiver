@@ -29,8 +29,6 @@ struct OIDCValidator: Sendable {
             }
         }
 
-        // OIDC Core section 2 / RFC 7519 section 4.1.1: when an expected issuer is configured the token
-        // MUST contain an iss claim that exactly matches it. A missing iss is also invalid.
         if let issuer = configuration.issuer {
             guard let tokenIssuer = claimsJSON["iss"] as? String else {
                 return .invalid(reason: "missing iss claim")
@@ -64,7 +62,7 @@ struct OIDCValidator: Sendable {
         let email = claimsJSON["email"] as? String
         var typedClaims: [String: HTTP3SessionValue] = [:]
         for (key, value) in claimsJSON {
-            if let mapped = mapToSessionValue(value) {
+            if let mapped = quiverAuthSessionValue(from: value) {
                 typedClaims[key] = mapped
             }
         }
@@ -112,7 +110,7 @@ struct OIDCValidator: Sendable {
     private func decodeClaims(token: String) -> [String: Any]? {
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3 else { return nil }
-        guard let payloadData = decodeBase64URL(String(parts[1])) else { return nil }
+        guard let payloadData = quiverAuthDecodeBase64URL(String(parts[1])) else { return nil }
         return try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any]
     }
 
@@ -121,7 +119,6 @@ struct OIDCValidator: Sendable {
             return OIDCJWKS(keys: configuration.staticJWKs)
         }
 
-        // Explicit jwksURL takes precedence over discovery.
         if let rawURL = configuration.jwksURL, !rawURL.isEmpty {
             guard let url = URL(string: rawURL) else {
                 throw NSError(
@@ -136,8 +133,6 @@ struct OIDCValidator: Sendable {
             )
         }
 
-        // Fall back to jwks_uri from OIDC Discovery when issuer is configured.
-        // OIDC Discovery 1.0 section 3: jwks_uri MUST be provided in the discovery document.
         if let issuer = configuration.issuer,
             let discoveryRaw = oidcDiscoveryURLFromIssuer(issuer),
             let discoveryURL = URL(string: discoveryRaw)
@@ -154,18 +149,6 @@ struct OIDCValidator: Sendable {
         }
 
         return nil
-    }
-
-    private func decodeBase64URL(_ value: String) -> Data? {
-        var base64 = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-
-        let remainder = base64.count % 4
-        if remainder > 0 {
-            base64 += String(repeating: "=", count: 4 - remainder)
-        }
-        return Data(base64Encoded: base64)
     }
 
     private func numericClaim(_ name: String, in claims: [String: Any]) -> Int? {
@@ -191,39 +174,4 @@ struct OIDCValidator: Sendable {
         return false
     }
 
-    private func mapToSessionValue(_ value: Any) -> HTTP3SessionValue? {
-        switch value {
-        case let string as String:
-            return .string(string)
-        case let bool as Bool:
-            return .bool(bool)
-        case let int as Int:
-            return .number(Double(int))
-        case let int64 as Int64:
-            return .number(Double(int64))
-        case let double as Double:
-            return .number(double)
-        case let float as Float:
-            return .number(Double(float))
-        case let array as [Any]:
-            var mappedValues: [HTTP3SessionValue] = []
-            mappedValues.reserveCapacity(array.count)
-            for entry in array {
-                guard let mappedEntry = mapToSessionValue(entry) else { return nil }
-                mappedValues.append(mappedEntry)
-            }
-            return .array(mappedValues)
-        case let object as [String: Any]:
-            var mappedObject: [String: HTTP3SessionValue] = [:]
-            for (key, entry) in object {
-                guard let mappedEntry = mapToSessionValue(entry) else { return nil }
-                mappedObject[key] = mappedEntry
-            }
-            return .object(mappedObject)
-        case _ as NSNull:
-            return .null
-        default:
-            return nil
-        }
-    }
 }

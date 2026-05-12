@@ -5,21 +5,25 @@ import FoundationNetworking
 import HTTP3
 import QUICCore
 
+/// Evaluates QuiverAuth credentials and produces allow/deny decisions for HTTP/3 requests.
 public struct AuthPolicy: Sendable {
     private static let logger = QuiverLogging.logger(label: "quiver.auth.policy")
 
     private let configuration: AuthConfiguration
     private let extractor: AuthExtractor
 
+    /// Creates an authentication policy from static configuration and a credential extractor.
     public init(configuration: AuthConfiguration, extractor: AuthExtractor = AuthExtractor()) {
         self.configuration = configuration
         self.extractor = extractor
     }
 
+    /// Evaluates an HTTP/3 request context and returns an allow/deny decision.
     public func evaluate(_ requestContext: HTTP3RequestContext) async -> AuthDecision {
         await evaluate(request: requestContext.request, isFromGateway: requestContext.isFromAltSvcGateway)
     }
 
+    /// Evaluates an extended CONNECT request context and returns an allow/deny decision.
     public func evaluate(_ connectContext: ExtendedConnectContext) async -> AuthDecision {
         let isFromGateway = connectContext.request.headers.contains {
             $0.0.caseInsensitiveCompare("x-quiver-gateway") == .orderedSame
@@ -28,6 +32,7 @@ public struct AuthPolicy: Sendable {
         return await evaluate(request: connectContext.request, isFromGateway: isFromGateway)
     }
 
+    /// Evaluates a raw HTTP/3 request with an explicit gateway trust signal.
     public func evaluate(request: HTTP3Request, isFromGateway: Bool) async -> AuthDecision {
         Self.logger.trace(
             "evaluate auth request",
@@ -243,13 +248,6 @@ public struct AuthPolicy: Sendable {
         guard sessionConfiguration.enabled else { return nil }
 
         guard let sessionID = oidcSessionCookieValue(from: snapshot) else { return nil }
-
-        if looksLikeJWT(sessionID) {
-            if sessionConfiguration.allowLegacyTokenCookieFallback {
-                return nil
-            }
-            return .deny(status: 401, reason: "legacy token cookies are disabled")
-        }
 
         guard let sessionRecord = await OIDCServerSessionStore.shared.get(sessionID: sessionID) else {
             return .deny(status: 401, reason: "invalid session")
@@ -467,7 +465,6 @@ public struct AuthPolicy: Sendable {
             return sessionRecord
         }
 
-        // Resolve token endpoint auth method, consulting discovery if available.
         let discoveryMetadata: OIDCDiscoveryMetadata? = await {
             let fallbackDiscoveryURL: String?
             if oidcConfiguration.login.discoveryURL == nil,
@@ -564,16 +561,12 @@ public struct AuthPolicy: Sendable {
     }
 
     private func userInfoEndpoint(for configuration: OIDCConfiguration) async -> String? {
-        // 1. Explicit configuration always wins.
         if let explicit = configuration.login.serverSession.userInfoEndpoint,
             !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return explicit
         }
 
-        // 2. Derive from OIDC Discovery (OpenID Connect Core 1.0, UserInfo Endpoint).
-        //    Do NOT infer from issuer as a URL template; only the discovery document
-        //    provides an authoritative userinfo_endpoint for a given provider.
         let fallbackDiscoveryURL: String?
         if configuration.login.discoveryURL == nil,
             configuration.login.authorizationEndpoint == nil,
@@ -646,7 +639,7 @@ public struct AuthPolicy: Sendable {
 
         var mapped: [String: HTTP3SessionValue] = [:]
         for (key, value) in object {
-            if let mappedValue = mapToSessionValue(value) {
+            if let mappedValue = quiverAuthSessionValue(from: value) {
                 mapped[key] = mappedValue
             }
         }
@@ -727,46 +720,12 @@ public struct AuthPolicy: Sendable {
         return nil
     }
 
-    private func mapToSessionValue(_ value: Any) -> HTTP3SessionValue? {
-        switch value {
-        case let string as String:
-            return .string(string)
-        case let bool as Bool:
-            return .bool(bool)
-        case let int as Int:
-            return .number(Double(int))
-        case let int64 as Int64:
-            return .number(Double(int64))
-        case let double as Double:
-            return .number(double)
-        case let float as Float:
-            return .number(Double(float))
-        case let array as [Any]:
-            var mappedValues: [HTTP3SessionValue] = []
-            mappedValues.reserveCapacity(array.count)
-            for entry in array {
-                guard let mappedEntry = mapToSessionValue(entry) else { return nil }
-                mappedValues.append(mappedEntry)
-            }
-            return .array(mappedValues)
-        case let object as [String: Any]:
-            var mappedObject: [String: HTTP3SessionValue] = [:]
-            for (key, entry) in object {
-                guard let mappedEntry = mapToSessionValue(entry) else { return nil }
-                mappedObject[key] = mappedEntry
-            }
-            return .object(mappedObject)
-        case _ as NSNull:
-            return .null
-        default:
-            return nil
-        }
-    }
-
+    /// Returns the credential snapshot that this policy would evaluate for a request.
     public func authSnapshot(for request: HTTP3Request) -> AuthCredentialSnapshot {
         extractor.snapshot(request: request, configuration: configuration)
     }
 
+    /// Returns whether a request path matches the configured OIDC login callback route.
     public func isOIDCCallbackRequest(_ request: HTTP3Request) -> Bool {
         guard let oidc = configuration.oidc else { return false }
         var loginConfiguration = oidc.login
@@ -787,6 +746,7 @@ public struct AuthPolicy: Sendable {
         return normalizedRequestPath(request.path) == callbackPath
     }
 
+    /// Converts an authenticated principal into values suitable for an `HTTP3Session` namespace.
     public func sessionValues(for principal: AuthPrincipal) -> [String: HTTP3SessionValue] {
         var authClaims = principal.claims
         authClaims["subject"] = .string(principal.subject)
@@ -797,6 +757,7 @@ public struct AuthPolicy: Sendable {
         return authClaims
     }
 
+    /// Builds the default typed auth session payload for an authenticated principal.
     public func defaultSessionPayload(for principal: AuthPrincipal) -> QuiverAuthSession {
         QuiverAuthSession(
             subject: principal.subject,
@@ -806,6 +767,7 @@ public struct AuthPolicy: Sendable {
         )
     }
 
+    /// Returns an HTTP/3 session with this principal's auth values set in the given namespace.
     public func session(
         for principal: AuthPrincipal,
         base: HTTP3Session = .empty,
@@ -814,6 +776,7 @@ public struct AuthPolicy: Sendable {
         base.setting(namespace: namespace, values: sessionValues(for: principal))
     }
 
+    /// Creates a server-side generic auth session using the configured `AuthSessionStore`.
     public func createSession(
         for principal: AuthPrincipal,
         expiresAt: Date? = nil
@@ -829,8 +792,8 @@ public struct AuthPolicy: Sendable {
         let effectiveExpiresAt: Date?
         if let expiresAt {
             effectiveExpiresAt = expiresAt
-        } else if let maxAge = configuration.session?.cookieMaxAgeSeconds, maxAge > 0 {
-            effectiveExpiresAt = Date().addingTimeInterval(TimeInterval(maxAge))
+        } else if let maxAge = configuration.session?.cookieMaxAge, maxAge > .zero {
+            effectiveExpiresAt = Date().addingTimeInterval(TimeInterval(maxAge.wholeSecondsRoundedUp))
         } else {
             effectiveExpiresAt = nil
         }
@@ -838,32 +801,43 @@ public struct AuthPolicy: Sendable {
         return try await store.create(principal: principal, expiresAt: effectiveExpiresAt)
     }
 
+    /// Builds a `Set-Cookie` header value for a newly-created generic auth session.
     public func sessionCookieHeader(for record: AuthSessionRecord) -> String? {
         guard let sessionConfiguration = configuration.session else { return nil }
-        return sessionCookieHeader(
-            name: sessionConfiguration.cookieName,
-            value: record.sessionID,
-            path: sessionConfiguration.cookiePath,
-            maxAgeSeconds: sessionConfiguration.cookieMaxAgeSeconds,
-            secure: sessionConfiguration.cookieSecure,
-            httpOnly: sessionConfiguration.cookieHTTPOnly,
-            sameSite: sessionConfiguration.cookieSameSite
-        )
+        return AuthCookie(configuration: sessionConfiguration.cookie, value: record.sessionID).headerValue
     }
 
+    /// Builds a `Set-Cookie` header value that clears the generic auth session cookie.
     public func clearingSessionCookieHeader() -> String? {
         guard let sessionConfiguration = configuration.session else { return nil }
-        return sessionCookieHeader(
-            name: sessionConfiguration.cookieName,
-            value: "",
-            path: sessionConfiguration.cookiePath,
-            maxAgeSeconds: 0,
-            secure: sessionConfiguration.cookieSecure,
-            httpOnly: sessionConfiguration.cookieHTTPOnly,
-            sameSite: sessionConfiguration.cookieSameSite
+        return AuthCookie(configuration: sessionConfiguration.cookie, value: "").clearing.headerValue
+    }
+
+    /// Issues a custom application JWT for the supplied principal.
+    ///
+    /// Configure `AuthConfiguration.jwtIssuer` with an HS256 secret first. The resulting token
+    /// can be validated by an `OIDCConfiguration` that uses the same `hs256SharedSecret`, issuer,
+    /// and audience.
+    public func issueJWT(
+        for principal: AuthPrincipal,
+        expiresIn: Duration? = nil,
+        additionalClaims: [String: HTTP3SessionValue] = [:]
+    ) throws -> String {
+        guard let jwtIssuerConfiguration = configuration.jwtIssuer else {
+            throw NSError(
+                domain: "QuiverAuth.AuthPolicy",
+                code: 5001,
+                userInfo: [NSLocalizedDescriptionKey: "jwt issuer is not configured"]
+            )
+        }
+        return try AuthJWTIssuer(configuration: jwtIssuerConfiguration).issueToken(
+            for: principal,
+            expiresIn: expiresIn,
+            additionalClaims: additionalClaims
         )
     }
 
+    /// Builds an OIDC authorization redirect URL for a browser request, when login is configured.
     public func loginRedirectURL(for request: HTTP3Request) async -> URL? {
         guard let oidc = configuration.oidc else { return nil }
         var loginConfiguration = oidc.login
@@ -901,6 +875,7 @@ public struct AuthPolicy: Sendable {
         return retry.isEmpty ? nil : retry
     }
 
+    /// Handles the configured OIDC callback request and returns the HTTP response to send.
     public func oidcCallbackResponse(for request: HTTP3Request) async -> OIDCLoginCallbackHTTPResponse? {
         guard let oidc = configuration.oidc else { return nil }
         var loginConfiguration = oidc.login
@@ -943,7 +918,6 @@ public struct AuthPolicy: Sendable {
     public func logoutResponse(for request: HTTP3Request) async -> (Int, [(String, String)], Data)? {
         guard let oidc = configuration.oidc else { return nil }
 
-        // Attempt to delete the server-side session if one exists.
         if oidc.login.serverSession.enabled {
             let snapshot = extractor.snapshot(request: request, configuration: configuration)
             if let sessionID = snapshot.cookieValue(named: oidc.login.sessionCookieName) {
@@ -1004,34 +978,14 @@ public struct AuthPolicy: Sendable {
     }
 
     private func clearingSessionCookieHeader(loginConfiguration: OIDCLoginConfiguration) -> String {
-        sessionCookieHeader(
+        let configuration = AuthCookieConfiguration(
             name: loginConfiguration.sessionCookieName,
-            value: "",
             path: loginConfiguration.sessionCookiePath,
-            maxAgeSeconds: 0,
+            maxAge: nil,
             secure: loginConfiguration.sessionCookieSecure,
             httpOnly: loginConfiguration.sessionCookieHTTPOnly,
             sameSite: loginConfiguration.sessionCookieSameSite
         )
-    }
-
-    private func sessionCookieHeader(
-        name: String,
-        value: String,
-        path: String,
-        maxAgeSeconds: Int?,
-        secure: Bool,
-        httpOnly: Bool,
-        sameSite: String
-    ) -> String {
-        var parts = ["\(name)=\(value)"]
-        parts.append("Path=\(path)")
-        if let maxAgeSeconds {
-            parts.append("Max-Age=\(max(0, maxAgeSeconds))")
-        }
-        if secure { parts.append("Secure") }
-        if httpOnly { parts.append("HttpOnly") }
-        parts.append("SameSite=\(sameSite)")
-        return parts.joined(separator: "; ")
+        return AuthCookie(configuration: configuration, value: "").clearing.headerValue
     }
 }
