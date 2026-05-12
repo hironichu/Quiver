@@ -115,9 +115,13 @@ actor OIDCLoginStateStore {
     }
 }
 
+/// HTTP response returned after handling an OIDC login callback.
 public struct OIDCLoginCallbackHTTPResponse: Sendable {
+    /// HTTP status code to send to the client.
     public let status: Int
+    /// HTTP response headers, including redirects and cookies when applicable.
     public let headers: [(String, String)]
+    /// HTTP response body.
     public let body: Data
 }
 
@@ -349,8 +353,6 @@ struct OIDCLoginCallbackHandler: Sendable {
                 tokenEndpointAuthMethod: tokenAuthMethod
             )
 
-            // OIDC Core section 3.1.3.7: because a nonce was sent in the authorization request,
-            // the ID token MUST contain that nonce and it MUST match exactly.
             if let idToken = tokenResponse.idToken {
                 guard let nonce = decodeStringClaim("nonce", fromJWT: idToken) else {
                     return callbackFailureResponse(reason: "missing_nonce_in_id_token", request: request)
@@ -388,7 +390,7 @@ struct OIDCLoginCallbackHandler: Sendable {
 
             let cookie = sessionCookieHeader(
                 token: cookieValue,
-                maxAgeSeconds: configuration.serverSession.cookieMaxAgeSeconds
+                maxAge: configuration.serverSession.cookieMaxAge
             )
             oidcLogger.debug(
                 "oidc callback success, issuing session cookie",
@@ -498,25 +500,25 @@ struct OIDCLoginCallbackHandler: Sendable {
     }
 
         private func shouldReturnHTML(for request: HTTP3Request) -> Bool {
-                let accept = headerValue("accept", in: request)?.lowercased() ?? ""
-                let contentType = headerValue("content-type", in: request)?.lowercased() ?? ""
-                let requestedWith = headerValue("x-requested-with", in: request)?.lowercased() ?? ""
-                let fetchMode = headerValue("sec-fetch-mode", in: request)?.lowercased() ?? ""
+            let accept = headerValue("accept", in: request)?.lowercased() ?? ""
+            let contentType = headerValue("content-type", in: request)?.lowercased() ?? ""
+            let requestedWith = headerValue("x-requested-with", in: request)?.lowercased() ?? ""
+            let fetchMode = headerValue("sec-fetch-mode", in: request)?.lowercased() ?? ""
 
-                if accept.contains("application/json") { return false }
-                if contentType.contains("application/json") { return false }
-                if requestedWith.contains("xmlhttprequest") { return false }
-                if !fetchMode.isEmpty && fetchMode != "navigate" { return false }
+            if accept.contains("application/json") { return false }
+            if contentType.contains("application/json") { return false }
+            if requestedWith.contains("xmlhttprequest") { return false }
+            if !fetchMode.isEmpty && fetchMode != "navigate" { return false }
 
-                return accept.contains("text/html") || fetchMode == "navigate"
+            return accept.contains("text/html") || fetchMode == "navigate"
         }
 
         private func headerValue(_ name: String, in request: HTTP3Request) -> String? {
-                request.headers.first { $0.0.caseInsensitiveCompare(name) == .orderedSame }?.1
+            request.headers.first { $0.0.caseInsensitiveCompare(name) == .orderedSame }?.1
         }
 
         private func callbackFailureHTML(reason: String) -> String {
-                let safeReason = escapeHTML(reason)
+            let safeReason = escapeHTML(reason)
             let retryHTML: String
             if let retryURL = configuration.errorRetryURL?.trimmingCharacters(in: .whitespacesAndNewlines), !retryURL.isEmpty {
                 retryHTML = "<p><a class=\"btn\" href=\"\(escapeHTML(retryURL))\">Try again</a></p>"
@@ -524,75 +526,75 @@ struct OIDCLoginCallbackHandler: Sendable {
                 retryHTML = ""
             }
 
-                return """
-                <!doctype html>
-                <html lang=\"en\">
-                    <head>
-                        <meta charset=\"utf-8\" />
-                        <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-                        <title>Login Failed</title>
-                        <style>
-                            :root { color-scheme: light dark; }
-                            body {
-                                margin: 0;
-                                font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;
-                                background: #f7f8fa;
-                                color: #101828;
-                                display: grid;
-                                min-height: 100vh;
-                                place-items: center;
-                                padding: 16px;
-                            }
-                            .card {
-                                width: min(460px, 100%);
-                                background: #ffffff;
-                                border: 1px solid #e4e7ec;
-                                border-radius: 12px;
-                                padding: 18px 20px;
-                                box-shadow: 0 6px 20px rgba(16, 24, 40, 0.08);
-                            }
-                            h1 { margin: 0 0 8px 0; font-size: 18px; }
-                            p { margin: 0 0 10px 0; color: #475467; font-size: 14px; }
-                            code {
-                                display: inline-block;
-                                margin-top: 4px;
-                                padding: 2px 6px;
-                                border-radius: 6px;
-                                background: #f2f4f7;
-                                font-size: 12px;
-                                color: #344054;
-                            }
-                            .btn {
-                                display: inline-block;
-                                margin-top: 8px;
-                                text-decoration: none;
-                                background: #175cd3;
-                                color: #ffffff;
-                                border-radius: 8px;
-                                padding: 7px 12px;
-                                font-size: 13px;
-                            }
-                        </style>
-                    </head>
-                    <body>
-                        <main class=\"card\">
-                            <h1>Login failed</h1>
-                            <p>We could not complete your sign-in flow.</p>
-                            <code>\(safeReason)</code>
-                            \(retryHTML)
-                        </main>
-                    </body>
-                </html>
-                """
+            return """
+            <!doctype html>
+            <html lang=\"en\">
+                <head>
+                    <meta charset=\"utf-8\" />
+                    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
+                    <title>Login Failed</title>
+                    <style>
+                        :root { color-scheme: light dark; }
+                        body {
+                            margin: 0;
+                            font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;
+                            background: #f7f8fa;
+                            color: #101828;
+                            display: grid;
+                            min-height: 100vh;
+                            place-items: center;
+                            padding: 16px;
+                        }
+                        .card {
+                            width: min(460px, 100%);
+                            background: #ffffff;
+                            border: 1px solid #e4e7ec;
+                            border-radius: 12px;
+                            padding: 18px 20px;
+                            box-shadow: 0 6px 20px rgba(16, 24, 40, 0.08);
+                        }
+                        h1 { margin: 0 0 8px 0; font-size: 18px; }
+                        p { margin: 0 0 10px 0; color: #475467; font-size: 14px; }
+                        code {
+                            display: inline-block;
+                            margin-top: 4px;
+                            padding: 2px 6px;
+                            border-radius: 6px;
+                            background: #f2f4f7;
+                            font-size: 12px;
+                            color: #344054;
+                        }
+                        .btn {
+                            display: inline-block;
+                            margin-top: 8px;
+                            text-decoration: none;
+                            background: #175cd3;
+                            color: #ffffff;
+                            border-radius: 8px;
+                            padding: 7px 12px;
+                            font-size: 13px;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <main class=\"card\">
+                        <h1>Login failed</h1>
+                        <p>We could not complete your sign-in flow.</p>
+                        <code>\(safeReason)</code>
+                        \(retryHTML)
+                    </main>
+                </body>
+            </html>
+            """
         }
 
         private func escapeHTML(_ value: String) -> String {
-                value
-                        .replacingOccurrences(of: "&", with: "&amp;")
-                        .replacingOccurrences(of: "<", with: "&lt;")
-                        .replacingOccurrences(of: ">", with: "&gt;")
-                        .replacingOccurrences(of: "\"", with: "&quot;")
-                        .replacingOccurrences(of: "'", with: "&#39;")
+            value
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "'", with: "&#39;")
         }
 
     private func exchangeCode(
@@ -612,11 +614,6 @@ struct OIDCLoginCallbackHandler: Sendable {
             )
         }
 
-        // RFC 6749 section 2.3.1: a client MUST NOT use more than one authentication method per request.
-        // The method is selected via OIDCTokenEndpointAuthMethod:
-        //   clientSecretBasic -> Authorization: Basic header (RFC 6749 section 2.3.1 preferred method)
-        //   clientSecretPost  -> client_secret in the form body
-        //   none              -> no client authentication (public clients, RFC 6749 section 2.1)
         var form: [(String, String)] = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -683,16 +680,16 @@ struct OIDCLoginCallbackHandler: Sendable {
         }
     }
 
-    private func sessionCookieHeader(token: String, maxAgeSeconds: Int?) -> String {
-        var parts = ["\(configuration.sessionCookieName)=\(token)"]
-        parts.append("Path=\(configuration.sessionCookiePath)")
-        if let maxAgeSeconds, maxAgeSeconds > 0 {
-            parts.append("Max-Age=\(maxAgeSeconds)")
-        }
-        if configuration.sessionCookieSecure { parts.append("Secure") }
-        if configuration.sessionCookieHTTPOnly { parts.append("HttpOnly") }
-        parts.append("SameSite=\(configuration.sessionCookieSameSite)")
-        return parts.joined(separator: "; ")
+    private func sessionCookieHeader(token: String, maxAge: Duration?) -> String {
+        let cookieConfiguration = AuthCookieConfiguration(
+            name: configuration.sessionCookieName,
+            path: configuration.sessionCookiePath,
+            maxAge: maxAge,
+            secure: configuration.sessionCookieSecure,
+            httpOnly: configuration.sessionCookieHTTPOnly,
+            sameSite: configuration.sessionCookieSameSite
+        )
+        return AuthCookie(configuration: cookieConfiguration, value: token).headerValue
     }
 
     private func normalizedPath(_ path: String) -> String {
@@ -715,21 +712,9 @@ struct OIDCLoginCallbackHandler: Sendable {
     private func decodeStringClaim(_ name: String, fromJWT token: String) -> String? {
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3 else { return nil }
-        guard let payloadData = decodeBase64URL(String(parts[1])) else { return nil }
+        guard let payloadData = quiverAuthDecodeBase64URL(String(parts[1])) else { return nil }
         guard let object = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else { return nil }
         return object[name] as? String
-    }
-
-    private func decodeBase64URL(_ value: String) -> Data? {
-        var base64 = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-
-        let remainder = base64.count % 4
-        if remainder > 0 {
-            base64 += String(repeating: "=", count: 4 - remainder)
-        }
-        return Data(base64Encoded: base64)
     }
 }
 

@@ -23,17 +23,9 @@ struct QuiverAuthTests {
         )
     }
 
-    private func base64URL(_ string: String) -> String {
-        let data = Data(string.utf8)
-        return data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
     private func testJWT(payload: String, alg: String = "RS256") -> String {
         let header = #"{"alg":""# + alg + #"","typ":"JWT"}"#
-        return "\(base64URL(header)).\(base64URL(payload)).sig"
+        return "\(quiverAuthBase64URL(Data(header.utf8))).\(quiverAuthBase64URL(Data(payload.utf8))).sig"
     }
 
     private func queryValue(_ name: String, in url: URL) -> String? {
@@ -110,6 +102,8 @@ struct QuiverAuthTests {
             session: AuthSessionConfiguration(
                 cookieName: "app-session",
                 cookieSecure: false,
+                cookieSameSite: .strict,
+                cookieMaxAge: .minutes(30),
                 store: store
             )
         )
@@ -125,7 +119,9 @@ struct QuiverAuthTests {
         let cookie = policy.sessionCookieHeader(for: record)
 
         #expect(cookie?.contains("app-session=\(record.sessionID)") == true)
+        #expect(cookie?.contains("Max-Age=1800") == true)
         #expect(cookie?.contains("HttpOnly") == true)
+        #expect(cookie?.contains("SameSite=Strict") == true)
 
         let request = HTTP3Request(
             method: .get,
@@ -143,6 +139,52 @@ struct QuiverAuthTests {
         }
 
         await store.delete(sessionID: record.sessionID)
+    }
+
+    @Test
+    func policyIssuesHS256JWTThatValidatorAccepts() async throws {
+        let secret = "test-shared-secret-for-issuer"
+        let config = AuthConfiguration(
+            mode: .oidcOnly,
+            oidc: OIDCConfiguration(
+                issuer: "https://issuer.example",
+                audience: "quiver-app",
+                hs256SharedSecret: secret
+            ),
+            jwtIssuer: AuthJWTIssuerConfiguration(
+                issuer: "https://issuer.example",
+                audience: "quiver-app",
+                defaultTTL: .seconds(300),
+                hs256SharedSecret: secret,
+                keyID: "local-key"
+            )
+        )
+        let policy = AuthPolicy(configuration: config)
+        let principal = AuthPrincipal(
+            subject: "local-user-2",
+            email: "jwt@example.test",
+            source: "local-db",
+            claims: ["tenant": .string("acme")]
+        )
+
+        let jwt = try policy.issueJWT(for: principal, additionalClaims: ["role": .string("admin")])
+        let request = HTTP3Request(
+            method: .get,
+            authority: "example.test",
+            path: "/private",
+            headers: [("authorization", "Bearer \(jwt)")]
+        )
+
+        let decision = await policy.evaluate(request: request, isFromGateway: false)
+        switch decision {
+        case .allow(let hydrated):
+            #expect(hydrated.subject == "local-user-2")
+            #expect(hydrated.email == "jwt@example.test")
+            #expect(hydrated.claims["tenant"] == .string("acme"))
+            #expect(hydrated.claims["role"] == .string("admin"))
+        case .deny(let status, let reason):
+            Issue.record("Expected issued JWT to validate. status=\(status) reason=\(reason)")
+        }
     }
 
     @Test
@@ -381,8 +423,8 @@ struct QuiverAuthTests {
         let exp = Int(Date().timeIntervalSince1970) + 300
         let header = #"{"alg":"ES256","typ":"JWT","kid":"test-es256-kid"}"#
         let payload = #"{"sub":"user-es256","iss":"https://id.example","aud":"quiver-app","exp":"# + String(exp) + #"}"#
-        let headerPart = base64URL(header)
-        let payloadPart = base64URL(payload)
+        let headerPart = quiverAuthBase64URL(Data(header.utf8))
+        let payloadPart = quiverAuthBase64URL(Data(payload.utf8))
         let signingInput = "\(headerPart).\(payloadPart)"
         let sig = try privateKey.signature(for: Data(signingInput.utf8)).rawRepresentation
         let sigPart = sig.base64EncodedString().replacingOccurrences(of: "+", with: "-")
@@ -407,7 +449,7 @@ struct QuiverAuthTests {
     }
 
     @Test
-    func oidcModeAcceptsJWTFromCookie() async {
+    func oidcModeRejectsRawJWTSessionCookie() async {
         let config = AuthConfiguration(
             mode: .oidcOnly,
             sessionCookieNames: ["z-token"],
@@ -433,10 +475,10 @@ struct QuiverAuthTests {
         let decision = await policy.evaluate(request: request, isFromGateway: true)
         switch decision {
         case .allow(let principal):
-            #expect(principal.source == "oidc")
-            #expect(principal.subject == "user-cookie")
+            Issue.record("Expected raw JWT session cookie to be rejected. subject=\(principal.subject)")
         case .deny(let status, let reason):
-            Issue.record("Expected JWT cookie to authorize in oidc mode. status=\(status) reason=\(reason)")
+            #expect(status == 401)
+            #expect(reason == "invalid session")
         }
     }
 
@@ -737,11 +779,8 @@ struct QuiverAuthTests {
         #expect(setCookieHeader?.contains("Max-Age=0") == true)
     }
 
-    // MARK: - RFC compliance regression tests
-
     @Test
     func oidcModeRejectsMissingIssClaimWhenIssuerConfigured() async {
-        // OIDC Core §2 / RFC 7519 §4.1.1: when issuer is configured, tokens without iss are invalid.
         let config = AuthConfiguration(
             mode: .oidcOnly,
             oidc: OIDCConfiguration(
@@ -752,7 +791,6 @@ struct QuiverAuthTests {
         let policy = AuthPolicy(configuration: config)
 
         let exp = Int(Date().timeIntervalSince1970) + 300
-        // Token deliberately has no iss claim
         let payload = #"{"sub":"user-1","exp":"# + String(exp) + #"}"#
         let jwt = testJWT(payload: payload)
 
@@ -774,7 +812,6 @@ struct QuiverAuthTests {
 
     @Test
     func oidcModeAcceptsTokenWithMissingIssWhenNoIssuerConfigured() async {
-        // No issuer configured → iss claim is not required.
         let config = AuthConfiguration(
             mode: .oidcOnly,
             oidc: OIDCConfiguration(
@@ -805,7 +842,6 @@ struct QuiverAuthTests {
 
     @Test
     func oidcModeRejectsAudienceMismatchWhenAudienceConfigured() async {
-        // RFC 7519 §4.1.3: when audience is configured, tokens with a different aud are invalid.
         let config = AuthConfiguration(
             mode: .oidcOnly,
             oidc: OIDCConfiguration(
@@ -837,7 +873,6 @@ struct QuiverAuthTests {
 
     @Test
     func oidcModeRejectsMissingAudienceWhenAudienceConfigured() async {
-        // RFC 7519 §4.1.3: when audience is configured, tokens without aud are invalid.
         let config = AuthConfiguration(
             mode: .oidcOnly,
             oidc: OIDCConfiguration(
@@ -848,7 +883,6 @@ struct QuiverAuthTests {
         let policy = AuthPolicy(configuration: config)
 
         let exp = Int(Date().timeIntervalSince1970) + 300
-        // Token deliberately has no aud claim
         let payload = #"{"sub":"user-1","exp":"# + String(exp) + #"}"#
         let jwt = testJWT(payload: payload)
 

@@ -10,13 +10,8 @@ struct OIDCTokenSet: Sendable, Equatable {
     var expiresAt: Date?
 
     func validationToken() -> String? {
-        if let idToken, !idToken.isEmpty {
-            return idToken
-        }
-        if let accessToken, !accessToken.isEmpty {
-            return accessToken
-        }
-        return nil
+        guard let idToken, !idToken.isEmpty else { return nil }
+        return idToken
     }
 
     func shouldRefresh(leewaySeconds: Int) -> Bool {
