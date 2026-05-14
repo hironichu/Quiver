@@ -23,8 +23,8 @@ extension ManagedConnection: QUICConnectionProtocol {
         state.withLock { $0.handshakeState == .established }
     }
 
-    public func openStream() async throws -> any QUICStreamProtocol {
-        let streamID = try handler.openStream(bidirectional: true)
+    public func openStream(priority: StreamPriority = .default) async throws -> any QUICStreamProtocol {
+        let streamID = try handler.openStream(bidirectional: true, priority: priority)
         return ManagedStream(
             id: streamID,
             connection: self,
@@ -32,8 +32,8 @@ extension ManagedConnection: QUICConnectionProtocol {
         )
     }
 
-    public func openUniStream() async throws -> any QUICStreamProtocol {
-        let streamID = try handler.openStream(bidirectional: false)
+    public func openUniStream(priority: StreamPriority = .default) async throws -> any QUICStreamProtocol {
+        let streamID = try handler.openStream(bidirectional: false, priority: priority)
         return ManagedStream(
             id: streamID,
             connection: self,

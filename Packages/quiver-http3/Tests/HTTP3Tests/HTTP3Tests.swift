@@ -10,6 +10,7 @@ import XCTest
 @testable import QPACK
 @testable import QUIC
 @testable import QUICCore
+@testable import QUICStream
 
 // MARK: - HTTP/3 Frame Type Tests
 
@@ -2941,8 +2942,8 @@ private final class MinimalMockConnection: QUICConnectionProtocol, @unchecked Se
     }
 
     func waitForHandshake() async throws {}
-    func openStream() async throws -> any QUICStreamProtocol { MockQUICStream(id: 0) }
-    func openUniStream() async throws -> any QUICStreamProtocol { MockQUICStream(id: 2) }
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol { MockQUICStream(id: 0) }
+    func openUniStream(priority: StreamPriority) async throws -> any QUICStreamProtocol { MockQUICStream(id: 2) }
     func sendDatagram(_ data: Data) async throws {}
     func sendDatagram(_ data: Data, strategy: DatagramSendingStrategy) async throws {}
     func close(error: UInt64?) async {}

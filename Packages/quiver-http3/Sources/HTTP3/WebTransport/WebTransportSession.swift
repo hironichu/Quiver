@@ -161,6 +161,13 @@ public actor WebTransportSession {
     /// portion after the HTTP headers.
     public let connectStream: any QUICStreamProtocol
 
+    /// The Extended CONNECT request that established this session, when available.
+    ///
+    /// Server-side sessions receive the original client request. Client-side
+    /// sessions receive the request sent by `WebTransport.connect()` when
+    /// constructed through the high-level API.
+    public let connectRequest: HTTP3Request?
+
     /// The HTTP/3 connection this session belongs to.
     public let connection: HTTP3Connection
 
@@ -264,14 +271,16 @@ public actor WebTransportSession {
         connectStream: any QUICStreamProtocol,
         connection: HTTP3Connection,
         role: Role,
+        connectRequest: HTTP3Request? = nil,
         path: String = "",
         authority: String = ""
     ) {
         self.connectStream = connectStream
+        self.connectRequest = connectRequest
         self.connection = connection
         self.role = role
-        self.path = path
-        self.authority = authority
+        self.path = path.isEmpty ? (connectRequest?.path ?? "") : path
+        self.authority = authority.isEmpty ? (connectRequest?.authority ?? "") : authority
         self.sessionID = connectStream.id
         self.quarterStreamID = connectStream.id / 4
 
@@ -475,7 +484,7 @@ public actor WebTransportSession {
             throw WebTransportError.sessionNotEstablished
         }
 
-        let quicStream = try await connection.quicConnection.openStream()
+        let quicStream = try await connection.quicConnection.openStream(priority: priority)
 
         // Write session ID framing
         try await WebTransportStreamFraming.writeBidirectionalHeader(
@@ -538,7 +547,7 @@ public actor WebTransportSession {
             throw WebTransportError.sessionNotEstablished
         }
 
-        let quicStream = try await connection.quicConnection.openUniStream()
+        let quicStream = try await connection.quicConnection.openUniStream(priority: priority)
 
         // Write stream type + session ID framing
         try await WebTransportStreamFraming.writeUnidirectionalHeader(

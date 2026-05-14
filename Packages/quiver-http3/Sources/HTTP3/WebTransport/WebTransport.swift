@@ -423,6 +423,7 @@ public enum WebTransport {
             return try await h3.createClientWebTransportSession(
                 connectStream: connectStream,
                 response: response,
+                connectRequest: request,
                 path: path,
                 authority: authority
             )

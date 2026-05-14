@@ -141,6 +141,7 @@ extension HTTP3Connection {
             connectStream: context.stream,
             connection: self,
             role: role,
+            connectRequest: context.request,
             path: context.request.path,
             authority: context.request.authority
         )
@@ -170,6 +171,7 @@ extension HTTP3Connection {
     public func createClientWebTransportSession(
         connectStream: any QUICStreamProtocol,
         response: borrowing HTTP3ResponseHead,
+        connectRequest: HTTP3Request? = nil,
         path: String = "",
         authority: String = ""
     ) async throws -> WebTransportSession {
@@ -184,6 +186,7 @@ extension HTTP3Connection {
             connectStream: connectStream,
             connection: self,
             role: .client,
+            connectRequest: connectRequest,
             path: path,
             authority: authority
         )

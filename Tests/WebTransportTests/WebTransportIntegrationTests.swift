@@ -208,7 +208,7 @@ private final class MockIntegrationConnection: QUICConnectionProtocol, @unchecke
 
     func waitForHandshake() async throws {}
 
-    func openStream() async throws -> any QUICStreamProtocol {
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
         state.withLock { s in
             let id = s.nextBidiStreamID
             s.nextBidiStreamID += 4
@@ -218,7 +218,7 @@ private final class MockIntegrationConnection: QUICConnectionProtocol, @unchecke
         }
     }
 
-    func openUniStream() async throws -> any QUICStreamProtocol {
+    func openUniStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
         state.withLock { s in
             let id = s.nextUniStreamID
             s.nextUniStreamID += 4
@@ -731,8 +731,9 @@ private func makeServerSession(
 
         let connectStream = MockIntegrationStream(id: 4)
 
+        let request = HTTP3Request.webTransportConnect(authority: "example.com", path: "/wt")
         let context = ExtendedConnectContext(
-            request: HTTP3Request.webTransportConnect(authority: "example.com", path: "/wt"),
+            request: request,
             streamID: 4,
             stream: connectStream,
             connection: h3Conn,
@@ -760,8 +761,9 @@ private func makeServerSession(
         let connectStream = MockIntegrationStream(id: 4)
         connectStream.enqueueFIN()
 
+        let request = HTTP3Request.webTransportConnect(authority: "example.com", path: "/wt")
         let context = ExtendedConnectContext(
-            request: HTTP3Request.webTransportConnect(authority: "example.com", path: "/wt"),
+            request: request,
             streamID: 4,
             stream: connectStream,
             connection: h3Conn,
@@ -777,6 +779,10 @@ private func makeServerSession(
 
         let sessionID = await session.sessionID
         #expect(sessionID == 4)
+        let connectRequest = await session.connectRequest
+        #expect(connectRequest?.authority == request.authority)
+        #expect(connectRequest?.path == request.path)
+        #expect(connectRequest?.isWebTransportConnect == true)
         let isEstablished = await session.isEstablished
         #expect(isEstablished)
 

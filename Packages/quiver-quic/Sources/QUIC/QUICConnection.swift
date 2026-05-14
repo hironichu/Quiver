@@ -9,6 +9,8 @@ import Foundation
 #endif
 import NIOCore
 import QUICCore
+import QUICCrypto
+import QUICStream
 
 // MARK: - QUIC Connection Protocol
 
@@ -46,11 +48,19 @@ public protocol QUICConnectionProtocol: Sendable {
     /// ```
     func waitForHandshake() async throws
 
-    /// Opens a new bidirectional stream
-    func openStream() async throws -> any QUICStreamProtocol
+    /// Stream of session tickets received from the server.
+    ///
+    /// Use this to persist `NewSessionTicket` messages for future session
+    /// resumption and 0-RTT attempts.
+    var sessionTickets: AsyncStream<NewSessionTicketInfo> { get }
 
-    /// Opens a new unidirectional stream
-    func openUniStream() async throws -> any QUICStreamProtocol
+    /// Opens a new bidirectional stream.
+    /// - Parameter priority: Initial stream priority used by the scheduler.
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol
+
+    /// Opens a new unidirectional stream.
+    /// - Parameter priority: Initial stream priority used by the scheduler.
+    func openUniStream(priority: StreamPriority) async throws -> any QUICStreamProtocol
 
     /// Stream of incoming streams from the remote peer.
     ///
@@ -246,6 +256,24 @@ extension SocketAddress {
 }
 
 extension QUICConnectionProtocol {
+    /// Default empty session-ticket stream for connection implementations that
+    /// do not support TLS session resumption events.
+    public var sessionTickets: AsyncStream<NewSessionTicketInfo> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    /// Opens a new bidirectional stream with default priority.
+    public func openStream() async throws -> any QUICStreamProtocol {
+        try await openStream(priority: .default)
+    }
+
+    /// Opens a new unidirectional stream with default priority.
+    public func openUniStream() async throws -> any QUICStreamProtocol {
+        try await openUniStream(priority: .default)
+    }
+
     /// Default implementation using FIFO strategy
     public func sendDatagram(_ data: Data) async throws {
         try await sendDatagram(data, strategy: .fifo)

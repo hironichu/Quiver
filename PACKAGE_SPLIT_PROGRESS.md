@@ -64,3 +64,14 @@
 10-webtransport-package-build=ok
 10-root-webtransport-trait-build=ok
 10-root-swift-test=ok
+11-quic-sessiontickets-protocol=ok
+11-quic-openstream-priority=ok
+11-quic-stream-product-exists=ok
+11-quic-crypto-product-exists=ok
+11-quic-tls13handler-public=ok
+11-webtransport-connectrequest=ok
+11-quic-package-test=ok
+11-http3-package-test=ok
+11-webtransport-package-build=ok
+11-root-webtransport-trait-build=ok
+11-root-swift-test=ok

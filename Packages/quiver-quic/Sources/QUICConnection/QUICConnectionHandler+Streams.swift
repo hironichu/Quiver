@@ -18,11 +18,16 @@ import QUICStream
 extension QUICConnectionHandler {
 
     /// Opens a new stream
-    /// - Parameter bidirectional: Whether to create a bidirectional stream
+    /// - Parameters:
+    ///   - bidirectional: Whether to create a bidirectional stream
+    ///   - priority: Initial stream priority used by the scheduler
     /// - Returns: The new stream ID
     /// - Throws: StreamManagerError if stream limit reached
-    package func openStream(bidirectional: Bool) throws -> UInt64 {
-        try streamManager.openStream(bidirectional: bidirectional)
+    package func openStream(
+        bidirectional: Bool,
+        priority: StreamPriority = .default
+    ) throws -> UInt64 {
+        try streamManager.openStream(bidirectional: bidirectional, priority: priority)
     }
 
     /// Writes data to a stream

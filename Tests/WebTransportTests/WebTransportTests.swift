@@ -17,6 +17,7 @@ import Testing
 @testable import QPACK
 @testable import QUIC
 @testable import QUICCore
+@testable import QUICStream
 
 // MARK: - Mock Types for WebTransport Testing
 
@@ -204,7 +205,7 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
 
     func waitForHandshake() async throws {}
 
-    func openStream() async throws -> any QUICStreamProtocol {
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
         state.withLock { s in
             let id = s.nextBidiStreamID
             s.nextBidiStreamID += 4
@@ -214,7 +215,7 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
         }
     }
 
-    func openUniStream() async throws -> any QUICStreamProtocol {
+    func openUniStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
         state.withLock { s in
             let id = s.nextUniStreamID
             s.nextUniStreamID += 4

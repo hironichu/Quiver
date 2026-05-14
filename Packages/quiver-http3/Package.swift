@@ -69,6 +69,7 @@ let package = Package(
                 .product(name: "QUIC", package: "quiver-quic"),
                 "QPACK",
                 .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICStream", package: "quiver-quic"),
                 .product(name: "QuiverTestSupport", package: "quiver-quic"),
             ],
             path: "Tests/HTTP3Tests"
