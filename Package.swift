@@ -38,16 +38,6 @@ let package = Package(
     ],
 
     products: [
-        // Vapor integration for serving Vapor applications over Quiver HTTP/3
-        .library(
-            name: "QuiverVapor",
-            targets: ["QuiverVapor"]
-        ),
-        // Hummingbird integration for serving Hummingbird applications over Quiver HTTP/3
-        .library(
-            name: "QuiverHummingbird",
-            targets: ["QuiverHummingbird"]
-        ),
         // Media Over QUIC (MOQ)
         .library(
             name: "MOQCore",
@@ -66,6 +56,7 @@ let package = Package(
         .package(path: "Packages/quiver-quic"),
         .package(path: "Packages/quiver-http3"),
         .package(path: "Packages/quiver-auth"),
+        .package(path: "Packages/quiver-adapters"),
 
         // X.509 Certificates and ASN.1
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.17.0"),
@@ -74,42 +65,10 @@ let package = Package(
         // Logging
         .package(url: "https://github.com/apple/swift-log.git", from: "1.12.0"),
 
-        // Optional framework adapters
-        .package(url: "https://github.com/vapor/vapor.git", from: "4.121.4"),
-        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
-        .package(url: "https://github.com/apple/swift-http-types.git", from: "1.0.0"),
-
         // Documentation
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.5.0"),
     ],
     targets: [
-        // MARK: - Framework Adapters
-
-        .target(
-            name: "QuiverVapor",
-            dependencies: [
-                .product(name: "HTTP3", package: "quiver-http3"),
-                .product(name: "Vapor", package: "vapor"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/QuiverVapor"
-        ),
-
-        .target(
-            name: "QuiverHummingbird",
-            dependencies: [
-                .product(name: "HTTP3", package: "quiver-http3"),
-                .product(name: "Hummingbird", package: "hummingbird"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOEmbedded", package: "swift-nio"),
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/QuiverHummingbird"
-        ),
-
         // MARK: - MOQ Core
         .target(
             name: "MOQCore",
@@ -164,29 +123,6 @@ let package = Package(
                 .product(name: "QUICStream", package: "quiver-quic"),
             ],
             path: "Tests/WebTransportTests"
-        ),
-
-        .testTarget(
-            name: "QuiverVaporTests",
-            dependencies: [
-                "QuiverVapor",
-                .product(name: "HTTP3", package: "quiver-http3"),
-                .product(name: "Vapor", package: "vapor"),
-                .product(name: "NIOCore", package: "swift-nio"),
-            ],
-            path: "Tests/QuiverVaporTests"
-        ),
-
-        .testTarget(
-            name: "QuiverHummingbirdTests",
-            dependencies: [
-                "QuiverHummingbird",
-                .product(name: "HTTP3", package: "quiver-http3"),
-                .product(name: "Hummingbird", package: "hummingbird"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "NIOCore", package: "swift-nio"),
-            ],
-            path: "Tests/QuiverHummingbirdTests"
         ),
 
         // MARK: - Examples

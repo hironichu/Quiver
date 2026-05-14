@@ -21,6 +21,8 @@
 04-webtransport-coupling-assessed=ok
 04-webtransport-package-created=nook
 04-webtransport-split-blocked-by-http3-session-registry=ok
+04-webtransport-server-stays-in-http3=ok
+04-webtransport-client-external-package-planned=ok
 05-auth-package-created=ok
 05-auth-sources-moved=ok
 05-auth-tests-moved=ok
@@ -28,3 +30,10 @@
 05-auth-package-test=ok
 05-root-package-updated=ok
 05-root-swift-test=ok
+06-adapters-package-created=ok
+06-adapters-sources-moved=ok
+06-adapters-tests-moved=ok
+06-adapters-package-build=ok
+06-adapters-package-test=ok
+06-root-package-updated=ok
+06-root-swift-test=ok
