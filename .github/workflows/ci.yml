@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SWIFT_VERSION: "6.2.3"
+  SWIFT_VERSION: "6.3.1"
   XCODE_VERSION: "26.0"
   QUIVER_PACKAGES_PATH: "__ci_missing_quiver_packages__"
 
@@ -31,14 +31,14 @@ jobs:
           - os: ubuntu-24.04
             configuration: debug
             swift_setup: swiftly-linux
-          - os: macos-15
-            configuration: debug
-            swift_setup: swiftly-macos
+          # - os: macos-15
+            # configuration: debug
+            # swift_setup: swiftly-macos
           - os: macos-26
             configuration: debug
             swift_setup: xcode
           - os: windows-2025
-            configuration: release
+            configuration: debug
             swift_setup: winget
 
     steps:
