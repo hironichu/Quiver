@@ -381,8 +381,13 @@ package final class QUICConnectionHandler: Sendable {
                 .flatMap { $0.frames }
                 .reduce(0) { $0 + FrameSize.frame($1) }
 
-            let streamBudget = max(
+            let datagramStreamBudget = max(
                 0, maxDatagramSize - packetOverhead - controlFrameBytes - externalFrameBytes)
+            let congestionStreamBudget = max(
+                0,
+                availableWindow - packetOverhead - controlFrameBytes - externalFrameBytes
+            )
+            let streamBudget = min(datagramStreamBudget, congestionStreamBudget)
 
             // Step 5: Generate stream frames locally.
             let streamFrames = streamManager.generateStreamFrames(maxBytes: streamBudget)
@@ -465,8 +470,7 @@ package final class QUICConnectionHandler: Sendable {
         }
 
         // Check for PTO (uses internally managed peerMaxAckDelay)
-        let ptoDeadline = pnSpaceManager.nextPTODeadline(now: now)
-        if ptoDeadline <= now {
+        if let ptoDeadline = pnSpaceManager.nextPTODeadlineIfNeeded(now: now), ptoDeadline <= now {
             pnSpaceManager.onPTOExpired()
             return .probe
         }
@@ -483,7 +487,7 @@ package final class QUICConnectionHandler: Sendable {
         let lossTime = pnSpaceManager.earliestLossTime()?.time
 
         // Get PTO time (uses internally managed peerMaxAckDelay)
-        let ptoTime = pnSpaceManager.nextPTODeadline(now: now)
+        let ptoTime = pnSpaceManager.nextPTODeadlineIfNeeded(now: now)
 
         // Get ACK time
         let ackTime = pnSpaceManager.earliestAckTime()?.time

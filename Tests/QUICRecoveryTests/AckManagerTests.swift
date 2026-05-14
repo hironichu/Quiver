@@ -159,7 +159,7 @@ struct AckManagerTests {
 
         manager.recordReceivedPacket(packetNumber: 0, isAckEliciting: true, receiveTime: now)
 
-        let ackFrame = manager.generateAckFrame(now: now + .milliseconds(10), ackDelayExponent: 3)
+        let ackFrame = manager.generateAckFrame(now: now + .milliseconds(30), ackDelayExponent: 3)
 
         #expect(ackFrame != nil)
         #expect(ackFrame!.largestAcknowledged == 0)
@@ -219,6 +219,7 @@ struct AckManagerTests {
 
         manager.recordReceivedPacket(packetNumber: 0, isAckEliciting: true, receiveTime: now)
 
+        manager.recordReceivedPacket(packetNumber: 1, isAckEliciting: true, receiveTime: now)
         #expect(manager.shouldSendAckImmediately())
 
         // Generate ACK
@@ -230,8 +231,8 @@ struct AckManagerTests {
 
     // MARK: - ACK Timing Tests
 
-    @Test("First ack-eliciting packet triggers immediate ACK")
-    func firstAckElicitingTriggersImmediateAck() {
+    @Test("First ack-eliciting packet arms ACK timer")
+    func firstAckElicitingArmsAckTimer() {
         let manager = AckManager()
         let now = ContinuousClock.Instant.now
 
@@ -239,9 +240,13 @@ struct AckManagerTests {
         manager.recordReceivedPacket(packetNumber: 0, isAckEliciting: false, receiveTime: now)
         #expect(!manager.shouldSendAckImmediately())
 
-        // First ack-eliciting - immediate ACK
+        // First ack-eliciting packet should wait for either a second packet or the ACK timer.
         manager.recordReceivedPacket(packetNumber: 1, isAckEliciting: true, receiveTime: now)
-        #expect(manager.shouldSendAckImmediately())
+        #expect(!manager.shouldSendAckImmediately())
+        #expect(manager.nextAckTime() != nil)
+
+        let ackFrame = manager.generateAckFrame(now: now + .milliseconds(30), ackDelayExponent: 3)
+        #expect(ackFrame != nil)
     }
 
     @Test("Two ack-eliciting packets trigger immediate ACK")
@@ -250,25 +255,9 @@ struct AckManagerTests {
         let now = ContinuousClock.Instant.now
 
         manager.recordReceivedPacket(packetNumber: 0, isAckEliciting: true, receiveTime: now)
-
-        // Generate ACK to reset
-        _ = manager.generateAckFrame(now: now, ackDelayExponent: 3)
-
         #expect(!manager.shouldSendAckImmediately())
 
-        // First ack-eliciting after reset
         manager.recordReceivedPacket(packetNumber: 1, isAckEliciting: true, receiveTime: now)
-        #expect(manager.shouldSendAckImmediately())
-
-        // Reset again
-        _ = manager.generateAckFrame(now: now, ackDelayExponent: 3)
-
-        // Now two ack-eliciting in sequence should trigger
-        manager.recordReceivedPacket(packetNumber: 2, isAckEliciting: true, receiveTime: now)
-        _ = manager.generateAckFrame(now: now, ackDelayExponent: 3)
-
-        manager.recordReceivedPacket(packetNumber: 3, isAckEliciting: true, receiveTime: now)
-        manager.recordReceivedPacket(packetNumber: 4, isAckEliciting: true, receiveTime: now)
 
         #expect(manager.shouldSendAckImmediately())
     }

@@ -128,6 +128,18 @@ extension SubjectAlternativeNames {
             }
         }
     }
+
+    /// Gets all IP address SANs as raw network-order bytes.
+    public var ipAddresses: [[UInt8]] {
+        compactMap { name in
+            switch name {
+            case .ipAddress(let address):
+                return Array(address.bytes)
+            default:
+                return nil
+            }
+        }
+    }
 }
 
 // MARK: - NameConstraints Helpers
