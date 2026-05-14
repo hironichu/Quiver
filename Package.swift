@@ -38,16 +38,6 @@ let package = Package(
     ],
 
     products: [
-        // Main public API
-        .library(
-            name: "QUIC",
-            targets: ["QUIC"]
-        ),
-        // Core types (no I/O dependencies)
-        .library(
-            name: "QUICCore",
-            targets: ["QUICCore"]
-        ),
         // QPACK header compression (RFC 9204)
         .library(
             name: "QPACK",
@@ -88,6 +78,8 @@ let package = Package(
         ),
     ],
     dependencies: nioDependencies() + [
+        .package(path: "Packages/quiver-quic"),
+
         // Cryptography — 4.5.0+ depends on an unstable swift-asn1; cap below it.
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.5.0"),
 
@@ -110,106 +102,6 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.5.0"),
     ],
     targets: [
-        // MARK: - Core Types (No I/O)
-
-        .target(
-            name: "QUICCore",
-            dependencies: [
-                .product(name: "Logging", package: "swift-log")
-            ],
-            path: "Sources/QUICCore"
-        ),
-
-        // MARK: - Crypto Layer
-
-        .target(
-            name: "QUICCrypto",
-            dependencies: [
-                "QUICCore",
-                .product(name: "Crypto", package: "swift-crypto"),
-                .product(name: "X509", package: "swift-certificates"),
-                .product(name: "SwiftASN1", package: "swift-asn1"),
-            ],
-            path: "Sources/QUICCrypto",
-            exclude: ["TLS/TLS_SECURITY.md"]
-        ),
-
-        // MARK: - UDP Transport (inlined from swift-nio-udp)
-
-        .target(
-            name: "NIOUDPTransport",
-            dependencies: [
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
-                .product(name: "SystemPackage", package: "swift-system"),
-            ],
-            path: "Sources/NIOUDPTransport"
-        ),
-
-        // MARK: - Connection Management
-
-        .target(
-            name: "QUICConnection",
-            dependencies: [
-                "QUICCore",
-                "QUICCrypto",
-                "QUICStream",
-                "QUICRecovery",
-                "QUICTransport",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/QUICConnection"
-        ),
-
-        // MARK: - Stream Management
-
-        .target(
-            name: "QUICStream",
-            dependencies: [
-                "QUICCore",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/QUICStream"
-        ),
-
-        // MARK: - Loss Detection & Congestion Control
-
-        .target(
-            name: "QUICRecovery",
-            dependencies: [
-                "QUICCore"
-            ],
-            path: "Sources/QUICRecovery"
-        ),
-
-        // MARK: - UDP Transport Integration
-
-        .target(
-            name: "QUICTransport",
-            dependencies: [
-                "QUICCore",
-                "NIOUDPTransport",
-                .product(name: "SystemPackage", package: "swift-system"),
-            ],
-            path: "Sources/QUICTransport"
-        ),
-
-        // MARK: - Main Public API
-
-        .target(
-            name: "QUIC",
-            dependencies: [
-                "QUICCore",
-                "QUICCrypto",
-                "QUICConnection",
-                "QUICStream",
-                "QUICRecovery",
-                "QUICTransport",
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/QUIC"
-        ),
-
         // MARK: - QPACK (Header Compression, RFC 9204)
 
         .target(
@@ -223,11 +115,11 @@ let package = Package(
         .target(
             name: "HTTP3",
             dependencies: [
-                "QUIC",
+                .product(name: "QUIC", package: "quiver-quic"),
                 "QPACK",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICStream",
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
+                .product(name: "QUICStream", package: "quiver-quic"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -241,8 +133,8 @@ let package = Package(
             name: "QuiverAuth",
             dependencies: [
                 "HTTP3",
-                "QUIC",
-                "QUICCore",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "JWTKit", package: "jwt-kit"),
             ],
@@ -277,25 +169,23 @@ let package = Package(
         ),
 
         // MARK: - MOQ Core
-
         .target(
             name: "MOQCore",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICStream",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICStream", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/MOQCore"
         ),
 
         // MARK: - MOQ Relay & Client
-
         .target(
             name: "MOQRelay",
             dependencies: [
                 "MOQCore",
-                "QUICCore",
+                .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/MOQRelay"
@@ -305,74 +195,21 @@ let package = Package(
             name: "MOQClient",
             dependencies: [
                 "MOQCore",
-                "QUICCore",
+                .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/MOQClient"
         ),
 
-        // MARK: - Test Support
-
-        .target(
-            name: "QuiverTestSupport",
-            dependencies: [
-                "QUICCore"
-            ],
-            path: "Tests/QuiverTestSupport"
-        ),
-
         // MARK: - Tests
-
-        .testTarget(
-            name: "QUICCoreTests",
-            dependencies: ["QUICCore"],
-            path: "Tests/QUICCoreTests"
-        ),
-
         .testTarget(
             name: "MOQCoreTests",
-            dependencies: ["MOQCore", "MOQRelay", "QUICCore"],
+            dependencies: [
+                "MOQCore",
+                "MOQRelay",
+                .product(name: "QUICCore", package: "quiver-quic"),
+            ],
             path: "Tests/MOQCoreTests"
-        ),
-
-        .testTarget(
-            name: "QUICCryptoTests",
-            dependencies: ["QUICCrypto"],
-            path: "Tests/QUICCryptoTests"
-        ),
-
-        .testTarget(
-            name: "QUICRecoveryTests",
-            dependencies: ["QUICRecovery", "QUICCore"],
-            path: "Tests/QUICRecoveryTests"
-        ),
-
-        .testTarget(
-            name: "QUICStreamTests",
-            dependencies: ["QUICStream", "QUICCore"],
-            path: "Tests/QUICStreamTests"
-        ),
-
-        .testTarget(
-            name: "QUICConnectionTests",
-            dependencies: [
-                "QUICConnection",
-                "QUICCore",
-                "QUIC",
-                "QuiverTestSupport",
-            ],
-            path: "Tests/QUICConnectionTests"
-        ),
-
-        .testTarget(
-            name: "QUICTests",
-            dependencies: [
-                "QUIC",
-                "QUICRecovery",
-                "QUICTransport",
-                "QuiverTestSupport",
-            ],
-            path: "Tests/QUICTests"
         ),
 
         .testTarget(
@@ -385,10 +222,10 @@ let package = Package(
             name: "HTTP3Tests",
             dependencies: [
                 "HTTP3",
-                "QUIC",
+                .product(name: "QUIC", package: "quiver-quic"),
                 "QPACK",
-                "QUICCore",
-                "QuiverTestSupport",
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QuiverTestSupport", package: "quiver-quic"),
             ],
             path: "Tests/HTTP3Tests"
         ),
@@ -397,10 +234,10 @@ let package = Package(
             name: "WebTransportTests",
             dependencies: [
                 "HTTP3",
-                "QUIC",
+                .product(name: "QUIC", package: "quiver-quic"),
                 "QPACK",
-                "QUICCore",
-                "QUICStream",
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICStream", package: "quiver-quic"),
             ],
             path: "Tests/WebTransportTests"
         ),
@@ -437,30 +274,15 @@ let package = Package(
             path: "Tests/QuiverHummingbirdTests"
         ),
 
-        // MARK: - Benchmarks (run separately with: swift test --filter QUICBenchmarks)
-
-        .testTarget(
-            name: "QUICBenchmarks",
-            dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICStream",
-                .product(name: "Crypto", package: "swift-crypto"),
-            ],
-            path: "Tests/QUICBenchmarks"
-        ),
-
         // MARK: - Examples
-
         .executableTarget(
             name: "QUICEchoServer",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICTransport",
-                "NIOUDPTransport",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
+                .product(name: "QUICTransport", package: "quiver-quic"),
+                .product(name: "NIOUDPTransport", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICEchoServer"
@@ -469,9 +291,9 @@ let package = Package(
         .executableTarget(
             name: "HTTP3Demo",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
                 "HTTP3",
                 .product(name: "Logging", package: "swift-log"),
             ],
@@ -481,9 +303,9 @@ let package = Package(
         .executableTarget(
             name: "HTTP3Benchmark",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
                 "HTTP3",
                 .product(name: "Logging", package: "swift-log"),
             ],
@@ -493,13 +315,13 @@ let package = Package(
         .executableTarget(
             name: "WebTransportDemo",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICTransport",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
+                .product(name: "QUICTransport", package: "quiver-quic"),
                 "HTTP3",
                 "QPACK",
-                "NIOUDPTransport",
+                .product(name: "NIOUDPTransport", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/WebTransportDemo"
@@ -508,12 +330,12 @@ let package = Package(
         .executableTarget(
             name: "QUICNetworkDemo",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
-                "QUICConnection",
-                "QUICTransport",
-                "NIOUDPTransport",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
+                .product(name: "QUICConnection", package: "quiver-quic"),
+                .product(name: "QUICTransport", package: "quiver-quic"),
+                .product(name: "NIOUDPTransport", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/QUICNetworkDemo"
@@ -521,9 +343,9 @@ let package = Package(
         .executableTarget(
             name: "AltSvcDemo",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
                 "HTTP3",
                 .product(name: "Logging", package: "swift-log"),
             ],
@@ -532,9 +354,9 @@ let package = Package(
         .executableTarget(
             name: "HTTP3AuthDemo",
             dependencies: [
-                "QUIC",
-                "QUICCore",
-                "QUICCrypto",
+                .product(name: "QUIC", package: "quiver-quic"),
+                .product(name: "QUICCore", package: "quiver-quic"),
+                .product(name: "QUICCrypto", package: "quiver-quic"),
                 "HTTP3",
                 "QuiverAuth",
                 .product(name: "Logging", package: "swift-log"),

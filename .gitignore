@@ -5,7 +5,6 @@
 .swiftpm/xcode/xcuserdata/
 .swiftpm/configuration/registries.json
 Package.resolved
-Packages/
 
 # Xcode
 *.xcodeproj/
