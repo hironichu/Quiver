@@ -414,6 +414,18 @@ let package = Package(
         ),
 
         .executableTarget(
+            name: "HTTP3Benchmark",
+            dependencies: [
+                "QUIC",
+                "QUICCore",
+                "QUICCrypto",
+                "HTTP3",
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Examples/HTTP3Benchmark"
+        ),
+
+        .executableTarget(
             name: "WebTransportDemo",
             dependencies: [
                 "QUIC",

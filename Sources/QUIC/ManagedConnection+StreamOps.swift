@@ -30,67 +30,81 @@ extension ManagedConnection {
     /// 2. Handler's stream buffer
     /// 3. Wait for data via continuation
     func readFromStream(_ streamID: UInt64) async throws -> Data {
+        try Task.checkCancellation()
+
         // Try to get data atomically - check buffer first, then handler
-        return try await withCheckedThrowingContinuation { continuation in
-            streamContinuationsState.withLock { state in
-                // Check if shutdown
-                guard !state.isShutdown else {
-                    continuation.resume(throwing: ManagedConnectionError.connectionClosed)
-                    return
-                }
-
-                // Priority 1: Check pending data buffer
-                if var pending = state.pendingData[streamID], !pending.isEmpty {
-                    let data = pending.removeFirst()
-                    if pending.isEmpty {
-                        state.pendingData.removeValue(forKey: streamID)
-                    } else {
-                        state.pendingData[streamID] = pending
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                streamContinuationsState.withLock { state in
+                    // Check if shutdown
+                    guard !state.isShutdown else {
+                        continuation.resume(throwing: ManagedConnectionError.connectionClosed)
+                        return
                     }
-                    continuation.resume(returning: data)
-                    return
-                }
 
-                // Priority 2: Check handler's stream buffer
-                if let data = handler.readFromStream(streamID) {
-                    continuation.resume(returning: data)
-                    return
-                }
+                    guard !Task.isCancelled else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
 
-                // Priority 3: Check if stream receive side is complete (FIN)
-                // or was reset by the peer.  Return empty Data to signal
-                // end-of-stream so that callers break out of read loops.
-                //
-                // IMPORTANT: We intentionally do NOT check
-                // `handler.isStreamReceiveComplete(streamID)` here.
-                // processFrames() reads (consumes) data from the DataStream
-                // buffer inline, then processFrameResult() delivers it to
-                // pendingData / a continuation *later*.  Between those two
-                // steps the DataStream buffer is empty and
-                // isStreamReceiveComplete returns true — but the data has
-                // not been delivered yet.  A concurrent reader hitting this
-                // window would get a premature EOS (0 bytes).
-                //
-                // `state.finishedStreams` is populated by processFrameResult
-                // AFTER delivering data, so it is the safe signal for FIN.
-                // `isStreamResetByPeer` is safe because a reset carries no
-                // data — the reader should return empty immediately.
-                if state.finishedStreams.contains(streamID)
-                    || handler.isStreamResetByPeer(streamID)
-                {
-                    state.finishedStreams.insert(streamID)
-                    continuation.resume(returning: Data())
-                    return
-                }
+                    // Priority 1: Check pending data buffer
+                    if var pending = state.pendingData[streamID], !pending.isEmpty {
+                        let data = pending.removeFirst()
+                        if pending.isEmpty {
+                            state.pendingData.removeValue(forKey: streamID)
+                        } else {
+                            state.pendingData[streamID] = pending
+                        }
+                        continuation.resume(returning: data)
+                        return
+                    }
 
-                // Priority 4: Wait for data
-                // Prevent concurrent reads on the same stream
-                guard state.continuations[streamID] == nil else {
-                    continuation.resume(throwing: ManagedConnectionError.invalidState("Concurrent read on stream \(streamID)"))
-                    return
+                    // Priority 2: Check handler's stream buffer
+                    if let data = handler.readFromStream(streamID) {
+                        continuation.resume(returning: data)
+                        return
+                    }
+
+                    // Priority 3: Check if stream receive side is complete (FIN)
+                    // or was reset by the peer.  Return empty Data to signal
+                    // end-of-stream so that callers break out of read loops.
+                    //
+                    // IMPORTANT: We intentionally do NOT check
+                    // `handler.isStreamReceiveComplete(streamID)` here.
+                    // processFrames() reads (consumes) data from the DataStream
+                    // buffer inline, then processFrameResult() delivers it to
+                    // pendingData / a continuation *later*.  Between those two
+                    // steps the DataStream buffer is empty and
+                    // isStreamReceiveComplete returns true — but the data has
+                    // not been delivered yet.  A concurrent reader hitting this
+                    // window would get a premature EOS (0 bytes).
+                    //
+                    // `state.finishedStreams` is populated by processFrameResult
+                    // AFTER delivering data, so it is the safe signal for FIN.
+                    // `isStreamResetByPeer` is safe because a reset carries no
+                    // data — the reader should return empty immediately.
+                    if state.finishedStreams.contains(streamID)
+                        || handler.isStreamResetByPeer(streamID)
+                    {
+                        state.finishedStreams.insert(streamID)
+                        continuation.resume(returning: Data())
+                        return
+                    }
+
+                    // Priority 4: Wait for data
+                    // Prevent concurrent reads on the same stream
+                    guard state.continuations[streamID] == nil else {
+                        continuation.resume(throwing: ManagedConnectionError.invalidState("Concurrent read on stream \(streamID)"))
+                        return
+                    }
+                    state.continuations[streamID] = continuation
                 }
-                state.continuations[streamID] = continuation
             }
+        } onCancel: {
+            let continuation = streamContinuationsState.withLock { state in
+                state.continuations.removeValue(forKey: streamID)
+            }
+            continuation?.resume(throwing: CancellationError())
         }
     }
 

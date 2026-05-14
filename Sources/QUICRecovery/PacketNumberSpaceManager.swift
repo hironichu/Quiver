@@ -179,6 +179,18 @@ package final class PacketNumberSpaceManager: Sendable {
         return now + (pto * ptoMultiplier)
     }
 
+    /// Calculates the next PTO deadline only when PTO can produce useful work.
+    ///
+    /// A confirmed connection with no ack-eliciting packets in flight has no PTO
+    /// work to do. Returning a synthetic `now + PTO` deadline in that state makes
+    /// endpoint timer loops wake forever even when the connection is merely idle.
+    package func nextPTODeadlineIfNeeded(now: ContinuousClock.Instant) -> ContinuousClock.Instant? {
+        guard hasAckElicitingInFlight || needsPTOProbeEvenWithoutInFlight else {
+            return nil
+        }
+        return nextPTODeadline(now: now)
+    }
+
     /// Increments PTO count on timeout
     package func onPTOExpired() {
         _ptoCount.withLock { $0 += 1 }

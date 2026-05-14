@@ -696,6 +696,17 @@ struct HandshakeCompletionTests {
 
     // MARK: - waitForHandshake() basic behaviour
 
+    @Test("Generated handshake packets are tracked as in flight")
+    func generatedHandshakePacketsAreTrackedAsInFlight() async throws {
+        let (connection, _) = try createTestConnection()
+        let initialAvailableWindow = connection.handler.availableWindow
+
+        let packets = try await connection.start()
+
+        #expect(!packets.isEmpty)
+        #expect(connection.handler.availableWindow < initialAvailableWindow)
+    }
+
     @Test("waitForHandshake returns immediately when already established")
     func waitForHandshakeAlreadyEstablished() async throws {
         // Drive a full mock handshake so the connection reaches .established

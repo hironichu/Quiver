@@ -661,8 +661,8 @@ public final class ManagedConnection: Sendable {
         // Handle frame results (common logic)
         var outboundPackets = try await processFrameResult(result)
 
-        // Generate response packets (ACKs, etc.)
-        let responsePackets = try generateOutboundPackets()
+        // Generate response packets (ACKs, flow-control, and ACK-unblocked stream data).
+        let responsePackets = try drainOutboundPackets()
         outboundPackets.append(contentsOf: responsePackets)
 
         // Apply anti-amplification limit
@@ -845,12 +845,38 @@ public final class ManagedConnection: Sendable {
             state.withLock { $0.hasReceivedValidPacket = true }
         }
 
-        // Generate response packets
-        let responsePackets = try generateOutboundPackets()
+        // Generate response packets, draining ACK-unblocked stream data until
+        // the congestion/flow-control windows say to stop.
+        let responsePackets = try drainOutboundPackets()
         allOutbound.append(contentsOf: responsePackets)
 
         // Apply anti-amplification limit to outbound packets (servers only)
         return applyAmplificationLimit(to: allOutbound)
+    }
+
+    /// Generates all packets that can be sent immediately.
+    ///
+    /// `generateOutboundPackets()` emits at most one MTU-sized stream packet per
+    /// call. That is fine for the outbound send loop because it repeatedly calls
+    /// it until pending stream data is blocked. The receive path also needs this
+    /// behavior: an incoming ACK can free enough congestion window for multiple
+    /// packets, and sending only one packet per ACK severely throttles large
+    /// responses.
+    private func drainOutboundPackets(maxRounds: Int = 1024) throws -> [Data] {
+        var packets: [Data] = []
+        packets.reserveCapacity(16)
+
+        for _ in 0..<maxRounds {
+            let next = try generateOutboundPackets()
+            guard !next.isEmpty else { break }
+            packets.append(contentsOf: next)
+
+            if !hasPendingStreamData {
+                break
+            }
+        }
+
+        return packets
     }
 
     /// Applies the anti-amplification limit to outbound packets
@@ -1123,6 +1149,16 @@ public final class ManagedConnection: Sendable {
         default:
             throw PacketCodecError.invalidPacketFormat("Header type mismatch for level \(level)")
         }
+
+        let ackEliciting = frames.contains { $0.isAckEliciting }
+        handler.recordSentPacket(SentPacket(
+            packetNumber: pn,
+            encryptionLevel: level,
+            timeSent: .now,
+            ackEliciting: ackEliciting,
+            inFlight: ackEliciting,
+            sentBytes: encrypted.count
+        ))
 
         Self.logger.trace(
             "Emitting \(level) packet: \(encrypted.count) bytes (\(frames.count) frames)")

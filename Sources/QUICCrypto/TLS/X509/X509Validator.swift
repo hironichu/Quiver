@@ -625,6 +625,20 @@ public struct X509Validator: Sendable {
                     return
                 }
             }
+
+            if let hostnameBytes = ipv4Bytes(hostname) {
+                for ipAddress in san.ipAddresses {
+                    let ipAddressString = formatIPAddress(ipAddress)
+                    matchedNames.append(ipAddressString)
+                    if ipAddress == hostnameBytes {
+                        return
+                    }
+                }
+            } else {
+                for ipAddress in san.ipAddresses {
+                    matchedNames.append(formatIPAddress(ipAddress))
+                }
+            }
         }
 
         // Fall back to Common Name (deprecated but still used)
@@ -662,6 +676,33 @@ public struct X509Validator: Sendable {
         }
 
         return false
+    }
+
+    private func ipv4Bytes(_ hostname: String) -> [UInt8]? {
+        let parts = hostname.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(4)
+        for part in parts {
+            guard let value = UInt8(part) else { return nil }
+            bytes.append(value)
+        }
+        return bytes
+    }
+
+    private func formatIPAddress(_ bytes: [UInt8]) -> String {
+        if bytes.count == 4 {
+            return bytes.map(String.init).joined(separator: ".")
+        }
+
+        if bytes.count == 16 {
+            return stride(from: 0, to: 16, by: 2).map { index in
+                String(format: "%x", UInt16(bytes[index]) << 8 | UInt16(bytes[index + 1]))
+            }.joined(separator: ":")
+        }
+
+        return bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
     }
 
     // MARK: - Extended Key Usage Verification

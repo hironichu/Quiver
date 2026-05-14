@@ -391,7 +391,7 @@ extension HTTP3Connection {
         // Uses the same decodeFramesFromBuffer helper as the rest of
         // the HTTP/3 stack (handles varint frame type + length properly).
         let capturedSelf = self
-        Task { [capturedBuffer] in
+        let bodyReaderTask = Task { [capturedBuffer] in
             defer { bodyContinuation.finish() }
 
             var buf = capturedBuffer.data
@@ -429,6 +429,9 @@ extension HTTP3Connection {
                     break
                 }
             }
+        }
+        bodyContinuation.onTermination = { _ in
+            bodyReaderTask.cancel()
         }
 
         return HTTP3Response(

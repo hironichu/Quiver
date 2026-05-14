@@ -94,11 +94,7 @@ public final class AckManager: Sendable {
             if isAckEliciting {
                 state.ackElicitingCount += 1
 
-                // RFC 9002: Send ACK immediately for first ack-eliciting packet
-                if state.ackElicitingCount == 1 {
-                    state.shouldAckImmediately = true
-                } else if state.ackAlarm == nil {
-                    // Set ack timer
+                if state.ackAlarm == nil {
                     state.ackAlarm = receiveTime + state.maxAckDelay
                 }
 
