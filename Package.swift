@@ -38,11 +38,6 @@ let package = Package(
     ],
 
     products: [
-        // Auth extensions for HTTP/3 / Extended CONNECT
-        .library(
-            name: "QuiverAuth",
-            targets: ["QuiverAuth"]
-        ),
         // Vapor integration for serving Vapor applications over Quiver HTTP/3
         .library(
             name: "QuiverVapor",
@@ -70,9 +65,7 @@ let package = Package(
     dependencies: nioDependencies() + [
         .package(path: "Packages/quiver-quic"),
         .package(path: "Packages/quiver-http3"),
-
-        // Cryptography — 4.5.0+ depends on an unstable swift-asn1; cap below it.
-        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.5.0"),
+        .package(path: "Packages/quiver-auth"),
 
         // X.509 Certificates and ASN.1
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.17.0"),
@@ -80,9 +73,6 @@ let package = Package(
 
         // Logging
         .package(url: "https://github.com/apple/swift-log.git", from: "1.12.0"),
-
-        // JWT / JWK verification (cross-platform, maintained)
-        .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.5.0"),
 
         // Optional framework adapters
         .package(url: "https://github.com/vapor/vapor.git", from: "4.121.4"),
@@ -93,18 +83,6 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.5.0"),
     ],
     targets: [
-        .target(
-            name: "QuiverAuth",
-            dependencies: [
-                .product(name: "HTTP3", package: "quiver-http3"),
-                .product(name: "QUIC", package: "quiver-quic"),
-                .product(name: "QUICCore", package: "quiver-quic"),
-                .product(name: "Crypto", package: "swift-crypto"),
-                .product(name: "JWTKit", package: "jwt-kit"),
-            ],
-            path: "Sources/QuiverAuth"
-        ),
-
         // MARK: - Framework Adapters
 
         .target(
@@ -186,15 +164,6 @@ let package = Package(
                 .product(name: "QUICStream", package: "quiver-quic"),
             ],
             path: "Tests/WebTransportTests"
-        ),
-
-        .testTarget(
-            name: "QuiverAuthTests",
-            dependencies: [
-                "QuiverAuth",
-                .product(name: "HTTP3", package: "quiver-http3"),
-            ],
-            path: "Tests/QuiverAuthTests"
         ),
 
         .testTarget(
@@ -304,7 +273,7 @@ let package = Package(
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICCrypto", package: "quiver-quic"),
                 .product(name: "HTTP3", package: "quiver-http3"),
-                "QuiverAuth",
+                .product(name: "QuiverAuth", package: "quiver-auth"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/HTTP3AuthDemo"

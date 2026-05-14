@@ -21,3 +21,10 @@
 04-webtransport-coupling-assessed=ok
 04-webtransport-package-created=nook
 04-webtransport-split-blocked-by-http3-session-registry=ok
+05-auth-package-created=ok
+05-auth-sources-moved=ok
+05-auth-tests-moved=ok
+05-auth-package-build=ok
+05-auth-package-test=ok
+05-root-package-updated=ok
+05-root-swift-test=ok
