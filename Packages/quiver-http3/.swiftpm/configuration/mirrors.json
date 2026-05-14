@@ -1,0 +1,13 @@
+{
+  "object" : [
+    {
+      "mirror" : "https://github.com/hironichu/swift-nio.git",
+      "original" : "https://github.com/apple/swift-nio.git"
+    },
+    {
+      "mirror" : "https://github.com/hironichu/swift-nio-ssl.git",
+      "original" : "https://github.com/apple/swift-nio-ssl.git"
+    }
+  ],
+  "version" : 1
+}

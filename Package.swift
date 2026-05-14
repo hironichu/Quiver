@@ -37,6 +37,7 @@ let package = Package(
     dependencies: [
         .package(path: "Packages/quiver-quic"),
         .package(path: "Packages/quiver-http3"),
+        .package(path: "Packages/quiver-webtransport"),
         .package(path: "Packages/quiver-auth"),
         .package(path: "Packages/quiver-adapters"),
         .package(path: "Packages/quiver-moq"),
@@ -61,6 +62,7 @@ let package = Package(
                 .product(name: "QUICConnection", package: "quiver-quic", condition: .when(traits: ["QUICSupport"])),
                 .product(name: "HTTP3", package: "quiver-http3", condition: .when(traits: ["HTTP3Support"])),
                 .product(name: "QPACK", package: "quiver-http3", condition: .when(traits: ["HTTP3Support"])),
+                .product(name: "WebTransport", package: "quiver-webtransport", condition: .when(traits: ["WebTransportSupport"])),
                 .product(name: "QuiverAuth", package: "quiver-auth", condition: .when(traits: ["AuthSupport"])),
                 .product(name: "QuiverVapor", package: "quiver-adapters", condition: .when(traits: ["VaporSupport"])),
                 .product(name: "QuiverHummingbird", package: "quiver-adapters", condition: .when(traits: ["HummingbirdSupport"])),

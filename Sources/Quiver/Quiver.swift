@@ -14,6 +14,10 @@
 @_exported import QPACK
 #endif
 
+#if QUIVER_WEBTRANSPORT_SUPPORT
+@_exported import WebTransport
+#endif
+
 #if QUIVER_AUTH_SUPPORT
 @_exported import QuiverAuth
 #endif

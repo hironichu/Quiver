@@ -57,3 +57,10 @@
 09-nio-mirrors-configured=ok
 09-manifests-use-canonical-nio-urls=ok
 09-root-swift-test=ok
+10-webtransport-facade-package-created=ok
+10-webtransport-facade-reexports-http3=ok
+10-root-webtransport-package-wired=ok
+10-nested-package-mirrors-configured=ok
+10-webtransport-package-build=ok
+10-root-webtransport-trait-build=ok
+10-root-swift-test=ok
