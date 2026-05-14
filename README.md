@@ -42,7 +42,7 @@ Quiver provides a complete, type-safe QUIC stack designed for modern Swift appli
 > required environment variables, and known platform-specific fixes.
 >
 > **Authentication:** See [Docs/QuiverAuth.md](Docs/QuiverAuth.md) for HTTP/3 auth,
-> OIDC login, Twitch configuration notes, and the current generic OIDC roadmap.
+> OIDC login, and the current generic OIDC roadmap.
 
 ## Installation
 
