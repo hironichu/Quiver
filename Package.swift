@@ -38,16 +38,6 @@ let package = Package(
     ],
 
     products: [
-        // QPACK header compression (RFC 9204)
-        .library(
-            name: "QPACK",
-            targets: ["QPACK"]
-        ),
-        // HTTP/3 protocol (RFC 9114)
-        .library(
-            name: "HTTP3",
-            targets: ["HTTP3"]
-        ),
         // Auth extensions for HTTP/3 / Extended CONNECT
         .library(
             name: "QuiverAuth",
@@ -79,6 +69,7 @@ let package = Package(
     ],
     dependencies: nioDependencies() + [
         .package(path: "Packages/quiver-quic"),
+        .package(path: "Packages/quiver-http3"),
 
         // Cryptography — 4.5.0+ depends on an unstable swift-asn1; cap below it.
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.5.0"),
@@ -102,37 +93,10 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.5.0"),
     ],
     targets: [
-        // MARK: - QPACK (Header Compression, RFC 9204)
-
-        .target(
-            name: "QPACK",
-            dependencies: [],
-            path: "Sources/QPACK"
-        ),
-
-        // MARK: - HTTP/3 (RFC 9114)
-
-        .target(
-            name: "HTTP3",
-            dependencies: [
-                .product(name: "QUIC", package: "quiver-quic"),
-                "QPACK",
-                .product(name: "QUICCore", package: "quiver-quic"),
-                .product(name: "QUICCrypto", package: "quiver-quic"),
-                .product(name: "QUICStream", package: "quiver-quic"),
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
-                .product(name: "NIOSSL", package: "swift-nio-ssl"),
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/HTTP3"
-        ),
-
         .target(
             name: "QuiverAuth",
             dependencies: [
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "QUIC", package: "quiver-quic"),
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "Crypto", package: "swift-crypto"),
@@ -146,7 +110,7 @@ let package = Package(
         .target(
             name: "QuiverVapor",
             dependencies: [
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -158,7 +122,7 @@ let package = Package(
         .target(
             name: "QuiverHummingbird",
             dependencies: [
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "NIOCore", package: "swift-nio"),
@@ -213,29 +177,11 @@ let package = Package(
         ),
 
         .testTarget(
-            name: "QPACKTests",
-            dependencies: ["QPACK"],
-            path: "Tests/QPACKTests"
-        ),
-
-        .testTarget(
-            name: "HTTP3Tests",
-            dependencies: [
-                "HTTP3",
-                .product(name: "QUIC", package: "quiver-quic"),
-                "QPACK",
-                .product(name: "QUICCore", package: "quiver-quic"),
-                .product(name: "QuiverTestSupport", package: "quiver-quic"),
-            ],
-            path: "Tests/HTTP3Tests"
-        ),
-
-        .testTarget(
             name: "WebTransportTests",
             dependencies: [
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "QUIC", package: "quiver-quic"),
-                "QPACK",
+                .product(name: "QPACK", package: "quiver-http3"),
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICStream", package: "quiver-quic"),
             ],
@@ -246,7 +192,7 @@ let package = Package(
             name: "QuiverAuthTests",
             dependencies: [
                 "QuiverAuth",
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
             ],
             path: "Tests/QuiverAuthTests"
         ),
@@ -255,7 +201,7 @@ let package = Package(
             name: "QuiverVaporTests",
             dependencies: [
                 "QuiverVapor",
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "NIOCore", package: "swift-nio"),
             ],
@@ -266,7 +212,7 @@ let package = Package(
             name: "QuiverHummingbirdTests",
             dependencies: [
                 "QuiverHummingbird",
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "NIOCore", package: "swift-nio"),
@@ -294,7 +240,7 @@ let package = Package(
                 .product(name: "QUIC", package: "quiver-quic"),
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICCrypto", package: "quiver-quic"),
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/HTTP3Demo"
@@ -306,7 +252,7 @@ let package = Package(
                 .product(name: "QUIC", package: "quiver-quic"),
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICCrypto", package: "quiver-quic"),
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/HTTP3Benchmark"
@@ -319,8 +265,8 @@ let package = Package(
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICCrypto", package: "quiver-quic"),
                 .product(name: "QUICTransport", package: "quiver-quic"),
-                "HTTP3",
-                "QPACK",
+                .product(name: "HTTP3", package: "quiver-http3"),
+                .product(name: "QPACK", package: "quiver-http3"),
                 .product(name: "NIOUDPTransport", package: "quiver-quic"),
                 .product(name: "Logging", package: "swift-log"),
             ],
@@ -346,7 +292,7 @@ let package = Package(
                 .product(name: "QUIC", package: "quiver-quic"),
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICCrypto", package: "quiver-quic"),
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Examples/AltSvcDemo"
@@ -357,7 +303,7 @@ let package = Package(
                 .product(name: "QUIC", package: "quiver-quic"),
                 .product(name: "QUICCore", package: "quiver-quic"),
                 .product(name: "QUICCrypto", package: "quiver-quic"),
-                "HTTP3",
+                .product(name: "HTTP3", package: "quiver-http3"),
                 "QuiverAuth",
                 .product(name: "Logging", package: "swift-log"),
             ],

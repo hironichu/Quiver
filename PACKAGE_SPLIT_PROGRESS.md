@@ -11,3 +11,10 @@
 02-quic-package-test=ok
 02-root-package-updated=ok
 02-root-swift-test=ok
+03-http3-package-created=ok
+03-http3-sources-moved=ok
+03-http3-tests-moved=ok
+03-http3-package-build=ok
+03-http3-package-test=ok
+03-root-package-updated=ok
+03-root-swift-test=ok
