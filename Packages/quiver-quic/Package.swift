@@ -15,8 +15,8 @@ func nioDependencies() -> [Package.Dependency] {
         ]
     } else {
         return [
-            .package(url: "https://github.com/hironichu/swift-nio.git", branch: "pr-3433"),
-            .package(url: "https://github.com/hironichu/swift-nio-ssl.git", branch: "pr-567-windows-support"),
+            .package(url: "https://github.com/apple/swift-nio.git", branch: "pr-3433"),
+            .package(url: "https://github.com/apple/swift-nio-ssl.git", branch: "pr-567-windows-support"),
             .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),
         ]
     }

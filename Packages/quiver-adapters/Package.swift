@@ -11,7 +11,7 @@ func nioDependencies() -> [Package.Dependency] {
         ]
     } else {
         return [
-            .package(url: "https://github.com/hironichu/swift-nio.git", branch: "pr-3433"),
+            .package(url: "https://github.com/apple/swift-nio.git", branch: "pr-3433"),
         ]
     }
 }

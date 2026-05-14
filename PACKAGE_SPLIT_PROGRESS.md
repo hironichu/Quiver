@@ -46,3 +46,14 @@
 07-moq-package-test=ok
 07-root-package-updated=ok
 07-root-swift-test=ok
+08-root-quiver-product-created=ok
+08-root-traits-added=ok
+08-root-conditional-exports-added=ok
+08-root-stale-deps-removed=ok
+08-root-default-swift-test=ok
+08-root-quic-trait-build=ok
+08-root-http3-trait-build=ok
+08-root-moq-trait-build=ok
+09-nio-mirrors-configured=ok
+09-manifests-use-canonical-nio-urls=ok
+09-root-swift-test=ok
