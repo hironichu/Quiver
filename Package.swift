@@ -72,6 +72,7 @@ let package = Package(
             swiftSettings: [
                 .define("QUIVER_QUIC_SUPPORT", .when(traits: ["QUICSupport"])),
                 .define("QUIVER_HTTP3_SUPPORT", .when(traits: ["HTTP3Support"])),
+                .define("QUIVER_WEBTRANSPORT_SUPPORT", .when(traits: ["WebTransportSupport"])),
                 .define("QUIVER_AUTH_SUPPORT", .when(traits: ["AuthSupport"])),
                 .define("QUIVER_VAPOR_SUPPORT", .when(traits: ["VaporSupport"])),
                 .define("QUIVER_HUMMINGBIRD_SUPPORT", .when(traits: ["HummingbirdSupport"])),
