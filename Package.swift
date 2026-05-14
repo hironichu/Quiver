@@ -37,26 +37,13 @@ let package = Package(
         .visionOS(.v2),
     ],
 
-    products: [
-        // Media Over QUIC (MOQ)
-        .library(
-            name: "MOQCore",
-            targets: ["MOQCore"]
-        ),
-        .library(
-            name: "MOQRelay",
-            targets: ["MOQRelay"]
-        ),
-        .library(
-            name: "MOQClient",
-            targets: ["MOQClient"]
-        ),
-    ],
+    products: [],
     dependencies: nioDependencies() + [
         .package(path: "Packages/quiver-quic"),
         .package(path: "Packages/quiver-http3"),
         .package(path: "Packages/quiver-auth"),
         .package(path: "Packages/quiver-adapters"),
+        .package(path: "Packages/quiver-moq"),
 
         // X.509 Certificates and ASN.1
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.17.0"),
@@ -69,50 +56,7 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin.git", from: "1.5.0"),
     ],
     targets: [
-        // MARK: - MOQ Core
-        .target(
-            name: "MOQCore",
-            dependencies: [
-                .product(name: "QUIC", package: "quiver-quic"),
-                .product(name: "QUICCore", package: "quiver-quic"),
-                .product(name: "QUICStream", package: "quiver-quic"),
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/MOQCore"
-        ),
-
-        // MARK: - MOQ Relay & Client
-        .target(
-            name: "MOQRelay",
-            dependencies: [
-                "MOQCore",
-                .product(name: "QUICCore", package: "quiver-quic"),
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/MOQRelay"
-        ),
-
-        .target(
-            name: "MOQClient",
-            dependencies: [
-                "MOQCore",
-                .product(name: "QUICCore", package: "quiver-quic"),
-                .product(name: "Logging", package: "swift-log"),
-            ],
-            path: "Sources/MOQClient"
-        ),
-
         // MARK: - Tests
-        .testTarget(
-            name: "MOQCoreTests",
-            dependencies: [
-                "MOQCore",
-                "MOQRelay",
-                .product(name: "QUICCore", package: "quiver-quic"),
-            ],
-            path: "Tests/MOQCoreTests"
-        ),
-
         .testTarget(
             name: "WebTransportTests",
             dependencies: [

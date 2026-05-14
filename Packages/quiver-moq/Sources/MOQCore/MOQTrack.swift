@@ -8,7 +8,6 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
-import QUIC
 import QUICCore
 
 /// A producer-side Media Over QUIC Track.

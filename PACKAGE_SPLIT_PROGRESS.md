@@ -37,3 +37,12 @@
 06-adapters-package-test=ok
 06-root-package-updated=ok
 06-root-swift-test=ok
+07-moq-package-created=ok
+07-moq-sources-moved=ok
+07-moq-tests-moved=ok
+07-moq-import-quic-removed=ok
+07-moq-unused-deps-trimmed=ok
+07-moq-package-build=ok
+07-moq-package-test=ok
+07-root-package-updated=ok
+07-root-swift-test=ok
