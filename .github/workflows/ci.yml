@@ -17,11 +17,12 @@ concurrency:
 
 env:
   SWIFT_VERSION: "6.2.3"
+  XCODE_VERSION: "26.0"
   QUIVER_PACKAGES_PATH: "__ci_missing_quiver_packages__"
 
 jobs:
   build-test:
-    name: ${{ matrix.os }} / ${{ matrix.configuration }}
+    name: ${{ matrix.os }} / ${{ matrix.configuration }} / ${{ matrix.swift_setup }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,22 +30,86 @@ jobs:
         include:
           - os: ubuntu-24.04
             configuration: debug
+            swift_setup: swiftly-linux
           - os: macos-15
             configuration: debug
+            swift_setup: swiftly-macos
+          - os: macos-26
+            configuration: debug
+            swift_setup: xcode
           - os: windows-2022
             configuration: release
+            swift_setup: winget
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+      - name: Install Swift with Swiftly (Linux)
+        if: matrix.swift_setup == 'swiftly-linux'
+        shell: bash
+        run: |
+          curl -fsSLO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf "swiftly-$(uname -m).tar.gz"
+          ./swiftly init --quiet-shell-followup
+          . "${SWIFTLY_HOME_DIR:-$HOME/.local/share/swiftly}/env.sh"
+          swiftly install "${SWIFT_VERSION}" --use --assume-yes
+          echo "${SWIFTLY_HOME_DIR:-$HOME/.local/share/swiftly}/bin" >> "$GITHUB_PATH"
+          echo "$(swiftly use --print-location)/usr/bin" >> "$GITHUB_PATH"
+          hash -r
+
+      - name: Install Swift with Swiftly (macOS)
+        if: matrix.swift_setup == 'swiftly-macos'
+        shell: bash
+        run: |
+          curl -fsSLO https://download.swift.org/swiftly/darwin/swiftly.pkg
+          installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
+          ~/.swiftly/bin/swiftly init --quiet-shell-followup
+          . "${SWIFTLY_HOME_DIR:-$HOME/.swiftly}/env.sh"
+          swiftly install "${SWIFT_VERSION}" --use --assume-yes
+          echo "${SWIFTLY_HOME_DIR:-$HOME/.swiftly}/bin" >> "$GITHUB_PATH"
+          echo "$(swiftly use --print-location)/usr/bin" >> "$GITHUB_PATH"
+          hash -r
+
+      - name: Select Xcode Swift toolchain
+        if: matrix.swift_setup == 'xcode'
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+
+      - name: Install Visual Studio and Swift (Windows)
+        if: matrix.swift_setup == 'winget'
+        shell: pwsh
+        run: |
+          winget source update
+          winget install --id Microsoft.VisualStudio.2022.Community --exact --force --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity --custom "--add Microsoft.VisualStudio.Component.Windows11SDK.22621 --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --quiet --wait --norestart"
+          winget install --id Swift.Toolchain --exact --version $env:SWIFT_VERSION --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity --force
+
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) { throw "Visual Studio with VC tools was not found." }
+
+          $vcvars = Join-Path $vsInstall "VC\Auxiliary\Build\vcvars64.bat"
+          cmd /c "`"$vcvars`" && set" | ForEach-Object {
+            if ($_ -match "^(.*?)=(.*)$") {
+              $name = $matches[1]
+              $value = $matches[2]
+              if ($name -ieq "Path") {
+                $value.Split(";") | Where-Object { $_ } | ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Append }
+              } elseif ($name -in @("INCLUDE", "LIB", "LIBPATH")) {
+                "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
+              }
+            }
+          }
+
+          $swift = Get-Command swift -ErrorAction SilentlyContinue
+          if (-not $swift) {
+            $swift = Get-ChildItem -Path "$env:ProgramFiles\Swift", "$env:LOCALAPPDATA\Programs\Swift" -Filter swift.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $swift) { throw "Swift was installed but swift.exe was not found." }
+          $swiftPath = if ($swift.Source) { $swift.Source } else { $swift.FullName }
+          Split-Path $swiftPath | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Configure Windows curl library
-        if: runner.os == 'Windows'
+        if: matrix.swift_setup == 'winget'
         shell: pwsh
         run: |
           $vcpkgRoot = $env:VCPKG_ROOT
