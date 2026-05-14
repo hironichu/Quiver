@@ -75,3 +75,9 @@
 11-webtransport-package-build=ok
 11-root-webtransport-trait-build=ok
 11-root-swift-test=ok
+12-root-dynamic-quiver-dependencies=ok
+12-root-local-package-development-path=ok
+12-root-github-package-fallback=ok
+12-root-embedded-packages-removed=ok
+12-root-swift-test=ok
+12-root-webtransport-trait-build=ok

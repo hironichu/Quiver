@@ -1,6 +1,23 @@
 // swift-tools-version: 6.2
 
 import PackageDescription
+import Foundation
+
+let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let localQuiverPackagesRoot = ProcessInfo.processInfo.environment["QUIVER_PACKAGES_PATH"] ?? "../quiver-packages"
+
+func quiverPackage(_ repository: String) -> Package.Dependency {
+    let localURL = URL(fileURLWithPath: localQuiverPackagesRoot, relativeTo: packageDirectory)
+        .appendingPathComponent(repository)
+        .standardizedFileURL
+    let manifestURL = localURL.appendingPathComponent("Package.swift")
+
+    if FileManager.default.fileExists(atPath: manifestURL.path) {
+        return .package(path: localURL.path)
+    }
+
+    return .package(url: "https://github.com/hironichu/\(repository).git", branch: "main")
+}
 
 let package = Package(
     name: "Quiver",
@@ -35,12 +52,12 @@ let package = Package(
         .trait(name: "MOQSupport", description: "Expose Media over QUIC products.", enabledTraits: ["QUICSupport"]),
     ],
     dependencies: [
-        .package(path: "Packages/quiver-quic"),
-        .package(path: "Packages/quiver-http3"),
-        .package(path: "Packages/quiver-webtransport"),
-        .package(path: "Packages/quiver-auth"),
-        .package(path: "Packages/quiver-adapters"),
-        .package(path: "Packages/quiver-moq"),
+        quiverPackage("quiver-quic"),
+        quiverPackage("quiver-http3"),
+        quiverPackage("quiver-webtransport"),
+        quiverPackage("quiver-auth"),
+        quiverPackage("quiver-adapters"),
+        quiverPackage("quiver-moq"),
 
         // Logging
         .package(url: "https://github.com/apple/swift-log.git", from: "1.12.0"),
