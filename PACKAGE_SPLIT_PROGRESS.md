@@ -18,3 +18,6 @@
 03-http3-package-test=ok
 03-root-package-updated=ok
 03-root-swift-test=ok
+04-webtransport-coupling-assessed=ok
+04-webtransport-package-created=nook
+04-webtransport-split-blocked-by-http3-session-registry=ok
