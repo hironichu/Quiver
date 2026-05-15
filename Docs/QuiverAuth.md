@@ -208,6 +208,37 @@ Important fields:
 
 The server-session path stores the provider token set in memory and sends only an opaque session id to the browser. Authentication uses the ID token. Access tokens are reserved for provider APIs such as UserInfo and are not treated as authentication JWTs.
 
+## Calling Provider APIs
+
+When OIDC server sessions are enabled, applications can retrieve the current provider access token from `AuthPolicy` inside a server-side route handler. Use this for provider APIs such as Twitch Helix. The token is read from QuiverAuth's opaque server-side session and refreshed first when the session is within the configured refresh leeway.
+
+```swift
+router.get("/twitch/me") { context, _ in
+    guard let providerToken = await policy.oidcProviderAccessToken(for: context.request) else {
+        try await context.respond(status: 401, Data("missing provider token".utf8))
+        return
+    }
+
+    var request = URLRequest(url: URL(string: "https://api.twitch.tv/helix/users")!)
+    request.setValue(providerToken.authorizationHeaderValue, forHTTPHeaderField: "authorization")
+    request.setValue(twitchClientID, forHTTPHeaderField: "client-id")
+
+    let (body, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+        try await context.respond(status: 502, Data("twitch request failed".utf8))
+        return
+    }
+
+    try await context.respond(
+        status: 200,
+        headers: [("content-type", "application/json")],
+        body
+    )
+}
+```
+
+Keep provider tokens server-side. Do not copy access tokens into HTML, JavaScript, logs, or client-visible session payloads.
+
 ## Explicit Login, Callback, And Logout Routes
 
 Applications can let `HTTP3AuthGuard.protect` intercept callback requests, or expose explicit routes.
