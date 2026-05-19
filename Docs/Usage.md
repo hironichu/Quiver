@@ -21,6 +21,12 @@ dependencies: [
 
 The aggregate product re-exports modules according to enabled SwiftPM package traits. The default trait set enables the complete stack.
 
+Enable the experimental runtime-backed QUIC transport path by selecting `QuiverRuntimeSupport`. That root trait forwards `quiver-quic`'s `quiverRuntime` package trait and also enables `QUICSupport`.
+
+```bash
+swift build --target Quiver --traits QuiverRuntimeSupport
+```
+
 ## Use A Dedicated Package
 
 For libraries, prefer the narrowest package you need:

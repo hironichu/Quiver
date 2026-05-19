@@ -60,6 +60,7 @@ The aggregate product uses SwiftPM package traits to conditionally re-export fun
 | Trait | Enables |
 | --- | --- |
 | `QUICSupport` | QUIC products and core protocol modules |
+| `QuiverRuntimeSupport` | Optional runtime-backed QUIC transport path, plus QUIC support |
 | `HTTP3Support` | HTTP/3 and QPACK, plus QUIC support |
 | `WebTransportSupport` | WebTransport APIs hosted by HTTP/3 |
 | `AuthSupport` | Quiver HTTP/3 authentication helpers |
@@ -71,6 +72,7 @@ The default trait set enables the complete stack. Build a narrower surface by se
 
 ```bash
 swift build --target Quiver --traits QUICSupport
+swift build --target Quiver --traits QuiverRuntimeSupport
 swift build --target Quiver --traits WebTransportSupport
 ```
 
@@ -91,6 +93,7 @@ workspace/
 ├── quiver/
 └── quiver-packages/
     ├── quiver-quic/
+    ├── quiver-runtime/
     ├── quiver-http3/
     ├── quiver-webtransport/
     ├── quiver-auth/
@@ -117,6 +120,7 @@ workspace/
 ```bash
 swift build
 swift test
+swift build --target Quiver --traits QuiverRuntimeSupport
 swift build --target Quiver --traits WebTransportSupport
 ```
 

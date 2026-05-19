@@ -8,6 +8,7 @@ Quiver is split into small Swift packages that can be used independently or thro
 | --- | --- | --- |
 | `quiver` | Aggregate package and examples | `Quiver` |
 | `quiver-quic` | QUIC transport stack | `QUIC`, `QUICCore`, `QUICCrypto`, `QUICStream`, `QUICRecovery`, `QUICTransport`, `NIOUDPTransport`, `QUICConnection`, `QuiverTestSupport` |
+| `quiver-runtime` | Optional native runtime used by QUIC transport experiments | `QuiverRuntimeCore`, `QuiverRuntimeTesting` |
 | `quiver-http3` | HTTP/3, QPACK, and WebTransport implementation | `HTTP3`, `QPACK` |
 | `quiver-webtransport` | Thin WebTransport facade | `WebTransport` |
 | `quiver-auth` | Authentication and OIDC helpers for HTTP/3 | `QuiverAuth` |
@@ -18,7 +19,7 @@ Quiver is split into small Swift packages that can be used independently or thro
 
 ```text
 quiver
-├── quiver-quic
+├── quiver-quic ───────────> quiver-runtime (optional through `QuiverRuntimeSupport`)
 ├── quiver-http3 ───────────> quiver-quic
 ├── quiver-webtransport ────> quiver-http3
 ├── quiver-auth ────────────> quiver-http3, quiver-quic
@@ -35,6 +36,7 @@ The root `Quiver` product conditionally re-exports package products with SwiftPM
 | Trait | Re-exported Areas |
 | --- | --- |
 | `QUICSupport` | `QUIC`, `QUICCore`, `QUICCrypto`, `QUICStream`, `QUICRecovery`, `QUICTransport`, `NIOUDPTransport`, `QUICConnection` |
+| `QuiverRuntimeSupport` | Enables `quiver-quic`'s `quiverRuntime` package trait, plus `QUICSupport` |
 | `HTTP3Support` | `HTTP3`, `QPACK`, plus `QUICSupport` |
 | `WebTransportSupport` | `WebTransport`, plus `HTTP3Support` |
 | `AuthSupport` | `QuiverAuth`, plus `HTTP3Support` |
@@ -64,6 +66,7 @@ workspace/
 ├── quiver/
 └── quiver-packages/
     ├── quiver-quic/
+    ├── quiver-runtime/
     ├── quiver-http3/
     ├── quiver-webtransport/
     ├── quiver-auth/

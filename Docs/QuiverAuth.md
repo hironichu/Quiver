@@ -210,7 +210,9 @@ The server-session path stores the provider token set in memory and sends only a
 
 ## Calling Provider APIs
 
-When OIDC server sessions are enabled, applications can retrieve the current provider access token from `AuthPolicy` inside a server-side route handler. Use this for provider APIs such as Twitch Helix. The token is read from QuiverAuth's opaque server-side session and refreshed first when the session is within the configured refresh leeway.
+When OIDC server sessions are enabled, applications can retrieve the current provider access token from `AuthPolicy` inside a server-side route handler. Use this for provider APIs that accept the OAuth access token returned by the configured OIDC provider. The token is read from QuiverAuth's opaque server-side session and refreshed first when the session is within the configured refresh leeway.
+
+For Twitch Helix, validate the token with Twitch first and send the same `Client-Id` used for login. A Helix `401` usually means the token is invalid or revoked, the `Client-Id` header does not match the token's client id, the token is missing the endpoint's required scope, or a request parameter such as `broadcaster_id`, `moderator_id`, or `user_id` does not match the user represented by the token.
 
 ```swift
 router.get("/twitch/me") { context, _ in
@@ -219,8 +221,20 @@ router.get("/twitch/me") { context, _ in
         return
     }
 
+    var validation = URLRequest(url: URL(string: "https://id.twitch.tv/oauth2/validate")!)
+    validation.setValue(providerToken.authorizationHeaderValue, forHTTPHeaderField: "authorization")
+
+    let (_, validationResponse) = try await URLSession.shared.data(for: validation)
+    guard let validationHTTP = validationResponse as? HTTPURLResponse,
+        200..<300 ~= validationHTTP.statusCode
+    else {
+        try await context.respond(status: 401, Data("invalid twitch token".utf8))
+        return
+    }
+
     var request = URLRequest(url: URL(string: "https://api.twitch.tv/helix/users")!)
     request.setValue(providerToken.authorizationHeaderValue, forHTTPHeaderField: "authorization")
+    // Must be the same Twitch client id that received the access token.
     request.setValue(twitchClientID, forHTTPHeaderField: "client-id")
 
     let (body, response) = try await URLSession.shared.data(for: request)

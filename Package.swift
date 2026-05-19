@@ -6,17 +6,21 @@ import Foundation
 let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let localQuiverPackagesRoot = ProcessInfo.processInfo.environment["QUIVER_PACKAGES_PATH"] ?? "../quiver-packages"
 
-func quiverPackage(_ repository: String) -> Package.Dependency {
+func quiverPackage(
+    _ repository: String,
+    branch: String = "main",
+    traits: Set<Package.Dependency.Trait> = [.defaults]
+) -> Package.Dependency {
     let localURL = URL(fileURLWithPath: localQuiverPackagesRoot, relativeTo: packageDirectory)
         .appendingPathComponent(repository)
         .standardizedFileURL
     let manifestURL = localURL.appendingPathComponent("Package.swift")
 
     if FileManager.default.fileExists(atPath: manifestURL.path) {
-        return .package(path: localURL.path)
+        return .package(path: localURL.path, traits: traits)
     }
 
-    return .package(url: "https://github.com/hironichu/\(repository).git", branch: "main")
+    return .package(url: "https://github.com/hironichu/\(repository).git", branch: branch, traits: traits)
 }
 
 let package = Package(
@@ -44,6 +48,7 @@ let package = Package(
             "MOQSupport",
         ]),
         .trait(name: "QUICSupport", description: "Expose Quiver QUIC products."),
+        .trait(name: "QuiverRuntimeSupport", description: "Enable quiver-quic's runtime-backed QUIC transport.", enabledTraits: ["QUICSupport"]),
         .trait(name: "HTTP3Support", description: "Expose HTTP/3 and QPACK products.", enabledTraits: ["QUICSupport"]),
         .trait(name: "WebTransportSupport", description: "Expose WebTransport APIs hosted by HTTP3.", enabledTraits: ["HTTP3Support"]),
         .trait(name: "AuthSupport", description: "Expose QuiverAuth APIs.", enabledTraits: ["HTTP3Support"]),
@@ -52,7 +57,14 @@ let package = Package(
         .trait(name: "MOQSupport", description: "Expose Media over QUIC products.", enabledTraits: ["QUICSupport"]),
     ],
     dependencies: [
-        quiverPackage("quiver-quic"),
+        quiverPackage(
+            "quiver-quic",
+            branch: "experimental/runtime",
+            traits: [
+                .defaults,
+                .trait(name: "quiverRuntime", condition: .when(traits: ["QuiverRuntimeSupport"])),
+            ]
+        ),
         quiverPackage("quiver-http3"),
         quiverPackage("quiver-webtransport"),
         quiverPackage("quiver-auth"),
