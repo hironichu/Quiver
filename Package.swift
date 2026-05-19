@@ -8,7 +8,7 @@ let localQuiverPackagesRoot = ProcessInfo.processInfo.environment["QUIVER_PACKAG
 
 func quiverPackage(
     _ repository: String,
-    branch: String = "main",
+    branch: String = "experimental/runtime",
     traits: Set<Package.Dependency.Trait> = [.defaults]
 ) -> Package.Dependency {
     let localURL = URL(fileURLWithPath: localQuiverPackagesRoot, relativeTo: packageDirectory)
