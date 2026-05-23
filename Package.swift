@@ -108,6 +108,7 @@ let package = Package(
                 .define("QUIVER_VAPOR_SUPPORT", .when(traits: ["VaporSupport"])),
                 .define("QUIVER_HUMMINGBIRD_SUPPORT", .when(traits: ["HummingbirdSupport"])),
                 .define("QUIVER_MOQ_SUPPORT", .when(traits: ["MOQSupport"])),
+                .unsafeFlags(["-enable-batch-mode", "-Ounchecked"], .when(configuration: .debug)),
             ]
         ),
 
