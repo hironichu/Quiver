@@ -399,8 +399,9 @@ public struct X509Validator: Sendable {
             throw X509Error.unsupportedSignatureAlgorithm(String(describing: certificate.signatureAlgorithm.algorithm))
         }
 
-        // Verify scheme matches key type
-        guard scheme == publicKey.scheme else {
+        // Verify the key can verify this scheme (RSA keys verify several schemes,
+        // so use compatibility rather than strict equality).
+        guard publicKey.isCompatible(with: scheme) else {
             throw X509Error.signatureAlgorithmMismatch
         }
 
@@ -408,7 +409,8 @@ public struct X509Validator: Sendable {
         do {
             let valid = try publicKey.verify(
                 signature: certificate.signatureValue,
-                for: certificate.tbsCertificateBytes
+                for: certificate.tbsCertificateBytes,
+                scheme: scheme
             )
             guard valid else {
                 throw X509Error.signatureVerificationFailed("Signature is invalid")

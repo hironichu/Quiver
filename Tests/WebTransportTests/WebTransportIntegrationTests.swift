@@ -15,6 +15,7 @@ import Synchronization
 @testable import QUICStream
 @testable import QPACK
 @testable import QUIC
+@testable import QUICCrypto
 
 // MARK: - Mock Types
 
@@ -216,6 +217,10 @@ private final class MockIntegrationConnection: QUICConnectionProtocol, @unchecke
         }
     }
 
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
+        try await openStream()
+    }
+
     func openUniStream() async throws -> any QUICStreamProtocol {
         state.withLock { s in
             let id = s.nextUniStreamID
@@ -258,6 +263,10 @@ private final class MockIntegrationConnection: QUICConnectionProtocol, @unchecke
             s.closed = true
             s.closeError = errorCode
         }
+    }
+
+    var sessionTickets: AsyncStream<NewSessionTicketInfo> {
+        AsyncStream { $0.finish() }
     }
 
     func finish() {
@@ -350,7 +359,7 @@ final class WebTransportEndToEndTests: XCTestCase {
         // Client side: create session from a 200 response
         let clientConnectStream = MockIntegrationStream(id: 0)
         // Do NOT enqueue FIN before session creation — same race as above.
-        let response = HTTP3Response(status: 200)
+        let response = HTTP3ResponseHead(status: 200)
 
         let clientSession = try await clientH3.createClientWebTransportSession(
             connectStream: clientConnectStream,
@@ -390,14 +399,19 @@ final class WebTransportEndToEndTests: XCTestCase {
         let underlyingStream = opened.last!
         let writtenFraming = underlyingStream.allWrittenData
 
-        // The first bytes should be the session ID varint
+        // The framing is the WEBTRANSPORT_STREAM bidi signal (0x41) followed by
+        // the session ID varint (draft-ietf-webtrans-http3).
         XCTAssertFalse(writtenFraming.isEmpty, "Session ID framing should have been written")
 
-        // Decode the session ID from the written framing
-        let (decodedVarint, _) = try Varint.decode(from: writtenFraming)
+        // First varint is the 0x41 bidi signal value.
+        let (typeVarint, typeConsumed) = try Varint.decode(from: writtenFraming)
+        XCTAssertEqual(typeVarint.value, 0x41, "Bidi stream must lead with the 0x41 signal value")
+
+        // Second varint is the session ID.
+        let (decodedVarint, _) = try Varint.decode(from: Data(writtenFraming.dropFirst(typeConsumed)))
         let sessionID = await session.sessionID
         XCTAssertEqual(decodedVarint.value, sessionID,
-                        "Written framing should contain the session ID")
+                        "Written framing should contain the session ID after the 0x41 prefix")
 
         // Write application data on the WT stream
         let testPayload = Data("Hello, WebTransport!".utf8)
@@ -782,19 +796,22 @@ final class WebTransportServePathTests: XCTestCase {
     /// Tests that WebTransportServer creates the correct HTTP3Settings
     func testWebTransportServerConfiguresSettings() async {
         let server = WebTransportServer(
-            configuration: WebTransportServer.Configuration(
-                maxSessionsPerConnection: 10,
+            configuration: WebTransportConfiguration(
+                quic: .testing(),
+                maxSessions: 10
+            ),
+            serverOptions: WebTransportServer.ServerOptions(
                 maxConnections: 50,
-                additionalSettings: HTTP3Settings(),
                 allowedPaths: ["/wt", "/echo"]
             )
         )
 
         // Verify configuration
         let config = await server.configuration
-        XCTAssertEqual(config.maxSessionsPerConnection, 10)
-        XCTAssertEqual(config.maxConnections, 50)
-        XCTAssertEqual(config.allowedPaths, ["/wt", "/echo"])
+        XCTAssertEqual(config.maxSessions, 10)
+        let opts = await server.serverOptions
+        XCTAssertEqual(opts.maxConnections, 50)
+        XCTAssertEqual(opts.allowedPaths, ["/wt", "/echo"])
     }
 
     /// Tests the serveConnection() codepath creates sessions correctly
@@ -855,6 +872,67 @@ final class WebTransportServePathTests: XCTestCase {
 
         let doesNotOwn = await h3Conn.ownsStream(999)
         XCTAssertFalse(doesNotOwn, "Connection should not own stream 999")
+
+        mockConn.finish()
+    }
+
+    /// Tests that server-side WebTransportSession exposes the CONNECT request metadata
+    func testSessionExposesConnectRequest() async throws {
+        let mockConn = MockIntegrationConnection(isClient: false)
+        let h3Conn = HTTP3Connection(
+            quicConnection: mockConn,
+            role: .server,
+            settings: HTTP3Settings.webTransport(maxSessions: 5)
+        )
+
+        let connectStream = MockIntegrationStream(id: 4)
+        connectStream.enqueueFIN()
+
+        let request = HTTP3Request(
+            method: .connect,
+            scheme: "https",
+            authority: "example.com:443",
+            path: "/wt-session",
+            connectProtocol: "webtransport",
+            headers: [("x-custom", "test-value"), ("authorization", "Bearer token123")]
+        )
+
+        let context = ExtendedConnectContext(
+            request: request,
+            streamID: 4,
+            stream: connectStream,
+            connection: h3Conn,
+            sendResponse: { _ in }
+        )
+
+        // createWebTransportSession(from:) passes context.request to the session
+        let session = try await h3Conn.createWebTransportSession(from: context, role: .server)
+
+        // Verify connectRequest is populated
+        let connectReq = await session.connectRequest
+        XCTAssertNotNil(connectReq, "Server-side session should have connectRequest")
+        XCTAssertEqual(connectReq?.path, "/wt-session")
+        XCTAssertEqual(connectReq?.authority, "example.com:443")
+        XCTAssertEqual(connectReq?.connectProtocol, "webtransport")
+        XCTAssertEqual(connectReq?.headers.count, 2)
+        XCTAssertEqual(connectReq?.headers[0].0, "x-custom")
+        XCTAssertEqual(connectReq?.headers[0].1, "test-value")
+        XCTAssertEqual(connectReq?.headers[1].0, "authorization")
+        XCTAssertEqual(connectReq?.headers[1].1, "Bearer token123")
+
+        mockConn.finish()
+    }
+
+    /// Tests that client-side sessions default connectRequest to nil
+    func testClientSessionConnectRequestIsNil() async throws {
+        let (session, _, mockConn, _) = makeServerSession(
+            maxSessions: 10,
+            streamID: 4,
+            isClient: true
+        )
+
+        let connectReq = await session.connectRequest
+        XCTAssertNil(connectReq, "Client-side session should have nil connectRequest by default")
 
         mockConn.finish()
     }
@@ -960,7 +1038,7 @@ final class WebTransportSessionQuotaEnforcementTests: XCTestCase {
         stream1.enqueueFIN()
         _ = try await h3Conn.createClientWebTransportSession(
             connectStream: stream1,
-            response: HTTP3Response(status: 200)
+            response: HTTP3ResponseHead(status: 200)
         )
 
         // Second should fail
@@ -969,7 +1047,7 @@ final class WebTransportSessionQuotaEnforcementTests: XCTestCase {
         do {
             _ = try await h3Conn.createClientWebTransportSession(
                 connectStream: stream2,
-                response: HTTP3Response(status: 200)
+                response: HTTP3ResponseHead(status: 200)
             )
             XCTFail("Should have thrown maxSessionsExceeded")
         } catch let error as WebTransportError {
@@ -1941,7 +2019,7 @@ final class WebTransportBrowserInteropTests: XCTestCase {
 
     /// Verifies the Extended CONNECT response format for 200 OK
     func testExtendedConnectResponseFormat() {
-        let response = HTTP3Response(status: 200)
+        let response = HTTP3ResponseHead(status: 200)
         let headerList = response.toHeaderList()
 
         // Response should have :status = 200
@@ -1963,7 +2041,9 @@ final class WebTransportBrowserInteropTests: XCTestCase {
         XCTAssertFalse(WebTransportStreamClassification.isWebTransportStream(0x03)) // QPACK decoder
     }
 
-    /// Verifies bidirectional stream framing (session ID as first varint)
+    /// Verifies bidirectional stream framing: WEBTRANSPORT_STREAM bidi signal
+    /// (0x41) followed by the session ID (draft-ietf-webtrans-http3, the framing
+    /// Chrome emits and strict servers require).
     func testBidiStreamFramingWireFormat() async throws {
         let stream = MockIntegrationStream(id: 100)
 
@@ -1971,9 +2051,11 @@ final class WebTransportBrowserInteropTests: XCTestCase {
         try await WebTransportStreamFraming.writeBidirectionalHeader(to: stream, sessionID: 4)
 
         let written = stream.allWrittenData
-        // Session ID 4 as varint = single byte 0x04
-        XCTAssertEqual(written.count, 1)
-        XCTAssertEqual(written[0], 0x04)
+        // Signal value 0x41 = 65 decimal, which exceeds 1-byte varint range
+        // (0-63), so it encodes as a 2-byte varint (2MSB=01): [0x40, 0x41].
+        // Session ID 4 encodes as 1-byte varint: [0x04]. Total = 3 bytes.
+        XCTAssertEqual(written.count, 3)
+        XCTAssertEqual(Array(written), [0x40, 0x41, 0x04])
     }
 
     /// Verifies unidirectional stream framing (stream type 0x54 + session ID)

@@ -79,11 +79,11 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
 
     // MARK: - CongestionController Protocol
 
-    package var congestionWindow: Int {
+    public var congestionWindow: Int {
         state.withLock { $0.congestionWindow }
     }
 
-    package var currentState: CongestionState {
+    public var currentState: CongestionState {
         state.withLock { s in
             if let recoveryStart = s.recoveryStartTime {
                 return .recovery(startTime: recoveryStart)
@@ -95,7 +95,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
         }
     }
 
-    package func availableWindow(bytesInFlight: Int) -> Int {
+    public func availableWindow(bytesInFlight: Int) -> Int {
         state.withLock { s in
             max(0, s.congestionWindow - bytesInFlight)
         }
@@ -103,7 +103,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
 
     // MARK: - Pacing
 
-    package func nextSendTime() -> ContinuousClock.Instant? {
+    public func nextSendTime() -> ContinuousClock.Instant? {
         state.withLock { s in
             // Burst tokens allow immediate sending at connection start
             if s.burstTokens > 0 {
@@ -119,7 +119,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
 
     // MARK: - Event Handlers
 
-    package func onPacketSent(bytes: Int, now: ContinuousClock.Instant) {
+    public func onPacketSent(bytes: Int, now: ContinuousClock.Instant) {
         state.withLock { s in
             if s.burstTokens > 0 {
                 s.burstTokens -= 1
@@ -133,7 +133,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
         }
     }
 
-    package func onPacketsAcknowledged(
+    public func onPacketsAcknowledged(
         packets: [SentPacket],
         now: ContinuousClock.Instant,
         rtt: RTTEstimator
@@ -177,7 +177,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
         }
     }
 
-    package func onPacketsLost(
+    public func onPacketsLost(
         packets: [SentPacket],
         now: ContinuousClock.Instant,
         rtt: RTTEstimator
@@ -199,7 +199,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
         }
     }
 
-    package func onECNCongestionEvent(now: ContinuousClock.Instant) {
+    public func onECNCongestionEvent(now: ContinuousClock.Instant) {
         state.withLock { s in
             // ECN-CE is treated the same as packet loss
             if s.recoveryStartTime != nil {
@@ -209,7 +209,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
         }
     }
 
-    package func onPersistentCongestion() {
+    public func onPersistentCongestion() {
         state.withLock { s in
             // RFC 9002 Section 7.6.2: Persistent Congestion
             //
@@ -265,7 +265,7 @@ package final class NewRenoCongestionController: CongestionController, Sendable 
 
 extension NewRenoCongestionController: CustomStringConvertible {
 
-    package var description: String {
+    public var description: String {
         state.withLock { s in
             let stateStr: String
             if s.recoveryStartTime != nil {

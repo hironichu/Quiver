@@ -700,15 +700,17 @@ package final class ClientStateMachine: Sendable {
 
             // Verify signature if we have a verification key
             if let key = verificationKey {
-                // Verify the signature scheme matches the key type
-                guard key.scheme == certificateVerify.algorithm else {
+                // The key must be able to verify the server's chosen scheme (RSA keys
+                // verify several schemes — PSS/PKCS1, multiple hashes).
+                guard key.isCompatible(with: certificateVerify.algorithm) else {
                     throw TLSHandshakeError.signatureVerificationFailed
                 }
 
-                // Verify the signature
+                // Verify the signature (scheme selects RSA padding + digest).
                 let isValid = try key.verify(
                     signature: certificateVerify.signature,
-                    for: signedContent
+                    for: signedContent,
+                    scheme: certificateVerify.algorithm
                 )
 
                 guard isValid else {

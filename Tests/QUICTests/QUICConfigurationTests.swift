@@ -1,7 +1,8 @@
 import Testing
 import Foundation
-@testable import QUIC
-@testable import QUICCore
+import QUIC
+import QUICCore
+import QUICRecovery
 
 @Suite("QUIC Configuration Tests")
 struct QUICConfigurationTests {
@@ -27,5 +28,16 @@ struct QUICConfigurationTests {
         #expect(params.initialMaxData == config.initialMaxData)
         #expect(params.initialMaxStreamsBidi == config.initialMaxStreamsBidi)
         #expect(params.initialSourceConnectionID == scid)
+    }
+
+    @Test("Congestion controller factory can be injected")
+    func congestionControllerFactoryInjection() {
+        var config = QUICConfiguration()
+        config.congestionControllerFactory = BBRFactory()
+
+        let controller = config.congestionControllerFactory.makeCongestionController(maxDatagramSize: 1200)
+
+        #expect(controller is BBRCongestionController)
+        #expect(String(describing: controller).contains("BBR"))
     }
 }

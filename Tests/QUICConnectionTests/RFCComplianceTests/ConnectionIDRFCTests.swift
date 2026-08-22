@@ -35,7 +35,7 @@ struct ConnectionIDRFCTests {
         )
 
         // Should process without error
-        manager.handleNewConnectionID(validFrame)
+        try manager.handleNewConnectionID(validFrame)
 
         // Invalid frame: retire_prior_to > sequence_number
         let cid2 = try ConnectionID(bytes: Data([0x05, 0x06, 0x07, 0x08]))
@@ -68,7 +68,7 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xAA, count: 16)
         )
 
-        manager.handleNewConnectionID(frame1)
+        try manager.handleNewConnectionID(frame1)
 
         // Send duplicate with same sequence number but different CID
         let cid2 = try ConnectionID(bytes: Data([0x05, 0x06, 0x07, 0x08]))
@@ -79,17 +79,20 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xBB, count: 16)
         )
 
-        // RFC 9000: If it receives a CID with a sequence number equal to
-        // an existing CID, but with different CID or token, MUST be treated
-        // as a connection error of type PROTOCOL_VIOLATION.
-        //
-        // TODO: handleNewConnectionID should detect and reject this
+        // RFC 9000 §5.1.1: A CID with a sequence number equal to an existing
+        // CID but a *different* CID or token MUST be treated as a connection
+        // error of type PROTOCOL_VIOLATION. The manager surfaces this as
+        // ConnectionIDError.duplicateSequenceNumber.
+        #expect(throws: ConnectionIDManager.ConnectionIDError.self) {
+            try manager.handleNewConnectionID(frame2)
+        }
 
-        manager.handleNewConnectionID(frame2)  // Currently does NOT validate
-
-        // The second frame should have been rejected or the original retained
+        // The conflicting frame is rejected: the original CID is retained
+        // unchanged (the manager must not adopt the colliding CID).
         let availableCIDs = manager.availablePeerCIDs
-        // Should still have the original CID, not the duplicate
+        #expect(availableCIDs.count == 1, "the colliding duplicate must not be stored")
+        #expect(availableCIDs.first { $0.sequenceNumber == 1 }?.connectionID == cid1,
+            "sequence 1 must still map to the ORIGINAL CID, not the duplicate's")
     }
 
     @Test("active_connection_id_limit enforcement")
@@ -109,14 +112,13 @@ struct ConnectionIDRFCTests {
                 connectionID: cid,
                 statelessResetToken: Data(repeating: UInt8(seq), count: 16)
             )
-            manager.handleNewConnectionID(frame)
+            try manager.handleNewConnectionID(frame)
         }
 
         // Should have exactly `limit` CIDs
         #expect(manager.availablePeerCIDs.count == Int(limit))
 
-        // Adding more than limit should be handled properly
-        // The manager should track and potentially reject excess CIDs
+        // Adding more than limit must be rejected.
         let excessCID = try ConnectionID(bytes: Data([0xFF, 0x02, 0x03, 0x04]))
         let excessFrame = try NewConnectionIDFrame(
             sequenceNumber: limit,  // One more than allowed active count
@@ -125,12 +127,15 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xFF, count: 16)
         )
 
-        // RFC 9000: Providing excess CIDs may cause connection error
-        // The implementation should validate against the limit
-        manager.handleNewConnectionID(excessFrame)
-
-        // Note: Current implementation doesn't enforce this strictly
-        // TODO: Add limit enforcement in handleNewConnectionID
+        // RFC 9000 §5.1.1: an endpoint MUST NOT provide more connection IDs than
+        // the peer's active_connection_id_limit. The manager enforces this by
+        // throwing ConnectionIDError.exceededConnectionIDLimit, and must NOT
+        // store the excess CID.
+        #expect(throws: ConnectionIDManager.ConnectionIDError.self) {
+            try manager.handleNewConnectionID(excessFrame)
+        }
+        #expect(manager.availablePeerCIDs.count == Int(limit),
+            "the over-limit CID must not be stored")
     }
 
     // MARK: - RFC 9000 §5.1.2: RETIRE_CONNECTION_ID
@@ -210,8 +215,8 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0xBB, count: 16)
         )
 
-        manager.handleNewConnectionID(frame1)
-        manager.handleNewConnectionID(frame2)
+        try manager.handleNewConnectionID(frame1)
+        try manager.handleNewConnectionID(frame2)
 
         // Initially use CID at sequence 0
         #expect(manager.activePeerConnectionID != nil)
@@ -299,7 +304,7 @@ struct ConnectionIDRFCTests {
                 connectionID: cid,
                 statelessResetToken: Data(repeating: UInt8(seq), count: 16)
             )
-            manager.handleNewConnectionID(frame)
+            try manager.handleNewConnectionID(frame)
         }
 
         #expect(manager.availablePeerCIDs.count == 3)
@@ -314,7 +319,7 @@ struct ConnectionIDRFCTests {
             statelessResetToken: Data(repeating: 0x04, count: 16)
         )
 
-        manager.handleNewConnectionID(frame4)
+        try manager.handleNewConnectionID(frame4)
 
         // Should now have only CIDs at sequence 2 and 3
         // (sequences 0 and 1 should be retired)
@@ -353,7 +358,7 @@ struct ConnectionIDRFCTests {
             connectionID: peerCID1,
             statelessResetToken: Data(repeating: 0x11, count: 16)
         )
-        manager.handleNewConnectionID(peerFrame)
+        try manager.handleNewConnectionID(peerFrame)
 
         #expect(manager.availablePeerCIDs.count == 1)
         #expect(manager.activePeerConnectionID == peerCID1)

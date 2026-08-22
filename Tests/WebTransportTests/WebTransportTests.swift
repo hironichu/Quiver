@@ -16,6 +16,8 @@ import Synchronization
 @testable import QUICCore
 @testable import QPACK
 @testable import QUIC
+@testable import QUICStream
+@testable import QUICCrypto
 
 // MARK: - Mock Types for WebTransport Testing
 
@@ -212,6 +214,10 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
         }
     }
 
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
+        try await openStream()
+    }
+
     func openUniStream() async throws -> any QUICStreamProtocol {
         state.withLock { s in
             let id = s.nextUniStreamID
@@ -228,6 +234,10 @@ private final class MockWTConnection: QUICConnectionProtocol, @unchecked Sendabl
 
     var incomingDatagrams: AsyncStream<Data> {
         _incomingDatagrams
+    }
+
+    var sessionTickets: AsyncStream<NewSessionTicketInfo> {
+        AsyncStream { $0.finish() }
     }
 
     func sendDatagram(_ data: Data) async throws {
@@ -701,8 +711,21 @@ final class WebTransportStreamFramingTests: XCTestCase {
         XCTAssertEqual(kWebTransportUniStreamType, 0x54)
     }
 
+    func testWebTransportBidiStreamType() {
+        XCTAssertEqual(kWebTransportBidiStreamType, 0x41)
+    }
+
     // MARK: - Bidirectional Stream Framing
 
+    /// A client-initiated WebTransport bidirectional stream MUST begin with the
+    /// WEBTRANSPORT_STREAM signal value 0x41 followed by the session ID varint
+    /// (draft-ietf-webtrans-http3, the framing Chrome and other browsers send).
+    ///
+    /// Regression guard for the on-device interop bug: Quiver previously wrote a
+    /// bare session-ID varint (draft-02). For sessionID 0 that is the single byte
+    /// 0x00, which a strict server reads as "unknown bidi frame type 0" and the
+    /// connection is torn down (surfacing on the client as
+    /// H3_CLOSED_CRITICAL_STREAM right after CONNECT returned 200).
     func testWriteBidirectionalHeader() async throws {
         let stream = MockWTStream(id: 0)
         try await WebTransportStreamFraming.writeBidirectionalHeader(to: stream, sessionID: 4)
@@ -710,9 +733,33 @@ final class WebTransportStreamFramingTests: XCTestCase {
         let written = stream.allWrittenData
         XCTAssertFalse(written.isEmpty)
 
-        // Decode the session ID varint
-        let (varint, _) = try Varint.decode(from: written)
-        XCTAssertEqual(varint.value, 4)
+        // First varint MUST be the WEBTRANSPORT_STREAM bidi signal value 0x41.
+        let (typeVarint, typeConsumed) = try Varint.decode(from: written)
+        XCTAssertEqual(typeVarint.value, 0x41, "bidi stream must be prefixed with 0x41")
+
+        // Second varint is the session ID.
+        let remaining = Data(written.dropFirst(typeConsumed))
+        let (sessionVarint, _) = try Varint.decode(from: remaining)
+        XCTAssertEqual(sessionVarint.value, 4)
+    }
+
+    /// Session ID 0 is the worst case: a bare-session-ID writer emits the single
+    /// byte 0x00, which is the H3 DATA frame type — exactly the "unknown bidi
+    /// frame type 0" the production server rejected. The 0x41 prefix removes the
+    /// ambiguity.
+    func testWriteBidirectionalHeaderSessionIDZero() async throws {
+        let stream = MockWTStream(id: 0)
+        try await WebTransportStreamFraming.writeBidirectionalHeader(to: stream, sessionID: 0)
+
+        let written = stream.allWrittenData
+        // The 0x41 signal value (65) exceeds the 1-byte QUIC-varint range, so it
+        // encodes as the 2-byte form 0x40 0x41. The decoded value — not the raw
+        // first byte — is the invariant: it must be 0x41, never a bare 0x00.
+        let (typeVarint, typeConsumed) = try Varint.decode(from: written)
+        XCTAssertEqual(typeVarint.value, 0x41, "session-0 bidi must lead with the 0x41 signal, not a bare 0x00")
+        let remaining = Data(written.dropFirst(typeConsumed))
+        let (sessionVarint, _) = try Varint.decode(from: remaining)
+        XCTAssertEqual(sessionVarint.value, 0)
     }
 
     func testWriteBidirectionalHeaderLargeSessionID() async throws {
@@ -721,8 +768,12 @@ final class WebTransportStreamFramingTests: XCTestCase {
         try await WebTransportStreamFraming.writeBidirectionalHeader(to: stream, sessionID: largeSessionID)
 
         let written = stream.allWrittenData
-        let (varint, _) = try Varint.decode(from: written)
-        XCTAssertEqual(varint.value, largeSessionID)
+        // 0x41 prefix, then the session ID.
+        let (typeVarint, typeConsumed) = try Varint.decode(from: written)
+        XCTAssertEqual(typeVarint.value, 0x41)
+        let remaining = Data(written.dropFirst(typeConsumed))
+        let (sessionVarint, _) = try Varint.decode(from: remaining)
+        XCTAssertEqual(sessionVarint.value, largeSessionID)
     }
 
     func testReadBidirectionalSessionID() throws {
@@ -1224,12 +1275,14 @@ final class WebTransportSessionStreamTests: XCTestCase {
         let count = await session.activeBidirectionalStreamCount
         XCTAssertEqual(count, 1)
 
-        // Verify session ID was written as the first varint on the stream
+        // Verify the bidi framing: 0x41 signal value first, then the session ID.
         let opened = mockConn.openedStreams
         XCTAssertEqual(opened.count, 1)
         let writtenData = opened[0].allWrittenData
-        let (varint, _) = try Varint.decode(from: writtenData)
-        XCTAssertEqual(varint.value, 0) // Session ID = 0
+        let (typeVarint, typeConsumed) = try Varint.decode(from: writtenData)
+        XCTAssertEqual(typeVarint.value, 0x41) // WEBTRANSPORT_STREAM bidi signal
+        let (sidVarint, _) = try Varint.decode(from: Data(writtenData.dropFirst(typeConsumed)))
+        XCTAssertEqual(sidVarint.value, 0) // Session ID = 0
 
         connectStream.enqueueFIN()
         mockConn.finish()
@@ -1684,7 +1737,7 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         )
 
         let connectStream = MockWTStream(id: 0)
-        let response = HTTP3Response(status: 200)
+        let response = HTTP3ResponseHead(status: 200)
 
         let session = try await h3Conn.createClientWebTransportSession(
             connectStream: connectStream,
@@ -1714,7 +1767,7 @@ final class HTTP3ConnectionSessionRegistryTests: XCTestCase {
         )
 
         let connectStream = MockWTStream(id: 0)
-        let response = HTTP3Response(status: 403)
+        let response = HTTP3ResponseHead(status: 403)
 
         do {
             _ = try await h3Conn.createClientWebTransportSession(
@@ -1953,60 +2006,46 @@ final class WebTransportClientTests: XCTestCase {
 final class WebTransportServerTests: XCTestCase {
 
     func testServerCreation() async {
-        let server = WebTransportServer()
+        let server = WebTransportServer(
+            configuration: WebTransportConfiguration(quic: .testing())
+        )
 
         let state = await server.state
         XCTAssertEqual(state, .idle)
 
         let isListening = await server.isListening
         XCTAssertFalse(isListening)
-
-        let totalSessions = await server.totalSessions
-        XCTAssertEqual(totalSessions, 0)
     }
 
     func testServerWithCustomConfiguration() async {
-        let config = WebTransportServer.Configuration(
-            maxSessionsPerConnection: 10,
-            maxConnections: 100,
-            allowedPaths: ["/wt", "/echo"]
+        let server = WebTransportServer(
+            configuration: WebTransportConfiguration(quic: .testing(), maxSessions: 10),
+            serverOptions: WebTransportServer.ServerOptions(
+                maxConnections: 100,
+                allowedPaths: ["/wt", "/echo"]
+            )
         )
-        let server = WebTransportServer(configuration: config)
 
-        let maxSessions = await server.configuration.maxSessionsPerConnection
+        let maxSessions = await server.configuration.maxSessions
         XCTAssertEqual(maxSessions, 10)
 
-        let paths = await server.configuration.allowedPaths
+        let paths = await server.serverOptions.allowedPaths
         XCTAssertEqual(paths, ["/wt", "/echo"])
     }
 
-    func testServerConvenienceInit() async {
-        let server = WebTransportServer(maxSessions: 5, maxConnections: 50)
-
-        let maxSessions = await server.configuration.maxSessionsPerConnection
-        XCTAssertEqual(maxSessions, 5)
-
-        let maxConns = await server.configuration.maxConnections
-        XCTAssertEqual(maxConns, 50)
-    }
-
     func testServerDebugDescription() async {
-        let server = WebTransportServer(maxSessions: 3)
+        let server = WebTransportServer(
+            configuration: WebTransportConfiguration(quic: .testing(), maxSessions: 3)
+        )
 
         let desc = await server.debugDescription
         XCTAssertTrue(desc.contains("idle"))
-        XCTAssertTrue(desc.contains("3"))
-    }
-
-    func testServerDefaultConfiguration() async {
-        let config = WebTransportServer.Configuration.default
-        XCTAssertEqual(config.maxSessionsPerConnection, 1)
-        XCTAssertEqual(config.maxConnections, 0)
-        XCTAssertTrue(config.allowedPaths.isEmpty)
     }
 
     func testServerStartWithoutIdle() async {
-        let server = WebTransportServer()
+        let server = WebTransportServer(
+            configuration: WebTransportConfiguration(quic: .testing())
+        )
 
         // Force to listening state first via serveConnection, then try serve
         // Actually, we can test the guard directly by trying to serve twice
@@ -2151,8 +2190,7 @@ final class WebTransportSessionQuotaTests: XCTestCase {
         if maxSessions > 0 && activeCount >= Int(maxSessions) {
             try await context.reject(
                 status: 429,
-                headers: [("content-type", "text/plain")],
-                body: Data("Too many WebTransport sessions".utf8)
+                headers: [("content-type", "text/plain")]
             )
         }
 

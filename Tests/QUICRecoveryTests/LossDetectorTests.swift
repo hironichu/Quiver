@@ -172,19 +172,21 @@ struct LossDetectorTests {
         }
 
         // ACK ranges: 15-19, 10-12, 5-7, 0-2
-        // RFC 9000 Section 19.3.1: gap = smallest_prev - 1 - largest_current
-        // Range 15-19: rangeLength=4 (5 packets: 19-4=15 to 19)
-        // Range 10-12: largest=12, smallest_prev=15, gap = 15 - 1 - 12 = 2, rangeLength=2
-        // Range 5-7: largest=7, smallest_prev=10, gap = 10 - 1 - 7 = 2, rangeLength=2
-        // Range 0-2: largest=2, smallest_prev=5, gap = 5 - 1 - 2 = 2, rangeLength=2
+        // RFC 9000 §19.3.1: Gap = (smallest of preceding range) - (largest of
+        // current range) - 2  (i.e. one less than the number of unacked packets
+        // between the two ranges). Each gap here spans 2 unacked packets → Gap=1.
+        // Range 15-19: rangeLength=4 (5 packets: 19-4=15 .. 19)
+        // Range 10-12: largest=12, smallest_prev=15 → gap = 15 - 12 - 2 = 1, rangeLength=2
+        // Range 5-7:  largest=7,  smallest_prev=10 → gap = 10 -  7 - 2 = 1, rangeLength=2
+        // Range 0-2:  largest=2,  smallest_prev=5  → gap =  5 -  2 - 2 = 1, rangeLength=2
         let ackFrame = AckFrame(
             largestAcknowledged: 19,
             ackDelay: 1000,
             ackRanges: [
                 AckRange(gap: 0, rangeLength: 4),   // 15-19
-                AckRange(gap: 2, rangeLength: 2),   // 10-12
-                AckRange(gap: 2, rangeLength: 2),   // 5-7
-                AckRange(gap: 2, rangeLength: 2)    // 0-2
+                AckRange(gap: 1, rangeLength: 2),   // 10-12
+                AckRange(gap: 1, rangeLength: 2),   // 5-7
+                AckRange(gap: 1, rangeLength: 2)    // 0-2
             ],
             ecnCounts: nil
         )
@@ -213,6 +215,54 @@ struct LossDetectorTests {
 
         let lostPNs = Set(result.lostPackets.map { $0.packetNumber })
         #expect(lostPNs == Set([3, 4, 8, 9, 13, 14]))
+    }
+
+    @Test("ACK encode→decode round-trips a gapped received set EXACTLY (RFC 9000 §19.3.1)")
+    func ackEncodeDecodeRoundTripWithGaps() {
+        // Regression for the gap-decode off-by-one: `computeAckIntervals` used
+        // `gap + 1` where RFC 9000 §19.3.1 requires `gap + 2`, shifting every
+        // gap-separated range UP by one — so the first (UNRECEIVED) packet of each
+        // gap decoded as acknowledged. That spurious ACK made a sender drop a
+        // genuinely-lost packet from its tracking and never retransmit it,
+        // permanently stalling a multi-packet stream under mid-stream loss.
+        //
+        // This pins encode↔decode CONSISTENCY against the real `AckManager`
+        // encoder (no hand-derived gap values to get wrong — exactly the trap the
+        // hand-coded multi-range tests above fell into). With the `+1` bug the
+        // decoded set includes the holes and misses the true edges, so the
+        // round-trip identity below fails.
+        let now = ContinuousClock.Instant.now
+
+        // A receiver that got a four-island set (holes at 3-4, 8-9, 13-14).
+        let received: Set<UInt64> = [0,1,2,5,6,7,10,11,12,15,16,17,18,19]
+        let holes: Set<UInt64> = [3,4,8,9,13,14]
+        let ackMgr = AckManager()
+        for pn in received.sorted() {
+            ackMgr.recordReceivedPacket(packetNumber: pn, isAckEliciting: true, receiveTime: now)
+        }
+        guard let ack = ackMgr.generateAckFrame(now: now, ackDelayExponent: 0) else {
+            Issue.record("AckManager produced no ACK frame for a non-empty received set")
+            return
+        }
+        #expect(ack.ackRanges.count == 4, "a four-island received set must encode as 4 ACK ranges")
+
+        // A sender that sent 0…19 decodes that ACK; it must acknowledge EXACTLY
+        // the packets the receiver actually got — never a hole.
+        let detector = LossDetector()
+        let rtt = RTTEstimator()
+        for pn: UInt64 in 0...19 {
+            detector.onPacketSent(SentPacket(
+                packetNumber: pn, encryptionLevel: .application, timeSent: now,
+                ackEliciting: true, inFlight: true, sentBytes: 1200))
+        }
+        let result = detector.onAckReceived(
+            ackFrame: ack, ackReceivedTime: now + .milliseconds(10), rttEstimator: rtt)
+        let acked = Set(result.ackedPackets.map { $0.packetNumber })
+
+        #expect(acked == received,
+            "decoded ACK must acknowledge EXACTLY the received packets — no spurious ACK of an unreceived (lost) packet")
+        #expect(acked.isDisjoint(with: holes),
+            "no unreceived packet (a gap) may be decoded as acknowledged")
     }
 
     // MARK: - Edge Case Tests
@@ -683,16 +733,17 @@ struct LossDetectorTests {
             detector.onPacketSent(packet)
         }
 
-        // ACK with gaps (RFC 9000 Section 19.3.1):
-        // Range 1: 15-19 (rangeLength=4 means 5 packets: largest - rangeLength to largest)
-        // Gap: 5 (means 5 unacknowledged packets: 14, 13, 12, 11, 10)
+        // ACK with gaps (RFC 9000 §19.3.1):
+        // Range 1: 15-19 (rangeLength=4 means 5 packets: largest - rangeLength .. largest)
+        // Gap between [15,19] and [5,9]: 5 unacked packets (10,11,12,13,14) →
+        // Gap field = smallest_prev(15) - largest_current(9) - 2 = 4.
         // Range 2: 5-9 (rangeLength=4 means 5 packets)
         let gappedAck = AckFrame(
             largestAcknowledged: 19,
             ackDelay: 0,
             ackRanges: [
                 AckRange(gap: 0, rangeLength: 4),   // 15-19
-                AckRange(gap: 5, rangeLength: 4)    // 5-9
+                AckRange(gap: 4, rangeLength: 4)    // 5-9
             ],
             ecnCounts: nil
         )

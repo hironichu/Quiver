@@ -1,9 +1,10 @@
 /// TLS 1.3 Signature Operations (RFC 8446 Section 4.2.3)
 ///
-/// Supports ECDSA with P-256/P-384 and Ed25519.
+/// Supports ECDSA with P-256/P-384, Ed25519, and RSA (PKCS#1 v1.5 + PSS).
 
 import Foundation
 import Crypto
+import _CryptoExtras  // _RSA — RSA verification (Let's Encrypt R12/ISRG Root X1 chains)
 
 // MARK: - TLS Signature
 
@@ -196,6 +197,7 @@ public enum VerificationKey: Sendable {
     case p256(P256.Signing.PublicKey)
     case p384(P384.Signing.PublicKey)
     case ed25519(Curve25519.Signing.PublicKey)
+    case rsa(_RSA.Signing.PublicKey)
 
     /// Create from public key bytes and scheme
     public init(publicKeyBytes: Data, scheme: SignatureScheme) throws {
@@ -209,21 +211,47 @@ public enum VerificationKey: Sendable {
         case .ed25519:
             let key = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyBytes)
             self = .ed25519(key)
+        case .rsa_pkcs1_sha256, .rsa_pkcs1_sha384, .rsa_pkcs1_sha512,
+             .rsa_pss_rsae_sha256, .rsa_pss_rsae_sha384, .rsa_pss_rsae_sha512:
+            // `publicKeyBytes` is the SubjectPublicKeyInfo DER for an RSA key.
+            let key = try _RSA.Signing.PublicKey(derRepresentation: publicKeyBytes)
+            self = .rsa(key)
         default:
             throw SignatureError.unsupportedScheme(scheme)
         }
     }
 
-    /// The signature scheme for this key
+    /// A representative signature scheme for this key. NOTE: an RSA key can verify
+    /// several schemes (PKCS#1 v1.5 and PSS, multiple hashes); use `isCompatible(with:)`
+    /// to gate, not `==`.
     public var scheme: SignatureScheme {
         switch self {
         case .p256: return .ecdsa_secp256r1_sha256
         case .p384: return .ecdsa_secp384r1_sha384
         case .ed25519: return .ed25519
+        case .rsa: return .rsa_pss_rsae_sha256
         }
     }
 
-    /// Verify a signature
+    /// Whether this key can verify signatures of the given scheme.
+    public func isCompatible(with scheme: SignatureScheme) -> Bool {
+        switch self {
+        case .p256: return scheme == .ecdsa_secp256r1_sha256
+        case .p384: return scheme == .ecdsa_secp384r1_sha384
+        case .ed25519: return scheme == .ed25519
+        case .rsa:
+            switch scheme {
+            case .rsa_pkcs1_sha256, .rsa_pkcs1_sha384, .rsa_pkcs1_sha512,
+                 .rsa_pss_rsae_sha256, .rsa_pss_rsae_sha384, .rsa_pss_rsae_sha512:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    /// Verify a signature (scheme inferred from key type). RSA is not supported via
+    /// this overload — RSA needs the explicit scheme; use `verify(_:for:scheme:)`.
     public func verify(signature: Data, for data: Data) throws -> Bool {
         switch self {
         case .p256(let key):
@@ -233,6 +261,28 @@ public enum VerificationKey: Sendable {
             return key.isValidSignature(sig, for: data)
         case .ed25519(let key):
             return key.isValidSignature(signature, for: data)
+        case .rsa:
+            throw SignatureError.unsupportedScheme(.rsa_pss_rsae_sha256)
+        }
+    }
+
+    /// Verify a signature using an explicit scheme. Required for RSA — selects
+    /// PKCS#1 v1.5 for `rsa_pkcs1_*` (cert-chain signatures) vs PSS for `rsa_pss_*`
+    /// (TLS 1.3 CertificateVerify), and the digest from the scheme. ECDSA/Ed25519
+    /// fall back to the inherent-scheme overload.
+    public func verify(signature: Data, for data: Data, scheme: SignatureScheme) throws -> Bool {
+        guard case .rsa(let key) = self else {
+            return try verify(signature: signature, for: data)
+        }
+        let sig = _RSA.Signing.RSASignature(rawRepresentation: signature)
+        switch scheme {
+        case .rsa_pkcs1_sha256:    return key.isValidSignature(sig, for: SHA256.hash(data: data), padding: .insecurePKCS1v1_5)
+        case .rsa_pkcs1_sha384:    return key.isValidSignature(sig, for: SHA384.hash(data: data), padding: .insecurePKCS1v1_5)
+        case .rsa_pkcs1_sha512:    return key.isValidSignature(sig, for: SHA512.hash(data: data), padding: .insecurePKCS1v1_5)
+        case .rsa_pss_rsae_sha256: return key.isValidSignature(sig, for: SHA256.hash(data: data), padding: .PSS)
+        case .rsa_pss_rsae_sha384: return key.isValidSignature(sig, for: SHA384.hash(data: data), padding: .PSS)
+        case .rsa_pss_rsae_sha512: return key.isValidSignature(sig, for: SHA512.hash(data: data), padding: .PSS)
+        default: throw SignatureError.unsupportedScheme(scheme)
         }
     }
 }

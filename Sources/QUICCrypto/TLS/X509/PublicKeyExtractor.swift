@@ -5,6 +5,7 @@
 
 import Foundation
 import Crypto
+import _CryptoExtras  // _RSA — RSA public keys (Let's Encrypt RSA chains)
 @preconcurrency import X509
 import SwiftASN1
 
@@ -33,6 +34,11 @@ extension X509CertificateBase.PublicKey {
         // Try Ed25519
         if let ed25519Key = Curve25519.Signing.PublicKey(self) {
             return .ed25519(ed25519Key)
+        }
+
+        // Try RSA (Let's Encrypt R3/R10/R11/R12 + ISRG Root X1 are RSA)
+        if let rsaKey = _RSA.Signing.PublicKey(self) {
+            return .rsa(rsaKey)
         }
 
         throw X509Error.unsupportedPublicKeyAlgorithm("Unsupported public key type")

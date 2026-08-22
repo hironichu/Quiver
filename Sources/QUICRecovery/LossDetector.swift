@@ -282,7 +282,15 @@ package final class LossDetector: Sendable {
                 guard range.rangeLength <= current else { break }
                 rangeStart = current - range.rangeLength
             } else {
-                let gapOffset = range.gap + 1
+                // RFC 9000 §19.3.1: the largest packet number of a subsequent ACK
+                // Range is `(smallest of the preceding range) − Gap − 2`. `current`
+                // here is the preceding range's smallest, so we subtract `gap + 2`.
+                // (Using `gap + 1` shifts every gap-separated range UP by one, so the
+                // first packet of each gap — an UNRECEIVED packet — is decoded as
+                // acknowledged. That spurious ACK makes the sender drop a genuinely
+                // lost packet from its tracking and never retransmit it, permanently
+                // stalling a multi-packet stream under mid-stream loss.)
+                let gapOffset = range.gap + 2
                 guard gapOffset <= current else { break }
                 current = current - gapOffset
                 rangeEnd = current

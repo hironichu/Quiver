@@ -28,6 +28,12 @@ public struct SentPacket: Sendable, Identifiable {
     /// Whether this packet is in-flight (counts against congestion window)
     public let inFlight: Bool
 
+    /// The retransmittable frames this packet carried (RFC 9002 §13.3). When
+    /// the packet is declared lost, these are re-queued for transmission in a
+    /// NEW packet (QUIC never resends a packet number). Empty for ACK-only /
+    /// PING / probe packets, which carry no retransmittable state.
+    public let frames: [Frame]
+
     /// Alias for packet number
     public var packetNumber: UInt64 { id }
 
@@ -45,7 +51,8 @@ public struct SentPacket: Sendable, Identifiable {
         timeSent: ContinuousClock.Instant,
         ackEliciting: Bool,
         inFlight: Bool,
-        sentBytes: Int
+        sentBytes: Int,
+        frames: [Frame] = []
     ) {
         self.id = packetNumber
         self.sentBytes = sentBytes
@@ -53,6 +60,7 @@ public struct SentPacket: Sendable, Identifiable {
         self.encryptionLevel = encryptionLevel
         self.ackEliciting = ackEliciting
         self.inFlight = inFlight
+        self.frames = frames
     }
 }
 

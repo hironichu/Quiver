@@ -998,6 +998,29 @@ public final class ManagedConnection: Sendable {
         }
 
         Self.logger.trace("Emitting \(level) packet: \(encrypted.count) bytes (\(frames.count) frames)")
+
+        // RFC 9002 §A.5 (OnPacketSent): feed the loss-recovery + congestion
+        // tracker on EVERY sent packet. Without this the recovery subsystem
+        // (PTO arming, loss detection, RTT sampling, congestion control) is
+        // inert — `recordSentPacket` otherwise has no callers — so a single
+        // lost packet (e.g. a dropped Initial) is never retransmitted and the
+        // connection dies on the first loss. ACKs clear these via
+        // `pnSpaceManager.onAckReceived` (QUICConnectionHandler+Frames), closing
+        // the loop. `inFlight` follows `ackEliciting`: ACK-only packets do not
+        // count toward bytes in flight.
+        let ackEliciting = frames.contains { $0.isAckEliciting }
+        handler.recordSentPacket(SentPacket(
+            packetNumber: pn,
+            encryptionLevel: level,
+            timeSent: .now,
+            ackEliciting: ackEliciting,
+            inFlight: ackEliciting,
+            sentBytes: encrypted.count,
+            // RFC 9002 §13.3: remember the retransmittable frames so a
+            // detected-lost packet re-queues exactly its data (CRYPTO/STREAM/…)
+            // in a new packet, instead of a bare PING that recovers nothing.
+            frames: frames.filter { $0.isRetransmittableOnLoss }
+        ))
         return encrypted
     }
 
@@ -1010,17 +1033,44 @@ public final class ManagedConnection: Sendable {
         case .none:
             return []
 
-        case .retransmit(_, let level):
-            // SentPacket doesn't contain frame data, so we send a PING as probe
-            // The actual retransmission is handled by the stream manager when
-            // data hasn't been ACKed
-            handler.queueFrame(.ping, level: level)
+        case .retransmit(let lostPackets, let level):
+            // RFC 9002 §13.3: re-queue the lost frames in a NEW packet so the data
+            // (CRYPTO/STREAM/…) actually reaches the peer. PING only if a lost
+            // packet carried nothing retransmittable.
+            var requeued = false
+            for lost in lostPackets {
+                for frame in lost.frames {
+                    handler.queueFrameIfAbsent(frame, level: lost.encryptionLevel)
+                    requeued = true
+                }
+            }
+            if !requeued {
+                handler.queueFrame(.ping, level: level)
+            }
             return try generateOutboundPackets()
 
         case .probe:
-            // Send a PING to probe
-            let level: EncryptionLevel = isEstablished ? .application : .initial
-            handler.queueFrame(.ping, level: level)
+            // RFC 9002 §6.2.4: a PTO probe SHOULD carry unacked data. Re-send the
+            // oldest unacked frames so a TAIL-lost packet — one with no following
+            // ACK to trigger loss detection, e.g. a dropped Initial — still makes
+            // progress, instead of a content-free PING that can't advance the
+            // handshake. Fall back to a PING only if nothing is unacked.
+            let probes = handler.probeRetransmissions()
+            if probes.isEmpty {
+                let level: EncryptionLevel = isEstablished ? .application : .initial
+                handler.queueFrame(.ping, level: level)
+            } else {
+                for item in probes {
+                    handler.queueFrameIfAbsent(item.frame, level: item.level)
+                }
+            }
+            return try generateOutboundPackets()
+
+        case .sendAck:
+            // The ACK-delay timer fired. generateOutboundPackets() emits the
+            // pending ACK (getOutboundPackets → generateAckFrame), which resets
+            // the ack alarm — so the next nextTimerDeadline() no longer reports a
+            // past ACK deadline and the timer loop stops spinning.
             return try generateOutboundPackets()
         }
     }

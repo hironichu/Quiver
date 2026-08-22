@@ -70,6 +70,16 @@ import QUIC
 /// unidirectional stream, followed by the session ID.
 public let kWebTransportUniStreamType: UInt64 = 0x54
 
+/// The signal value that begins a WebTransport *bidirectional* stream.
+///
+/// Per draft-ietf-webtrans-http3, a client-initiated WebTransport bidi stream
+/// begins with the WEBTRANSPORT_STREAM signal value 0x41, followed by the
+/// session ID varint, then application data. This is the framing Chrome and
+/// other browsers emit and that spec-compliant servers require — without it,
+/// the server reads the first byte as an HTTP/3 frame type (0x00 = DATA for
+/// session 0) and rejects the stream as an unknown/invalid frame.
+public let kWebTransportBidiStreamType: UInt64 = 0x41
+
 // MARK: - Stream Direction
 
 /// The direction of a WebTransport stream.
@@ -318,7 +328,15 @@ public enum WebTransportStreamFraming {
         to stream: any QUICStreamProtocol,
         sessionID: UInt64
     ) async throws {
+        // draft-ietf-webtrans-http3: a client-initiated WebTransport bidi
+        // stream begins with the WEBTRANSPORT_STREAM signal value (0x41),
+        // followed by the session ID varint. Omitting the 0x41 prefix makes a
+        // strict server read the first byte as an HTTP/3 frame type (0x00 =
+        // DATA for session 0) and reject the stream, tearing down the
+        // connection. This matches Chrome's framing and Quiver's own server
+        // demux (HTTP3Connection.handleIncomingBidiStream).
         var header = Data()
+        Varint(kWebTransportBidiStreamType).encode(to: &header)
         Varint(sessionID).encode(to: &header)
         try await stream.write(header)
     }

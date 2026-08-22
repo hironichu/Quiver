@@ -278,6 +278,7 @@ extension HTTP3Connection {
                 case .headers(let headerBlock):
                     let headers = try qpackDecoder.decode(headerBlock)
                     let response = try HTTP3ResponseHead.fromHeaderList(headers)
+                    Self.logger.info("DIAGEC ExtConnect response decoded; leftover-after-headers=\(buffer.count) bytes (DISCARDED)")
                     return response
 
                 case .unknown:

@@ -17,7 +17,11 @@ import Foundation
 /// Creates matching server and client configurations that use development-mode
 /// TLS (self-signed P-256 key, no cert validation) so that the tests are fully
 /// self-contained.
-private enum LoopbackHelper {
+///
+/// Internal (not private) so the loss-recovery e2e suite
+/// (`LossRecoveryInteropTests`) can reuse the same server/client rig behind an
+/// impairing UDP relay.
+enum LoopbackHelper {
 
     /// ALPN used by both server and client in these tests.
     static let alpn = "quic-loopback-test"
@@ -117,7 +121,7 @@ private enum LoopbackHelper {
 
 // MARK: - Error type
 
-private enum LoopbackTestError: Error, CustomStringConvertible {
+enum LoopbackTestError: Error, CustomStringConvertible {
     case serverDidNotBind
     case connectionTimeout
     case handshakeIncomplete
@@ -741,7 +745,7 @@ private final class DataCollector: @unchecked Sendable {
 }
 
 /// Echo handler — reads from the stream and writes everything back, then closes.
-private func echoStream(_ stream: any QUICStreamProtocol) async {
+func echoStream(_ stream: any QUICStreamProtocol) async {
     do {
         var accumulated = Data()
         while true {
@@ -760,7 +764,7 @@ private func echoStream(_ stream: any QUICStreamProtocol) async {
 }
 
 /// Read all data from a stream until FIN (empty read) or timeout.
-private func readAll(
+func readAll(
     _ stream: any QUICStreamProtocol,
     timeout: Duration
 ) async throws -> Data {

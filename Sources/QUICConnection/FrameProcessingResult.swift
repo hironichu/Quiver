@@ -93,6 +93,13 @@ package enum TimerAction: Sendable {
 
     /// Send probe packets
     case probe
+
+    /// Flush a pending (delayed) ACK. The ACK-delay timer fired: generate and
+    /// send the pending ACK, which clears the ack alarm. Without this the
+    /// ack-delay deadline returned by `nextTimerDeadline()` stays `<= now`
+    /// forever and `timerProcessingLoop` busy-spins at 100% CPU (it sleeps
+    /// `.zero`, processes nothing actionable, recomputes the same past deadline).
+    case sendAck
 }
 
 /// Error for connection close

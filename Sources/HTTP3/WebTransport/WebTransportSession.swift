@@ -149,6 +149,16 @@ public actor WebTransportSession {
     /// The role of this endpoint.
     public let role: Role
 
+    /// The Extended CONNECT request that established this session, if available.
+    ///
+    /// On the server side, this is the original `HTTP3Request` from the
+    /// Extended CONNECT handshake, including path, headers, authority,
+    /// and `:protocol` pseudo-header. On the client side, this is `nil`.
+    ///
+    /// Use this to access request metadata (path, headers, authority) for
+    /// authentication, routing, or logging purposes.
+    public let connectRequest: HTTP3Request?
+
     /// The current session state.
     public private(set) var state: WebTransportSessionState = .connecting
 
@@ -240,14 +250,17 @@ public actor WebTransportSession {
     ///   - connectStream: The QUIC stream of the Extended CONNECT request
     ///   - connection: The HTTP/3 connection this session belongs to
     ///   - role: The endpoint role (client or server)
+    ///   - connectRequest: The original Extended CONNECT request (server-side only)
     public init(
         connectStream: any QUICStreamProtocol,
         connection: HTTP3Connection,
-        role: Role
+        role: Role,
+        connectRequest: HTTP3Request? = nil
     ) {
         self.connectStream = connectStream
         self.connection = connection
         self.role = role
+        self.connectRequest = connectRequest
         self.sessionID = connectStream.id
         self.quarterStreamID = connectStream.id / 4
 
@@ -893,28 +906,32 @@ public actor WebTransportSession {
         )
 
         var receivedFIN = false
+        var readCount = 0
 
         while state == .established || state == .draining {
             let data: Data
             do {
                 data = try await connectStream.read()
             } catch {
-                Self.logger.trace(
-                    "CONNECT stream read error (session may be closing): \(error)",
+                Self.logger.info(
+                    "DIAGCAP CONNECT stream read error after \(readCount) reads (session closing): \(error)",
                     metadata: ["sessionID": "\(sessionID)"]
                 )
                 break
             }
+            readCount += 1
 
             if data.isEmpty {
                 // FIN received on CONNECT stream — session is ending
-                Self.logger.debug(
-                    "CONNECT stream FIN received",
+                Self.logger.info(
+                    "DIAGCAP CONNECT stream FIN received (read #\(readCount))",
                     metadata: ["sessionID": "\(sessionID)"]
                 )
                 receivedFIN = true
                 break
             }
+            Self.logger.info("DIAGCAP CONNECT read #\(readCount): \(data.count) bytes",
+                metadata: ["sessionID": "\(sessionID)"])
 
             capsuleBuffer.append(data)
 

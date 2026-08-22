@@ -1,0 +1,53 @@
+"""Quiver — pure-Swift QUIC / HTTP3 / QPACK / WebTransport.
+
+Bazel build support (added so downstream Bazel projects can consume Quiver as a
+first-class module instead of vendoring/patching it). The SPM dependency graph
+(swift-nio, swift-crypto, swift-certificates, swift-asn1, swift-log) is resolved
+into Bazel targets by rules_swift_package_manager from Package.swift +
+Package.resolved; Quiver's own modules are the swift_library targets in BUILD.bazel.
+"""
+
+module(
+    name = "quiver",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "rules_swift_package_manager", version = "1.18.1")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+
+# apple_support must precede rules_cc (incompatible toolchain resolution).
+bazel_dep(name = "apple_support", version = "2.6.1")
+bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(
+    name = "rules_swift",
+    version = "3.6.1",
+    repo_name = "build_bazel_rules_swift",
+)
+
+apple_cc_configure = use_extension(
+    "@apple_support//crosstool:setup.bzl",
+    "apple_cc_configure_extension",
+)
+use_repo(apple_cc_configure, "local_config_apple_cc")
+
+swift_deps = use_extension(
+    "@rules_swift_package_manager//:extensions.bzl",
+    "swift_deps",
+)
+swift_deps.from_package(
+    declare_swift_deps_info = True,
+    resolved = "//:Package.resolved",
+    swift = "//:Package.swift",
+)
+use_repo(
+    swift_deps,
+    "swift_deps_info",
+    "swift_package",
+    "swiftpkg_swift_asn1",
+    "swiftpkg_swift_certificates",
+    "swiftpkg_swift_crypto",
+    "swiftpkg_swift_docc_plugin",
+    "swiftpkg_swift_log",
+    "swiftpkg_swift_nio",
+)

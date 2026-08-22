@@ -24,6 +24,11 @@ let package = Package(
             name: "QUICCore",
             targets: ["QUICCore"]
         ),
+        // TLS/Crypto (exposed for downstream TLS13Handler access)
+        .library(
+            name: "QUICCrypto",
+            targets: ["QUICCrypto"]
+        ),
         // QPACK header compression (RFC 9204)
         .library(
             name: "QPACK",
@@ -33,6 +38,16 @@ let package = Package(
         .library(
             name: "HTTP3",
             targets: ["HTTP3"]
+        ),
+        // Stream management types (StreamPriority, etc.)
+        .library(
+            name: "QUICStream",
+            targets: ["QUICStream"]
+        ),
+        // Loss detection and congestion control algorithms
+        .library(
+            name: "QUICRecovery",
+            targets: ["QUICRecovery"]
         ),
         // Example: QUIC Echo Server/Client
         .executable(
@@ -90,6 +105,7 @@ let package = Package(
             dependencies: [
                 "QUICCore",
                 .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
                 .product(name: "X509", package: "swift-certificates"),
                 .product(name: "SwiftASN1", package: "swift-asn1"),
             ],
@@ -224,6 +240,12 @@ let package = Package(
         ),
 
         .testTarget(
+            name: "QUICConnectionTests",
+            dependencies: ["QUICConnection", "QUICCore"],
+            path: "Tests/QUICConnectionTests"
+        ),
+
+        .testTarget(
             name: "QUICStreamTests",
             dependencies: ["QUICStream", "QUICCore"],
             path: "Tests/QUICStreamTests"
@@ -236,6 +258,8 @@ let package = Package(
                 "QUICRecovery",
                 "QUICTransport",
                 "QuiverTestSupport",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
             ],
             path: "Tests/QUICTests"
         ),
@@ -256,6 +280,20 @@ let package = Package(
                 "QuiverTestSupport",
             ],
             path: "Tests/HTTP3Tests"
+        ),
+
+        .testTarget(
+            name: "WebTransportTests",
+            dependencies: [
+                "HTTP3",
+                "QUIC",
+                "QPACK",
+                "QUICCore",
+                "QUICCrypto",
+                "QUICStream",
+                "QuiverTestSupport",
+            ],
+            path: "Tests/WebTransportTests"
         ),
 
         // MARK: - Benchmarks (run separately with: swift test --filter QUICBenchmarks)

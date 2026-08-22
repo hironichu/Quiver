@@ -4,7 +4,6 @@
 .swiftpm/xcode/xcshareddata/
 .swiftpm/xcode/xcuserdata/
 .swiftpm/configuration/registries.json
-Package.resolved
 Packages/
 
 # Xcode
@@ -67,3 +66,6 @@ docs/_build/
 *.tmp
 *.temp
 *.log
+
+# Bazel convenience symlinks
+/bazel-*

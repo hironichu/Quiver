@@ -7,27 +7,27 @@ import Foundation
 // MARK: - RTT Estimator
 
 /// Estimates round-trip time for a QUIC connection
-package struct RTTEstimator: Sendable {
+public struct RTTEstimator: Sendable {
     /// Minimum RTT observed
-    package private(set) var minRTT: Duration
+    public private(set) var minRTT: Duration
 
     /// Smoothed RTT (EWMA)
-    package private(set) var smoothedRTT: Duration
+    public private(set) var smoothedRTT: Duration
 
     /// RTT variance
-    package private(set) var rttVariance: Duration
+    public private(set) var rttVariance: Duration
 
     /// Latest RTT sample
-    package private(set) var latestRTT: Duration
+    public private(set) var latestRTT: Duration
 
     /// Whether we have received at least one RTT sample
-    package private(set) var hasEstimate: Bool
+    public private(set) var hasEstimate: Bool
 
     /// Initial RTT (used before first sample)
-    package static let initialRTT: Duration = .milliseconds(333)
+    public static let initialRTT: Duration = .milliseconds(333)
 
     /// Creates a new RTT estimator
-    package init() {
+    public init() {
         self.minRTT = .zero
         self.smoothedRTT = Self.initialRTT
         self.rttVariance = Self.initialRTT / 2
@@ -47,7 +47,7 @@ package struct RTTEstimator: Sendable {
     ///   - ackDelay: The acknowledgment delay reported by the peer
     ///   - maxAckDelay: The peer's max_ack_delay transport parameter
     ///   - handshakeConfirmed: Whether the handshake has been confirmed
-    package mutating func updateRTT(
+    public mutating func updateRTT(
         rttSample: Duration,
         ackDelay: Duration,
         maxAckDelay: Duration,
@@ -110,5 +110,3 @@ package struct RTTEstimator: Sendable {
         return smoothedRTT + k + maxAckDelay
     }
 }
-
-

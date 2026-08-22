@@ -28,6 +28,15 @@ extension ManagedConnection: QUICConnectionProtocol {
         )
     }
 
+    public func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol {
+        let streamID = try handler.openStream(bidirectional: true, priority: priority)
+        return ManagedStream(
+            id: streamID,
+            connection: self,
+            isUnidirectional: false
+        )
+    }
+
     public func openUniStream() async throws -> any QUICStreamProtocol {
         let streamID = try handler.openStream(bidirectional: false)
         return ManagedStream(

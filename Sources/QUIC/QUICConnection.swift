@@ -4,6 +4,8 @@
 
 import Foundation
 import QUICCore
+import QUICCrypto
+import QUICStream
 
 // MARK: - QUIC Connection Protocol
 
@@ -43,6 +45,9 @@ public protocol QUICConnectionProtocol: Sendable {
 
     /// Opens a new bidirectional stream
     func openStream() async throws -> any QUICStreamProtocol
+
+    /// Opens a new bidirectional stream with a priority hint (RFC 9218)
+    func openStream(priority: StreamPriority) async throws -> any QUICStreamProtocol
 
     /// Opens a new unidirectional stream
     func openUniStream() async throws -> any QUICStreamProtocol
@@ -96,6 +101,12 @@ public protocol QUICConnectionProtocol: Sendable {
     /// }
     /// ```
     var incomingDatagrams: AsyncStream<Data> { get }
+
+    /// Stream of session tickets received from the server.
+    ///
+    /// Use this to receive `NewSessionTicket` messages for session resumption.
+    /// Store these tickets in a `ClientSessionCache` for future 0-RTT connections.
+    var sessionTickets: AsyncStream<NewSessionTicketInfo> { get }
 
     /// Closes the connection
     /// - Parameter error: Optional error code to send to peer

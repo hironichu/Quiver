@@ -760,14 +760,39 @@ public actor HTTP3Server {
                 return
             }
 
-            // Accept and create the WebTransport session
+            // Pre-register and start the session BEFORE accepting.
+            //
+            // Race condition fix: when accept() sends the 200 OK, the client
+            // immediately opens a bidi stream. If createWebTransportSession()
+            // runs AFTER accept(), the client's bidi stream can arrive before
+            // the session is registered in webTransportSessions. handleIncoming-
+            // BidiStream then misroutes it as an HTTP/3 request and kills it.
+            //
+            // By registering and starting the session first, incoming bidi
+            // streams are correctly routed even if they arrive in the same
+            // QUIC packet as the accept ACK.
             do {
-                try await context.accept()
-
-                let session = try await h3Connection.createWebTransportSession(
-                    from: context,
-                    role: .server
+                let session = WebTransportSession(
+                    connectStream: context.stream,
+                    connection: h3Connection,
+                    role: .server,
+                    connectRequest: context.request
                 )
+
+                guard await h3Connection.tryRegisterWebTransportSession(session) else {
+                    try await context.reject(
+                        status: 429,
+                        headers: [("content-type", "text/plain")],
+                    )
+                    return
+                }
+
+                // Start transitions to .established — required so that
+                // deliverIncomingBidirectionalStream accepts the stream.
+                try await session.start()
+
+                // NOW send 200 OK — session is fully ready for streams
+                try await context.accept()
 
                 Self.logger.info(
                     "WebTransport session accepted",

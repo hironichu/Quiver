@@ -271,7 +271,8 @@ public struct NewConnectionIDFrame: Sendable, Hashable {
     ///   - retirePriorTo: Sequence number of the connection ID being retired
     ///   - connectionID: The new connection ID
     ///   - statelessResetToken: Stateless reset token (must be exactly 16 bytes)
-    /// - Throws: `FrameError.invalidStatelessResetTokenLength` if token is not 16 bytes
+    /// - Throws: `FrameError.invalidStatelessResetTokenLength` if token is not 16 bytes;
+    ///   `FrameError.retirePriorToExceedsSequenceNumber` if `retirePriorTo > sequenceNumber`.
     public init(
         sequenceNumber: UInt64,
         retirePriorTo: UInt64,
@@ -282,6 +283,15 @@ public struct NewConnectionIDFrame: Sendable, Hashable {
             throw FrameError.invalidStatelessResetTokenLength(
                 actual: statelessResetToken.count,
                 expected: ProtocolLimits.statelessResetTokenLength
+            )
+        }
+        // RFC 9000 §19.15: the Retire Prior To field MUST be less than or equal
+        // to the Sequence Number field. A frame violating this MUST be treated as
+        // a connection error of type FRAME_ENCODING_ERROR — reject it at decode.
+        guard retirePriorTo <= sequenceNumber else {
+            throw FrameError.retirePriorToExceedsSequenceNumber(
+                retirePriorTo: retirePriorTo,
+                sequenceNumber: sequenceNumber
             )
         }
         self.sequenceNumber = sequenceNumber
@@ -312,6 +322,10 @@ public struct NewConnectionIDFrame: Sendable, Hashable {
 public enum FrameError: Error, Sendable, Equatable {
     /// Stateless reset token has invalid length
     case invalidStatelessResetTokenLength(actual: Int, expected: Int)
+
+    /// NEW_CONNECTION_ID had retire_prior_to > sequence_number (RFC 9000 §19.15,
+    /// a FRAME_ENCODING_ERROR-class violation).
+    case retirePriorToExceedsSequenceNumber(retirePriorTo: UInt64, sequenceNumber: UInt64)
 }
 
 // MARK: - CONNECTION_CLOSE Frame

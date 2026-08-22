@@ -1,0 +1,129 @@
+load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
+
+# Quiver is authored for Swift 6 (swift-tools 6.2) and uses the `package`
+# access level to share internals across its modules. SwiftPM passes
+# -swift-version 6 and -package-name automatically; rules_swift does not, so
+# set both here. A single shared -package-name ("Quiver") puts every module in
+# the same access-control package, matching the SwiftPM build.
+QUIVER_COPTS = ["-swift-version", "6", "-package-name", "Quiver"]
+
+package(default_visibility = ["//visibility:public"])
+
+# Quiver's own modules. The SPM dependency graph (NIO / Crypto / X509 / ASN1 /
+# Logging) is provided by rules_swift_package_manager as @swiftpkg_* targets.
+# Dependency edges mirror Package.swift exactly.
+
+swift_library(
+    name = "QUICCore",
+    srcs = glob(["Sources/QUICCore/**/*.swift"]),
+    module_name = "QUICCore",
+    copts = QUIVER_COPTS,
+    deps = ["@swiftpkg_swift_log//:Logging"],
+)
+
+swift_library(
+    name = "QPACK",
+    srcs = glob(["Sources/QPACK/**/*.swift"]),
+    module_name = "QPACK",
+    copts = QUIVER_COPTS,
+)
+
+swift_library(
+    name = "QUICRecovery",
+    srcs = glob(["Sources/QUICRecovery/**/*.swift"]),
+    module_name = "QUICRecovery",
+    copts = QUIVER_COPTS,
+    deps = [":QUICCore"],
+)
+
+swift_library(
+    name = "QUICStream",
+    srcs = glob(["Sources/QUICStream/**/*.swift"]),
+    module_name = "QUICStream",
+    copts = QUIVER_COPTS,
+    deps = [
+        ":QUICCore",
+        "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_library(
+    name = "QUICCrypto",
+    srcs = glob(["Sources/QUICCrypto/**/*.swift"]),
+    module_name = "QUICCrypto",
+    copts = QUIVER_COPTS,
+    deps = [
+        ":QUICCore",
+        "@swiftpkg_swift_asn1//:SwiftASN1",
+        "@swiftpkg_swift_certificates//:X509",
+        "@swiftpkg_swift_crypto//:Crypto",
+        "@swiftpkg_swift_crypto//:_CryptoExtras",
+    ],
+)
+
+swift_library(
+    name = "NIOUDPTransport",
+    srcs = glob(["Sources/NIOUDPTransport/**/*.swift"]),
+    module_name = "NIOUDPTransport",
+    copts = QUIVER_COPTS,
+    deps = [
+        "@swiftpkg_swift_nio//:NIOCore",
+        "@swiftpkg_swift_nio//:NIOPosix",
+    ],
+)
+
+swift_library(
+    name = "QUICTransport",
+    srcs = glob(["Sources/QUICTransport/**/*.swift"]),
+    module_name = "QUICTransport",
+    copts = QUIVER_COPTS,
+    deps = [
+        ":NIOUDPTransport",
+        ":QUICCore",
+    ],
+)
+
+swift_library(
+    name = "QUICConnection",
+    srcs = glob(["Sources/QUICConnection/**/*.swift"]),
+    module_name = "QUICConnection",
+    copts = QUIVER_COPTS,
+    deps = [
+        ":QUICCore",
+        ":QUICCrypto",
+        ":QUICRecovery",
+        ":QUICStream",
+        ":QUICTransport",
+        "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_library(
+    name = "QUIC",
+    srcs = glob(["Sources/QUIC/**/*.swift"]),
+    module_name = "QUIC",
+    copts = QUIVER_COPTS,
+    deps = [
+        ":QUICConnection",
+        ":QUICCore",
+        ":QUICCrypto",
+        ":QUICRecovery",
+        ":QUICStream",
+        ":QUICTransport",
+        "@swiftpkg_swift_log//:Logging",
+    ],
+)
+
+swift_library(
+    name = "HTTP3",
+    srcs = glob(["Sources/HTTP3/**/*.swift"]),
+    module_name = "HTTP3",
+    copts = QUIVER_COPTS,
+    deps = [
+        ":QPACK",
+        ":QUIC",
+        ":QUICCore",
+        ":QUICStream",
+        "@swiftpkg_swift_log//:Logging",
+    ],
+)

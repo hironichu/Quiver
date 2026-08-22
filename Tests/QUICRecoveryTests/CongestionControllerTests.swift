@@ -1043,6 +1043,8 @@ struct PTOActionTests {
         let manager = PacketNumberSpaceManager()
         let now = ContinuousClock.Instant.now
 
+        // A fresh manager has an unconfirmed handshake, so the §6.2.2.1
+        // anti-deadlock PTO is armed (non-nil) even with nothing in flight.
         // First PTO deadline
         let deadline1 = manager.nextPTODeadline(now: now)
 
@@ -1054,10 +1056,13 @@ struct PTOActionTests {
         manager.onPTOExpired()
         let deadline3 = manager.nextPTODeadline(now: now)
 
+        #expect(deadline1 != nil && deadline2 != nil && deadline3 != nil,
+            "anti-deadlock PTO must be armed during an unconfirmed handshake")
+
         // Deadlines should double with each PTO
-        let interval1 = deadline1 - now
-        let interval2 = deadline2 - now
-        let interval3 = deadline3 - now
+        let interval1 = deadline1! - now
+        let interval2 = deadline2! - now
+        let interval3 = deadline3! - now
 
         // interval2 should be approximately 2x interval1
         // interval3 should be approximately 4x interval1

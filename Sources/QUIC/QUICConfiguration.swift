@@ -321,11 +321,7 @@ public struct QUICConfiguration: Sendable {
     /// a custom congestion control algorithm (e.g., CUBIC, BBR) for all
     /// connections created with this configuration.
     ///
-    /// - Note: This property is `package` access because the `CongestionControllerFactory`
-    ///   protocol and its dependency types (`CongestionController`, `RTTEstimator`,
-    ///   `SentPacket`) are package-internal. When these types are promoted to `public`,
-    ///   this property should be promoted as well.
-    package var congestionControllerFactory: any CongestionControllerFactory
+    public var congestionControllerFactory: any CongestionControllerFactory
 
     // MARK: - Socket / Transport
 

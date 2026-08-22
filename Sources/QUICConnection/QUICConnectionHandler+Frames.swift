@@ -246,6 +246,17 @@ extension QUICConnectionHandler {
                     rtt: pnSpaceManager.rttEstimator
                 )
             }
+
+            // RFC 9002 §13.3: RETRANSMIT the lost frames. The handling above only
+            // adjusts the congestion window — the actual data (CRYPTO/STREAM/flow-
+            // control/…) must be re-queued so it reaches the peer, going out in a
+            // NEW packet (QUIC never resends a packet number). Without this, ACK-
+            // detected loss silently drops data and the stream/handshake stalls.
+            for lost in result.lostPackets {
+                for frame in lost.frames {
+                    queueFrameIfAbsent(frame, level: lost.encryptionLevel)
+                }
+            }
         }
     }
 

@@ -368,6 +368,26 @@ package final class QUICConnectionHandler: Sendable {
         outboundQueue.withLock { $0.append(packet) }
     }
 
+    /// Queues a frame for retransmission only if an identical frame is not
+    /// already pending at the same encryption level.
+    ///
+    /// RFC 9002 §6.2.4: a PTO probe is a pure read of the oldest unacked frames
+    /// and does NOT consume them from the sent-packet record, so a later
+    /// loss-detection pass (or a second probe) can resurface the same frame.
+    /// Re-queuing it blindly would put duplicate copies on the wire — harmless
+    /// to correctness (retransmission is idempotent) but wasteful of the
+    /// congestion window. This collapses those duplicates at the queue.
+    package func queueFrameIfAbsent(_ frame: Frame, level: EncryptionLevel) {
+        outboundQueue.withLock { queue in
+            let alreadyQueued = queue.contains {
+                $0.level == level && $0.frames.contains(frame)
+            }
+            if !alreadyQueued {
+                queue.append(OutboundPacket(frames: [frame], level: level))
+            }
+        }
+    }
+
     /// Queues CRYPTO frames to be sent
     ///
     /// Phase 4: Subtract worst-case long-header overhead so each CRYPTO frame
@@ -394,6 +414,12 @@ package final class QUICConnectionHandler: Sendable {
             bytes: packet.sentBytes,
             now: packet.timeSent
         )
+    }
+
+    /// Frames to send as a PTO probe (RFC 9002 §6.2.4): the oldest unacked data,
+    /// re-sent so a tail-lost packet still makes progress. Empty ⇒ send a PING.
+    package func probeRetransmissions() -> [(frame: Frame, level: EncryptionLevel)] {
+        pnSpaceManager.oldestUnackedRetransmittableFrames()
     }
 
     /// Gets the next packet number for an encryption level
@@ -423,11 +449,19 @@ package final class QUICConnectionHandler: Sendable {
             }
         }
 
-        // Check for PTO (uses internally managed peerMaxAckDelay)
-        let ptoDeadline = pnSpaceManager.nextPTODeadline(now: now)
-        if ptoDeadline <= now {
+        // Check for PTO (uses internally managed peerMaxAckDelay). nil = not
+        // armed (RFC 9002: nothing in flight + handshake confirmed) → no probe.
+        if let ptoDeadline = pnSpaceManager.nextPTODeadline(now: now), ptoDeadline <= now {
             pnSpaceManager.onPTOExpired()
             return .probe
+        }
+
+        // Check for a due ACK-delay timer. `nextTimerDeadline()` advertises the
+        // ACK deadline, so the loop MUST act on it: flush the pending ACK (which
+        // resets the ack alarm in AckManager.generateAckFrame). Without this the
+        // ack deadline stays `<= now` and `timerProcessingLoop` busy-spins.
+        if let ackTime = pnSpaceManager.earliestAckTime()?.time, ackTime <= now {
+            return .sendAck
         }
 
         return .none
@@ -447,11 +481,15 @@ package final class QUICConnectionHandler: Sendable {
         // Get ACK time
         let ackTime = pnSpaceManager.earliestAckTime()?.time
 
-        // Get pacing time (for smooth transmission)
-        let pacingTime = congestionController.nextSendTime()
+        // NOTE: pacing time (congestionController.nextSendTime()) is deliberately
+        // NOT included. Pacing gates the SEND path (`canSendPacket`); it is not a
+        // recovery wakeup, and `onTimerExpired` has no pacing action — so a past
+        // pacing deadline here would make `timerProcessingLoop` busy-spin (wake,
+        // do nothing about pacing, recompute the same past deadline). A paced-send
+        // resume, if ever needed, belongs to the outbound loop, not this timer.
 
-        // Return earliest
-        return [lossTime, ptoTime, ackTime, pacingTime].compactMap { $0 }.min()
+        // Return earliest of the timers this loop can actually act on.
+        return [lossTime, ptoTime, ackTime].compactMap { $0 }.min()
     }
 
     // MARK: - Congestion Control

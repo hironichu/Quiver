@@ -213,6 +213,13 @@ public struct SignatureAlgorithmIdentifier: Sendable, Equatable {
             return .ecdsa_secp384r1_sha384
         case .ed25519:
             return .ed25519
+        // RSA PKCS#1 v1.5 cert-chain signatures (Let's Encrypt R12 → ISRG Root X1).
+        case .sha256WithRSAEncryption:
+            return .rsa_pkcs1_sha256
+        case .sha384WithRSAEncryption:
+            return .rsa_pkcs1_sha384
+        case .sha512WithRSAEncryption:
+            return .rsa_pkcs1_sha512
         default:
             return nil
         }

@@ -8,7 +8,7 @@ import Foundation
 // MARK: - Congestion State
 
 /// The current state of the congestion controller
-package enum CongestionState: Sendable, Equatable {
+public enum CongestionState: Sendable, Equatable {
     /// Slow start phase: exponential window growth
     /// Active when cwnd < ssthresh
     case slowStart
@@ -21,14 +21,14 @@ package enum CongestionState: Sendable, Equatable {
     /// Window is halved, and we wait for a post-recovery packet to be acknowledged
     case recovery(startTime: ContinuousClock.Instant)
 
-    package static func == (lhs: CongestionState, rhs: CongestionState) -> Bool {
+    public static func == (lhs: CongestionState, rhs: CongestionState) -> Bool {
         switch (lhs, rhs) {
         case (.slowStart, .slowStart):
             return true
         case (.congestionAvoidance, .congestionAvoidance):
             return true
-        case (.recovery, .recovery):
-            return true
+        case let (.recovery(lhsStart), .recovery(rhsStart)):
+            return lhsStart == rhsStart
         default:
             return false
         }
@@ -47,7 +47,7 @@ package enum CongestionState: Sendable, Equatable {
 /// - Slow start threshold (ssthresh)
 /// - Recovery period tracking
 /// - Pacing for smooth traffic transmission
-package protocol CongestionController: Sendable {
+public protocol CongestionController: Sendable {
 
     // MARK: - State Queries
 
@@ -152,7 +152,7 @@ package protocol CongestionController: Sendable {
 extension CongestionController {
 
     /// Default implementation of available window calculation
-    package func availableWindow(bytesInFlight: Int) -> Int {
+    public func availableWindow(bytesInFlight: Int) -> Int {
         max(0, congestionWindow - bytesInFlight)
     }
 }
@@ -174,7 +174,7 @@ extension CongestionController {
 ///     }
 /// }
 /// ```
-package protocol CongestionControllerFactory: Sendable {
+public protocol CongestionControllerFactory: Sendable {
     /// Creates a new congestion controller instance.
     ///
     /// Called once per connection to create the congestion controller
@@ -193,10 +193,10 @@ package protocol CongestionControllerFactory: Sendable {
 ///
 /// This is the factory used when no custom congestion control algorithm
 /// is configured. NewReno is the recommended default per RFC 9002.
-package struct NewRenoFactory: CongestionControllerFactory {
-    package init() {}
+public struct NewRenoFactory: CongestionControllerFactory {
+    public init() {}
 
-    package func makeCongestionController(maxDatagramSize: Int) -> any CongestionController {
+    public func makeCongestionController(maxDatagramSize: Int) -> any CongestionController {
         NewRenoCongestionController(maxDatagramSize: maxDatagramSize)
     }
 }
